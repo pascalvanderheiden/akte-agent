@@ -68,6 +68,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # TypeScript 7 type-checks the app via typescript-native. ESLint still
+    # consumes the TypeScript 6 JavaScript compiler API.
+    ignore:
+      - dependency-name: typescript
+        versions: ["7.x"]
     groups:
       # react and react-dom must upgrade together — their peer ranges are
       # locked to each other, so splitting them produces two PRs that each
@@ -81,6 +86,11 @@ updates:
           - react-dom
           - "@types/react"
           - "@types/react-dom"
+          - "@azure/msal-browser"
+          - "@azure/msal-react"
+          - next
+          - eslint-config-next
+          - typescript-native
       frontend-security:
         applies-to: security-updates
         patterns: ["*"]

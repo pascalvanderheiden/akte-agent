@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -53,7 +54,10 @@ class MCPTransportTests(unittest.TestCase):
             result = self.request(
                 "tools/call", {"name": "get_my_profile", "arguments": {}}
             )
-        self.assertEqual(result["structuredContent"]["error"], "unauthorized")
+        self.assertFalse(result.get("isError", False), result)
+        self.assertEqual(
+            json.loads(result["content"][0]["text"])["error"], "unauthorized"
+        )
         fetch.assert_not_called()
 
     def test_header_token_is_validated_and_photo_is_not_returned(self):
@@ -70,7 +74,7 @@ class MCPTransportTests(unittest.TestCase):
         validate.assert_called_once_with("synthetic-test-token")
         fetch.assert_called_once_with("synthetic-test-token")
         self.assertEqual(
-            result["structuredContent"],
+            json.loads(result["content"][0]["text"]),
             {"displayName": "Synthetic User", "hasProfilePhoto": True},
         )
 
@@ -88,7 +92,10 @@ class MCPTransportTests(unittest.TestCase):
                 {"name": "get_my_profile", "arguments": {}},
                 headers={"Authorization": "Bearer synthetic-test-token"},
             )
-        self.assertEqual(result["structuredContent"]["error"], "unauthorized")
+        self.assertFalse(result.get("isError", False), result)
+        self.assertEqual(
+            json.loads(result["content"][0]["text"])["error"], "unauthorized"
+        )
         fetch.assert_not_called()
 
 

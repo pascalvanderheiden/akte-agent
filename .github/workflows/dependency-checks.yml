@@ -47,8 +47,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install uv
-      - run: uv lock --project src/backend
-      - uses: actions/upload-artifact@v7
-        with:
-          name: backend-lock
-          path: src/backend/uv.lock
+      - run: uv lock --check --project src/backend
