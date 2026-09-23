@@ -77,7 +77,7 @@ jobs:
       # v1.0.0 installs from azdrelease.azureedge.net, which no longer resolves
       # (the Azure Edgio CDN was retired). v2.x installs from GitHub releases.
       - name: Install azd
-        uses: Azure/setup-azd@v2.3.0
+        uses: Azure/setup-azd@v2.4.0
 
       - name: Azure Login
         uses: azure/login@v3
