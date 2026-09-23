@@ -1,0 +1,114 @@
+version: 2
+
+# Dependabot was raising security alerts for this repo but had no config, so it
+# never opened update PRs and ~100 advisories accumulated. Grouped updates keep
+# the PR volume manageable while still moving lockfiles forward.
+#
+# This also covers the Python side, which cannot be resolved from restricted
+# networks that block files.pythonhosted.org -- Dependabot resolves on GitHub's
+# runners instead.
+
+updates:
+  # --- Python -------------------------------------------------------------
+  - package-ecosystem: pip
+    directory: /src/backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      backend-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    labels: [dependencies, python]
+
+  - package-ecosystem: pip
+    directory: /src/obo-mcp-server
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      obo-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      # requirements.txt here is a FULL lock (every transitive dep pinned
+      # exactly), and pydantic pins pydantic-core to an exact version. Bumping
+      # them separately produces an unresolvable file — this actually shipped
+      # once and broke the image build. Keep them in one PR. Listed before
+      # obo-minor-patch because a dependency joins the FIRST group it matches.
+      pydantic:
+        patterns: ["pydantic", "pydantic-core", "pydantic_core", "pydantic-settings"]
+      obo-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    labels: [dependencies, python]
+
+  # The hosted agent has its own pyproject and shares github-copilot-sdk with
+  # the backend. Without this block it silently drifted behind (backend moved
+  # to 1.0.8 while this stayed on 1.0.0).
+  - package-ecosystem: pip
+    directory: /src/hosted-agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      hosted-agent-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      hosted-agent-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    labels: [dependencies, python]
+
+  # --- JavaScript ---------------------------------------------------------
+  - package-ecosystem: npm
+    directory: /src/frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # react and react-dom must upgrade together — their peer ranges are
+      # locked to each other, so splitting them produces two PRs that each
+      # fail on their own (see the React 19 pair, #45 and #50). Listed first
+      # because Dependabot assigns a dependency to the first matching group,
+      # and this one deliberately has no update-types filter so it also
+      # covers majors.
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      frontend-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      frontend-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    labels: [dependencies, javascript]
+
+  - package-ecosystem: npm
+    directory: /mocks
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      mocks-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      mocks-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+    labels: [dependencies, javascript]
+
+  # --- CI -----------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: [dependencies, ci]

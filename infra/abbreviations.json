@@ -1,0 +1,17 @@
+{
+  "analyticsWorkspaces": "log-",
+  "appContainerApps": "ca-",
+  "appManagedEnvironments": "cae-",
+  "containerRegistryRegistries": "cr",
+  "documentDBDatabaseAccounts": "cosmos-",
+  "insightsComponents": "appi-",
+  "keyVaultVaults": "kv-",
+  "networkVirtualNetworks": "vnet-",
+  "networkNetworkSecurityGroups": "nsg-",
+  "operationalInsightsWorkspaces": "log-",
+  "searchSearchServices": "srch-",
+  "cognitiveServicesAccounts": "oai-",
+  "bingSearchAccounts": "bing-",
+  "webStaticSites": "stapp-",
+  "storageAccounts": "st"
+}

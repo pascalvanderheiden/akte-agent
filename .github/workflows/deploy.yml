@@ -1,0 +1,172 @@
+name: Deploy
+
+# Manual-only. Deployment is deliberately NOT wired to `push` — a green build
+# does not imply the infrastructure, credentials, and environment values needed
+# to deploy are in place, and an unattended push should never reach production.
+#
+# Prerequisites (per GitHub environment, under Settings > Environments):
+#   Secrets   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#             (federated / OIDC credential on the app registration)
+#   Variables AZURE_LOCATION           e.g. eastus2
+#             AGENT_SERVICE_URL        used by the integration tests
+#   Infra     the azd environment must already be provisioned, or run this
+#             workflow once with `provision: true`.
+# Add required reviewers to the `production` environment to gate releases.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
+        default: staging
+      provision:
+        description: "Run `azd provision` first (needed for a brand-new environment)"
+        type: boolean
+        default: false
+      upload_use_cases:
+        description: "Upload use-case skills to blob storage (needs network access to the storage account)"
+        type: boolean
+        default: false
+      run_integration_tests:
+        description: "Run integration tests after deploying"
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+concurrency:
+  # Never let two deploys to the same environment overlap.
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fail loudly and early: an unset secret otherwise surfaces as an opaque
+      # "Not all values are present" error from azure/login.
+      - name: Check required credentials are configured
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          missing=()
+          [ -n "$AZURE_CLIENT_ID" ]       || missing+=(AZURE_CLIENT_ID)
+          [ -n "$AZURE_TENANT_ID" ]       || missing+=(AZURE_TENANT_ID)
+          [ -n "$AZURE_SUBSCRIPTION_ID" ] || missing+=(AZURE_SUBSCRIPTION_ID)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing secrets for environment '${{ inputs.environment }}': ${missing[*]}"
+            echo "Add them under Settings > Environments > ${{ inputs.environment }} > Environment secrets."
+            exit 1
+          fi
+          echo "✅ All required credentials are present."
+
+      # v1.0.0 installs from azdrelease.azureedge.net, which no longer resolves
+      # (the Azure Edgio CDN was retired). v2.x installs from GitHub releases.
+      - name: Install azd
+        uses: Azure/setup-azd@v2.3.0
+
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to azd
+        run: |
+          azd auth login \
+            --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
+            --tenant-id "${{ secrets.AZURE_TENANT_ID }}" \
+            --federated-credential-provider github
+
+      - name: Select azd environment
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          # The runner starts with no .azure/ directory, so create the env on
+          # first use and select it on subsequent runs.
+          azd env select "$AZURE_ENV_NAME" 2>/dev/null || \
+            azd env new "$AZURE_ENV_NAME" \
+              --location "$AZURE_LOCATION" \
+              --subscription "$AZURE_SUBSCRIPTION_ID" \
+              --no-prompt
+
+      - name: Provision infrastructure
+        if: inputs.provision
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: azd provision --no-prompt
+
+      - name: Refresh environment outputs
+        if: ${{ !inputs.provision }}
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          # Hydrate endpoints/resource names from the already-provisioned infra;
+          # `azd deploy` needs these and a fresh runner has none.
+          azd env refresh --no-prompt
+
+      - name: Deploy
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          KRATOS_AUTO_UPLOAD_USE_CASES: ${{ inputs.upload_use_cases && '1' || '0' }}
+        run: azd deploy --no-prompt
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo "### Deploy to \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| Setting | Value |"
+            echo "| --- | --- |"
+            echo "| Result | ${{ job.status }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Provisioned | ${{ inputs.provision }} |"
+            echo "| Skills uploaded | ${{ inputs.upload_use_cases }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: inputs.run_integration_tests
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: pip install httpx pytest pytest-asyncio pytest-timeout
+
+      # Deliberately NOT `|| true`: these tests exist to catch a bad deploy, so
+      # they must be able to fail the run.
+      - name: Run integration tests
+        env:
+          AGENT_SERVICE_URL: ${{ vars.AGENT_SERVICE_URL }}
+        run: pytest tests/integration/ -v --timeout=120

@@ -1,0 +1,44 @@
+{
+  "name": "kratos-agent-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "export": "next build"
+  },
+  "dependencies": {
+    "@azure/msal-browser": "^3.20.0",
+    "@azure/msal-react": "^2.0.0",
+    "@tailwindcss/typography": "^0.5.19",
+    "next": "^15.5.22",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-markdown": "^9.0.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.22",
+    "postcss": "^8.5.18",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.5.0"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0",
+    "flatted": "^3.4.2",
+    "brace-expansion@^1": "^1.1.16",
+    "brace-expansion@^2": "^2.1.2",
+    "picomatch@^2": "^2.3.2",
+    "picomatch@^4": "^4.0.4",
+    "next": {
+      "postcss": "^8.5.18"
+    }
+  }
+}

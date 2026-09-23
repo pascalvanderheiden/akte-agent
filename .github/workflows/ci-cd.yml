@@ -1,0 +1,132 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  # ─── Stage 1: Lint & Static Analysis ───
+  lint:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: src/backend
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Run Ruff (lint + format check)
+        working-directory: src/backend
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Run MyPy (type checking)
+        working-directory: src/backend
+        run: mypy app/ --ignore-missing-imports
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: src/frontend
+        run: npm run lint
+
+  # ─── Stage 2: Unit Tests ───
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install backend dependencies
+        working-directory: src/backend
+        run: pip install -e ".[dev]"
+
+      - name: Run tests with coverage
+        working-directory: src/backend
+        run: |
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: src/backend/coverage.xml
+
+  # ─── Stage 3: Build ───
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+
+      # Build backend Docker image
+      # Context must be the repo root: the Dockerfile copies from mocks/,
+      # use-cases/, and src/backend/ (matches docker-compose.yml / azure.yaml).
+      - name: Build backend Docker image
+        run: docker build -f src/backend/Dockerfile -t kratos-agent-service:${{ github.sha }} .
+
+      # The other two images are built here too, because CI used to build only
+      # the backend. That let a dependency update land on main with a
+      # requirements.txt that could not be resolved at all (pydantic pinned
+      # pydantic-core to a version the pinned pydantic did not accept), and
+      # nothing caught it until a real deploy failed. Building every image is
+      # what makes that class of break visible before it merges.
+      - name: Build hosted-agent Docker image
+        run: docker build -f src/hosted-agent/Dockerfile -t kratos-hosted-agent:${{ github.sha }} .
+
+      # Context is the service directory: this Dockerfile copies requirements.txt
+      # relative to itself, not from the repo root (matches azure.yaml).
+      - name: Build obo-mcp-server Docker image
+        run: docker build -f src/obo-mcp-server/Dockerfile -t kratos-obo-mcp-server:${{ github.sha }} src/obo-mcp-server
+
+      # Build frontend
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install frontend dependencies
+        working-directory: src/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: src/frontend
+        run: npm run build
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-build
+          path: src/frontend/out
