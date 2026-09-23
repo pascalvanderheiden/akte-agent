@@ -1,135 +1,80 @@
 #!/usr/bin/env bash
-#
-# Preprovision checks for the opt-in Azure SRE Agent.
-#
-# Runs on every provision but does nothing unless DEPLOY_SRE_AGENT is true:
-# environments that have not opted in make no Azure calls here at all.
-#
-# What it checks, and why here rather than in Bicep: an unsupported region, an
-# unregistered provider, or a subscription without SRE service access all
-# surface from ARM as an opaque template failure minutes into a provision.
-# Checking first turns those into actionable messages before anything is
-# created.
-#
-# What it deliberately does NOT do: log in, install tools, register providers,
-# change consent, switch subscription or region, or prompt. It reads state and
-# explains what the operator must do.
-
+# Noninteractive, opt-in checks. Never log in, install tools, change cloud
+# registration/consent, or switch subscriptions/regions.
+set +x
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hooks/sre-lib.sh
 . "${SCRIPT_DIR}/sre-lib.sh"
 
-SRE_API_VERSION="2025-05-01-preview"
-
+sre_load_environment "$@" || exit 1
 ENABLED="$(sre_bool DEPLOY_SRE_AGENT "${DEPLOY_SRE_AGENT:-}" false)" || exit 1
-if [ "$ENABLED" != "true" ]; then
-  exit 0
-fi
-
-# Validate the optional-integration switches now too: a typo in either should
-# fail before provisioning rather than halfway through setup.
+[ "$ENABLED" = "true" ] || exit 0
 sre_bool SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY:-}" true >/dev/null || exit 1
 sre_bool SRE_CONNECT_GITHUB "${SRE_CONNECT_GITHUB:-}" true >/dev/null || exit 1
 
-echo "🔎 Azure SRE Agent is enabled for this environment — running preflight checks ..."
-
-if ! command -v az >/dev/null 2>&1; then
-  echo "❌ The Azure CLI (az) is required to provision the SRE Agent but was not found." >&2
-  echo "   Install it (https://aka.ms/azure-cli) and sign in with 'az login', or set" >&2
-  echo "   DEPLOY_SRE_AGENT=false to provision without SRE." >&2
-  exit 1
-fi
-
-CURRENT_SUB="$(az account show --query id -o tsv 2>/dev/null)"
-if [ -z "$CURRENT_SUB" ]; then
-  echo "❌ No active Azure CLI session." >&2
-  echo "   Sign in yourself with 'az login' and re-run — this hook never opens a" >&2
-  echo "   browser or prompts." >&2
-  exit 1
-fi
-
-if [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] && [ "$CURRENT_SUB" != "${AZURE_SUBSCRIPTION_ID}" ]; then
-  echo "❌ The Azure CLI is pointed at a different subscription than this azd environment." >&2
-  echo "   azd environment: ${AZURE_SUBSCRIPTION_ID}" >&2
-  echo "   Azure CLI:       ${CURRENT_SUB:-<none>}" >&2
-  echo "   Select the right one yourself with:" >&2
-  echo "     az account set --subscription ${AZURE_SUBSCRIPTION_ID}" >&2
-  echo "   (this hook will not switch subscriptions for you)." >&2
-  exit 1
-fi
-
-# The SRE Agent's own region. Defaults to the application region, and is only
-# accepted when the service is actually offered there — an unsupported
-# application region needs SRE_LOCATION, never a silent relocation.
 SRE_REGION="${SRE_LOCATION:-${AZURE_LOCATION:-}}"
-if [ -z "$SRE_REGION" ]; then
-  echo "❌ No region to deploy the SRE Agent into." >&2
-  echo "   Set AZURE_LOCATION for the environment, or SRE_LOCATION to place SRE in a" >&2
-  echo "   supported region while the application stays where it is." >&2
-  exit 1
-fi
-SRE_REGION_KEY="$(printf '%s' "$SRE_REGION" | tr -d ' ' | tr '[:upper:]' '[:lower:]')"
+[[ "$SRE_REGION" =~ ^[a-zA-Z0-9][a-zA-Z0-9\ ]*$ ]] ||
+  { sre_error "Set AZURE_LOCATION or SRE_LOCATION to a supported Azure region."; exit 1; }
 
-REGISTRATION="$(az provider show --namespace Microsoft.App --query registrationState -o tsv 2>/dev/null)"
-if [ "$REGISTRATION" != "Registered" ]; then
-  echo "❌ Resource provider Microsoft.App is '${REGISTRATION:-unknown}' in subscription ${CURRENT_SUB}." >&2
-  echo "   Someone with permission on the subscription must register it:" >&2
-  echo "     az provider register --namespace Microsoft.App" >&2
-  echo "   (this hook does not change provider registration)." >&2
-  exit 1
-fi
-
-# Provider registration alone proves nothing about SRE: the service is
-# previewed per subscription and per region. The authoritative signal available
-# without deploying is whether the agents resource type is offered here.
-LOCATIONS="$(az provider show --namespace Microsoft.App \
-  --query "resourceTypes[?resourceType=='agents'].locations | [0]" -o tsv 2>/dev/null)"
-LOCATIONS_QUERY_STATUS=$?
-
-if [ $LOCATIONS_QUERY_STATUS -ne 0 ]; then
-  echo "⚠️  Could not verify SRE Agent availability for this subscription (the provider" >&2
-  echo "   query failed). Continuing — provisioning may still fail if the service is" >&2
-  echo "   not available here. This is not a confirmation that it is." >&2
-elif [ -z "$LOCATIONS" ]; then
-  echo "❌ The Microsoft.App/agents resource type is not offered to subscription ${CURRENT_SUB}." >&2
-  echo "   Azure SRE Agent access is granted per subscription; registration of the" >&2
-  echo "   Microsoft.App provider does not by itself make the service available." >&2
-  echo "   Request access (https://aka.ms/sre-agent) or set DEPLOY_SRE_AGENT=false." >&2
-  exit 1
+# Restrict overrides to DNS-label names; ARM remains the authority on service
+# naming/uniqueness. The default suffix is Bicep's 13-character uniqueString.
+if [ -n "${SRE_AGENT_NAME_OVERRIDE:-}" ]; then
+  CANDIDATE="$SRE_AGENT_NAME_OVERRIDE"
 else
-  SUPPORTED=""
-  while IFS= read -r loc; do
-    [ -n "$loc" ] || continue
-    key="$(printf '%s' "$loc" | tr -d ' ' | tr '[:upper:]' '[:lower:]')"
-    if [ "$key" = "$SRE_REGION_KEY" ]; then
-      SUPPORTED="yes"
-      break
-    fi
-  done <<<"$LOCATIONS"
+  CANDIDATE="${AZURE_RESOURCE_PREFIX:+${AZURE_RESOURCE_PREFIX}-}sre-0000000000000"
+fi
+[[ "$CANDIDATE" =~ ^[a-z][a-z0-9-]{1,61}[a-z0-9]$ ]] ||
+  { sre_error "SRE_AGENT_NAME_OVERRIDE (or generated AZURE_RESOURCE_PREFIX name) must be a 3-63 character DNS label starting with a lowercase letter and ending with a letter/digit."; exit 1; }
 
-  if [ -z "$SUPPORTED" ]; then
-    echo "❌ Region '${SRE_REGION}' does not offer the SRE Agent in this subscription." >&2
-    echo "   Supported here:" >&2
-    printf '%s\n' "$LOCATIONS" | sed 's/^/     /' >&2
-    echo "   Pick one with 'azd env set SRE_LOCATION <region>'. The application stays" >&2
-    echo "   in ${AZURE_LOCATION:-its current region} — nothing is relocated." >&2
+case "${AZURE_PRINCIPAL_TYPE:-}" in
+  "" | User | ServicePrincipal | Group) ;;
+  *) sre_error "AZURE_PRINCIPAL_TYPE must be User, ServicePrincipal, or Group."; exit 1 ;;
+esac
+
+sre_check_context || exit 1
+echo "Checking Azure SRE Agent provider metadata..."
+PROVIDER="$(az provider show --namespace Microsoft.App --subscription "$AZURE_SUBSCRIPTION_ID" \
+  --output json --only-show-errors 2>/dev/null)" ||
+  { sre_error "Could not verify Microsoft.App availability (query failed or access denied). Check provider-read permission/network access and retry, or set DEPLOY_SRE_AGENT=false. Eligibility is unverified."; exit 1; }
+jq -e 'type == "object" and (.registrationState | type == "string") and
+  (.resourceTypes | type == "array")
+' <<<"$PROVIDER" >/dev/null 2>&1 ||
+  { sre_error "Malformed Microsoft.App provider response; availability is unverified."; exit 1; }
+if [ "$(jq -r '.registrationState' <<<"$PROVIDER")" != "Registered" ]; then
+  sre_error "Microsoft.App is not registered. An authorized operator must run az provider register --namespace Microsoft.App, or disable SRE; this hook never registers providers."
+  exit 1
+fi
+AGENTS="$(jq -c '[.resourceTypes[] | select(.resourceType == "agents")]' <<<"$PROVIDER" 2>/dev/null)" ||
+  { sre_error "Malformed Microsoft.App resource-type metadata; availability is unverified."; exit 1; }
+jq -e 'length == 1 and (.[0].locations | type == "array" and length > 0 and
+  all(.[]; type == "string" and test("^[a-zA-Z0-9 ]+$"))) and
+  (.[0].apiVersions | type == "array" and all(.[]; type == "string"))
+' <<<"$AGENTS" >/dev/null 2>&1 ||
+  { sre_error "Microsoft.App/agents metadata or locations are absent/malformed. Registration alone does not prove SRE access. Check subscription availability at https://sre.azure.com or disable SRE."; exit 1; }
+jq -e --arg api "$SRE_API_VERSION" '.[0].apiVersions | index($api) != null' <<<"$AGENTS" >/dev/null ||
+  { sre_error "The pinned SRE API version is not advertised for this subscription. Check availability or disable SRE; no API version was substituted."; exit 1; }
+jq -e --arg region "$(sre_region_key "$SRE_REGION")" '
+  .[0].locations | map(ascii_downcase | gsub(" "; "")) | index($region) != null
+' <<<"$AGENTS" >/dev/null ||
+  {
+    sre_error "The selected region does not offer SRE in provider metadata. Set SRE_LOCATION to a supported region; the application will not move."
+    jq -r '.[0].locations[]' <<<"$AGENTS" >&2
     exit 1
-  fi
-fi
+  }
 
-# Role assignments need the caller's principal type. A CI federated login is a
-# ServicePrincipal and a developer's 'az login' is a User; guessing either way
-# breaks the other. Recorded through 'azd env set', never by editing .azure/.
-if [ -z "${AZURE_PRINCIPAL_TYPE:-}" ] && command -v azd >/dev/null 2>&1; then
-  case "$(az account show --query user.type -o tsv 2>/dev/null)" in
-    servicePrincipal) azd env set AZURE_PRINCIPAL_TYPE ServicePrincipal >/dev/null 2>&1 || true ;;
-    user) azd env set AZURE_PRINCIPAL_TYPE User >/dev/null 2>&1 || true ;;
-    *) ;;
+if [ -z "${AZURE_PRINCIPAL_TYPE:-}" ]; then
+  case "$SRE_CALLER_TYPE" in
+    servicePrincipal) PRINCIPAL_TYPE=ServicePrincipal ;;
+    user) PRINCIPAL_TYPE=User ;;
+    *) sre_error "Cannot determine operator principal type. Set AZURE_PRINCIPAL_TYPE explicitly before provisioning."; exit 1 ;;
   esac
+  azd env set AZURE_PRINCIPAL_TYPE "$PRINCIPAL_TYPE" --environment "$AZURE_ENV_NAME" --no-prompt \
+    >/dev/null 2>&1 ||
+    { sre_error "Could not persist AZURE_PRINCIPAL_TYPE through azd. Correct environment write access and retry."; exit 1; }
 fi
 
-echo "   ✅ Preflight passed — SRE Agent will be provisioned in '${SRE_REGION}'"
-echo "      using API version ${SRE_API_VERSION}, read-only (accessLevel Low, actionMode Review)."
-exit 0
+echo "Preflight passed for region '$SRE_REGION' and API $SRE_API_VERSION (Low / Review)."
+echo "Provider metadata is not proof of SRE subscription eligibility. Confirm available regions at"
+echo "https://sre.azure.com; ARM provisioning can still be denied. No registration or context was changed."

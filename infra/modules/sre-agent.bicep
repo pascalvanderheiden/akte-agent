@@ -19,7 +19,9 @@
 // and the configuration property names) follows the Microsoft SRE Agent
 // templates — https://github.com/microsoft/sre-agent, commit 53e7b66.
 
-@description('Name of the SRE Agent resource')
+@minLength(3)
+@maxLength(63)
+@description('Name of the SRE Agent resource. The azd preflight requires a lowercase DNS label.')
 param name string
 
 @description('Region for the SRE Agent. Must be a region where the SRE service is available — hooks/sre-preflight.sh checks this before provisioning.')

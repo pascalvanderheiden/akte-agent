@@ -38,6 +38,10 @@ on:
         description: "Region for the SRE Agent (blank = same region as the application, if supported)"
         type: string
         default: ""
+      sre_agent_name:
+        description: "Optional SRE Agent name override (blank = deterministic environment-scoped name)"
+        type: string
+        default: ""
       run_integration_tests:
         description: "Run integration tests after deploying"
         type: boolean
@@ -116,25 +120,26 @@ jobs:
               --no-prompt
 
       # Nonsecret SRE options, recorded with the supported azd command rather
-      # than by editing .azure/. Always written, so turning the input off in a
-      # later run stops future provisioning from creating an agent. It does not
-      # delete an agent that already exists — see docs/sre-agent.md.
+      # than by editing .azure/. Deploy-only runs must not change opt-in state.
+      # Disabling does not delete an existing agent — see docs/sre-agent.md.
       - name: Configure SRE Agent options
+        if: inputs.provision
         env:
           AZURE_ENV_NAME: ${{ inputs.environment }}
           # Passed through env rather than interpolated into the script body,
           # so a value cannot be executed by the runner.
           DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
           SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
+          SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
         run: |
           azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
           # This slice provisions the read-only core only; the connectors and
           # repository attachment are separate work.
           azd env set SRE_CONNECT_TELEMETRY false
           azd env set SRE_CONNECT_GITHUB false
-          if [ -n "$SRE_LOCATION_INPUT" ]; then
-            azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"
-          fi
+          # Empty inputs clear old overrides rather than retaining stale values.
+          azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"
+          azd env set SRE_AGENT_NAME_OVERRIDE "$SRE_AGENT_NAME_INPUT"
           # CI signs in with a federated service principal, so role assignments
           # must not assume a User principal.
           azd env set AZURE_PRINCIPAL_TYPE ServicePrincipal
@@ -177,7 +182,7 @@ jobs:
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Provisioned | ${{ inputs.provision }} |"
             echo "| Skills uploaded | ${{ inputs.upload_use_cases }} |"
-            echo "| SRE Agent | ${{ inputs.deploy_sre_agent }} (core-only) |"
+            echo "| SRE core provisioning requested | ${{ inputs.provision && inputs.deploy_sre_agent }} (readiness in SRE_RESULT log) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:

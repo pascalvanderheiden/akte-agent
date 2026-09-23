@@ -37,7 +37,7 @@ def _compile(path: Path) -> tuple[int, str, str]:
     elif shutil.which("az"):
         cmd = ["az", "bicep", "build", "--file", str(path), "--stdout"]
     else:  # pragma: no cover - depends on the developer machine
-        pytest.skip("neither the bicep CLI nor the Azure CLI is available")
+        pytest.fail("Install the Bicep CLI or Azure CLI to run the cloud-free ARM contract tests.")
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -52,15 +52,8 @@ def sre_template() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def main_template() -> dict[str, Any]:
-    """The compiled top-level template.
-
-    Compiling ``main.bicep`` restores the Microsoft Graph Bicep extension from
-    a registry. Where that registry is unreachable the compile cannot run at
-    all, so the test is skipped rather than reported as a template defect.
-    """
+    """The compiled top-level template; unavailable compilation is not a pass."""
     code, out, err = _compile(INFRA / "main.bicep")
-    if code != 0 and ("BCP192" in err or "Unable to restore" in err):
-        pytest.skip(f"cannot restore Bicep registry artifacts in this environment:\n{err}")
     assert code == 0, f"main.bicep did not compile:\n{err}"
     return json.loads(out)
 
@@ -204,6 +197,8 @@ def test_sre_module_is_conditional(main_template: dict[str, Any]) -> None:
     sre = [d for d in deployments if d["name"] == "sre-agent"]
     assert len(sre) == 1
     assert sre[0]["condition"] == "[parameters('deploySreAgent')]"
+    assert sre[0]["resourceGroup"] == "[format('rg-{0}', parameters('environmentName'))]"
+    assert sre[0]["properties"]["mode"] == "Incremental"
 
 
 def test_sre_reuses_the_environment_monitoring_resources(main_template: dict[str, Any]) -> None:
@@ -211,6 +206,8 @@ def test_sre_reuses_the_environment_monitoring_resources(main_template: dict[str
     params = sre["properties"]["parameters"]
     assert "'app-insights'" in json.dumps(params["appInsightsName"])
     assert "'log-analytics'" in json.dumps(params["logAnalyticsWorkspaceId"])
+    assert any("'app-insights'" in dependency for dependency in sre["dependsOn"])
+    assert any("'log-analytics'" in dependency for dependency in sre["dependsOn"])
 
 
 def test_sre_name_and_location_support_overrides(main_template: dict[str, Any]) -> None:
@@ -237,6 +234,7 @@ def test_sre_outputs_are_exported_and_empty_when_disabled(main_template: dict[st
         "SRE_AGENT_LOCATION",
         "SRE_AGENT_PRINCIPAL_ID",
         "SRE_AGENT_IDENTITY_ID",
+        "SRE_AGENT_IDENTITY_PRINCIPAL_ID",
         "SRE_AGENT_PORTAL_URL",
         "SRE_APP_INSIGHTS_APP_ID",
         "SRE_APP_INSIGHTS_ID",
@@ -261,3 +259,59 @@ def test_parameter_file_defaults_sre_off() -> None:
     assert params["sreAgentName"]["value"] == "${SRE_AGENT_NAME_OVERRIDE}"
     assert params["sreLocation"]["value"] == "${SRE_LOCATION}"
     assert params["principalType"]["value"] == "${AZURE_PRINCIPAL_TYPE=User}"
+
+
+def test_discovery_and_actions_use_the_same_attached_identity(sre_template: dict[str, Any]) -> None:
+    agent = _agent(sre_template)
+    identities = list(agent["identity"]["userAssignedIdentities"])
+    assert len(identities) == 1
+    expected = agent["properties"]["actionConfiguration"]["identity"]
+    assert "Microsoft.ManagedIdentity/userAssignedIdentities" in expected
+    assert identities == [expected] or identities == [f"[format('{{0}}', {expected[1:-1]})]"]
+    assert agent["properties"]["knowledgeGraphConfiguration"]["identity"] == expected
+
+
+def test_agent_waits_for_discovery_rbac(sre_template: dict[str, Any]) -> None:
+    dependencies = _agent(sre_template)["dependsOn"]
+    assert sum("roleAssignments" in value for value in dependencies) == 2
+
+
+def test_existing_app_id_and_monitoring_arm_ids_remain_distinct(sre_template: dict[str, Any]) -> None:
+    outputs = sre_template["outputs"]
+    assert outputs["appInsightsAppId"]["value"].endswith(".AppId]")
+    assert (
+        outputs["appInsightsId"]["value"]
+        == "[resourceId('Microsoft.Insights/components', parameters('appInsightsName'))]"
+    )
+    assert outputs["logAnalyticsWorkspaceId"]["value"] == "[parameters('logAnalyticsWorkspaceId')]"
+    assert outputs["appInsightsAppId"]["value"] != outputs["appInsightsId"]["value"]
+
+
+def test_identity_and_agent_are_tagged_and_named_deterministically(main_template: dict[str, Any]) -> None:
+    deployment = next(
+        d for d in _resources(main_template, "Microsoft.Resources/deployments") if d["name"] == "sre-agent"
+    )
+    params = deployment["properties"]["parameters"]
+    assert params["identityName"]["value"] == "[format('id-sre-{0}', variables('resourceToken'))]"
+    assert main_template["variables"]["resourceToken"] == (
+        "[toLower(uniqueString(subscription().id, parameters('environmentName'), parameters('location')))]"
+    )
+    assert main_template["variables"]["tags"]["azd-env-name"] == "[parameters('environmentName')]"
+    assert params["tags"]["value"] == "[variables('tags')]"
+    for resource_type in ("Microsoft.App/agents", "Microsoft.ManagedIdentity/userAssignedIdentities"):
+        assert _resources(deployment["properties"]["template"], resource_type)[0]["tags"] == "[parameters('tags')]"
+
+
+def test_operator_parameters_are_wired_from_subscription_deployment(main_template: dict[str, Any]) -> None:
+    deployment = next(
+        d for d in _resources(main_template, "Microsoft.Resources/deployments") if d["name"] == "sre-agent"
+    )
+    params = deployment["properties"]["parameters"]
+    assert params["operatorPrincipalId"]["value"] == "[parameters('principalId')]"
+    assert params["operatorPrincipalType"]["value"] == "[parameters('principalType')]"
+
+
+def test_no_logging_secrets_are_exported(sre_template: dict[str, Any]) -> None:
+    outputs = json.dumps(sre_template["outputs"])
+    assert "ConnectionString" not in outputs
+    assert "InstrumentationKey" not in outputs

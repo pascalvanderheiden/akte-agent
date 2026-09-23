@@ -25,19 +25,29 @@ azd provision
 | `DEPLOY_SRE_AGENT` | `false` | Provision the SRE Agent for this environment |
 | `SRE_CONNECT_TELEMETRY` | `true` | Attempt the workload telemetry connectors (not implemented yet → `pending`) |
 | `SRE_CONNECT_GITHUB` | `true` | Attempt repository attachment (not implemented yet → `pending`) |
-| `SRE_AGENT_NAME_OVERRIDE` | derived | Name override. The default is `<namePrefix>sre-<resourceToken>`, deterministic per environment (`namePrefix` is the optional `AZURE_RESOURCE_PREFIX` plus a hyphen, empty when unset). Named separately from the `SRE_AGENT_NAME` output so a provisioned name never becomes an implicit override |
+| `SRE_AGENT_NAME_OVERRIDE` | derived | Name override. The default is `<namePrefix>sre-<resourceToken>`, deterministic per environment (`namePrefix` is the optional `AZURE_RESOURCE_PREFIX` plus a hyphen, empty when unset). Preflight accepts 3-63 character lowercase DNS labels, starting with a letter and ending with a letter/digit; Azure still validates service naming/uniqueness. Named separately from the `SRE_AGENT_NAME` output so a provisioned name never becomes an implicit override |
 | `SRE_LOCATION` | `AZURE_LOCATION` | Region for the agent, when the application's region does not offer SRE |
-| `AZURE_PRINCIPAL_TYPE` | `User` | Principal type of the deployer; preflight sets it from the current Azure CLI session |
+| `AZURE_PRINCIPAL_TYPE` | detected by preflight | `User`, `ServicePrincipal`, or explicit `Group`. Preflight persists a detected type with `azd env set`; inability to determine/persist it is a failure. Direct Bicep use defaults to `User`, so CI callers must supply `ServicePrincipal` |
 
-A malformed boolean (`ture`, `on`, …) is an error, not a silent "off".
+Use lowercase `true` or `false`, matching the ARM parameter contract. Aliases
+such as `yes`, `1`, and `TRUE` fail explicitly rather than passing a hook and
+then failing ARM. Optional switches are validated when SRE is enabled.
+
+The manual Deploy workflow exposes `deploy_sre_agent`, `sre_location`, and
+`sre_agent_name`. They apply only when `provision` is selected, with both
+integration switches set to `false`. Blank overrides clear earlier values.
+Deploy-only runs refresh existing outputs and deploy application services;
+they neither configure nor create SRE.
 
 ## Core-only mode
 
 `SRE_CONNECT_TELEMETRY=false` and `SRE_CONNECT_GITHUB=false` make the core-only
-intent explicit. In that mode the hooks issue exactly one Azure call — a
-readiness check on the agent — and report:
+intent explicit. Hooks read azd/Azure CLI context and provider metadata;
+postprovision reads the agent, with bounded readiness retries. No connector,
+GitHub, data-plane token, or repository calls are made. Setup reports:
 
 ```text
+SRE_TELEMETRY_RESULT app_insights=disabled log_analytics=disabled
 SRE_RESULT core=ready telemetry=disabled github=disabled
 ```
 
@@ -46,29 +56,45 @@ as `pending` with the reason, and the provision still succeeds.
 
 ### The result contract
 
-Every setup run ends with one machine-readable line, with core and each
-optional integration reported independently:
+Every setup process, including configuration/CLI failures, ends with exactly
+one `SRE_RESULT` line. Its original three fields and ordering are unchanged.
+An additional `SRE_TELEMETRY_RESULT` line reports each telemetry source
+independently. Both sources are `pending` or `disabled` in this core-only
+release; **neither is verified**.
+
+The shared `sre_result core telemetry github [app_insights] [log_analytics]`
+helper in `hooks/sre-lib.sh` preserves the original three-argument interface.
+Future telemetry setup supplies per-source states in arguments 4/5 and an
+honest aggregate in `telemetry`. `core` uses `disabled`, `ready`, or `failed`;
+optional integrations use:
 
 | State | Meaning |
 | --- | --- |
 | `disabled` | Switched off for this environment; nothing was attempted |
 | `ready` | Verified working — not merely created |
-| `pending` | Needs an authorization or a value a hook must not invent |
+| `pending` | Not yet implemented, awaiting authorization, or awaiting propagation |
 | `unavailable` | Confirmed unsupported by the service, policy, or tenant |
 | `failed` | Attempted and errored |
 
 ## Prerequisites and permissions
 
-- **Subscription access to the SRE service.** Availability is granted per
-  subscription and per region. Registering the `Microsoft.App` provider does
-  **not** by itself make the service available — the preflight hook checks
-  whether the `Microsoft.App/agents` resource type is actually offered to your
-  subscription and refuses to guess.
+- **Subscription access to the SRE service.** Registering `Microsoft.App` does
+  **not** by itself prove access. Preflight requires advertised agents
+  locations and the pinned API version, but provider metadata is not a
+  guarantee of service eligibility. Confirm the subscription's available
+  regions in the creation wizard at <https://sre.azure.com>.
+- **Bash, azd, Azure CLI, and jq.** The hooks check required tools only when
+  enabled. Standalone `--environment` loading needs azd/jq even for a disabled
+  environment, but makes no Azure calls when disabled.
 - **Azure CLI signed in** to the same subscription as the azd environment. The
   hooks never sign in, install tools, register providers, change consent, or
   switch subscription or region for you; they report what to run.
-- **Permission to create role assignments** in the environment's resource
-  group (`Owner` or `User Access Administrator`). The deployment assigns:
+- **Deployment permissions** for the existing subscription-scoped template
+  and resources, plus permission to create role assignments in the
+  environment's resource group (for example Contributor plus User Access
+  Administrator, or Owner). User Access Administrator alone cannot provision
+  infrastructure. These are deployer prerequisites, **not agent grants**.
+  The deployment assigns:
 
   | Principal | Role | Scope |
   | --- | --- | --- |
@@ -85,17 +111,25 @@ optional integration reported independently:
 `hooks/sre-preflight.sh` runs at `preprovision`, only when `DEPLOY_SRE_AGENT`
 is true, and fails before anything is created when:
 
-- the Azure CLI is missing or has no active session;
-- the CLI's subscription differs from the azd environment's;
+- required tools or azd environment context are missing;
+- the selected azd environment differs from injected context, or the CLI's
+  subscription/tenant differs from that context;
 - `Microsoft.App` is not registered;
-- `Microsoft.App/agents` is not offered to the subscription;
+- `Microsoft.App/agents` metadata/locations are missing or malformed, or the
+  pinned API version is not advertised;
 - the chosen region does not offer SRE — the message lists the regions that do,
   and the fix is `azd env set SRE_LOCATION <region>`. The application is never
   relocated.
 
-If the availability query itself fails, the hook says so and continues. That is
-an *unverified* state, not a confirmation of eligibility: the provision may
-still fail against ARM.
+Query failure/denial is a nonzero failure, never success-shaped fallback.
+Diagnostics identify the failing operation without dumping CLI responses,
+tokens, or invalid input values. Successful metadata checks still explicitly
+report service eligibility as unproven: ARM provisioning may reject access.
+No old SRE outputs are required for a fresh preflight.
+
+An existing SRE agent cannot be moved between regions. Changing its name
+creates a different resource under incremental deployment; the old agent
+remains until explicitly cleaned up.
 
 You can run the same checks by hand:
 
@@ -151,18 +185,45 @@ The agent's data-plane endpoint is deliberately **not** an output: later steps
 resolve it from ARM rather than constructing a hostname or committing an
 environment-specific default.
 
+### Extension boundary for telemetry and GitHub
+
+Telemetry (#36) must use `SRE_AGENT_PRINCIPAL_ID` (the system-assigned
+connector identity), the distinct `SRE_APP_INSIGHTS_APP_ID`, and the two
+monitoring ARM IDs. Discovery/actions use the separate user-assigned identity.
+GitHub (#37) must discover `properties.agentEndpoint` using `SRE_AGENT_ID`
+before authenticated data-plane calls. Neither integration is implemented
+by this PR.
+
+Extend the existing setup/result helpers rather than creating another agent
+or duplicating core checks. Core readiness currently verifies ARM
+`Succeeded`, environment ownership, location, `Low`/`Review`, discovery
+scope, attached identities, and shared logging `AppId`. It does **not**
+prove telemetry ingestion, connector query access, or repository access.
+
 ## Re-running setup without redeploying
 
 `hooks/sre-setup.sh` is rerunnable on its own against an already-provisioned
 environment:
 
 ```bash
-eval "$(azd env get-values | sed 's/^/export /')" && ./hooks/sre-setup.sh
+./hooks/sre-setup.sh --environment <azd-environment>
 ```
 
-It is noninteractive, converges on repeat runs, and its readiness retry is
-bounded (`SRE_READY_ATTEMPTS`, default 10; `SRE_READY_DELAY_SECONDS`, default
-15) — it reports exhaustion rather than hanging.
+This reads an allowlist from `azd env get-values --output json`, never
+shell-evaluates it, and clears stale SRE values inherited from other
+environments. Normal azd hooks use their injected environment. No generated
+`.azure/` files are edited, and no authentication tokens are requested.
+
+Readiness attempts are bounded (`SRE_READY_ATTEMPTS`, default 10, allowed
+1-60; `SRE_READY_DELAY_SECONDS`, default 15, allowed 0-300). Supply these
+optional tuning knobs as process environment variables. Known provisioning
+states and allowlisted transient resource-read errors retry; malformed
+responses, terminal failure, unknown errors, and permanent denial fail
+immediately. Exhaustion is nonzero. Individual calls also depend on the
+Azure CLI's own network timeout behavior.
+
+Standalone preflight uses the same selection:
+`./hooks/sre-preflight.sh --environment <azd-environment>`.
 
 ## Cost and usage
 
@@ -179,16 +240,24 @@ on a long-lived environment.
 > deploys the template incrementally, and ARM does not remove resources that
 > simply stopped being declared. A billable agent left behind keeps billing.
 
-Cleanup is explicit:
+Cleanup is explicit. Capture references **before** reprovisioning with the flag
+off: a disabled provision empties SRE outputs even though resources remain.
 
 ```bash
+AGENT_ID="$(azd env get-value SRE_AGENT_ID)"
+IDENTITY_ID="$(azd env get-value SRE_AGENT_IDENTITY_ID)"
+IDENTITY_PRINCIPAL_ID="$(azd env get-value SRE_AGENT_IDENTITY_PRINCIPAL_ID)"
+# Review these identifiers and associated role assignments before deleting.
 azd env set DEPLOY_SRE_AGENT false
-az resource delete --ids "$(azd env get-value SRE_AGENT_ID)" \
-  --api-version 2025-05-01-preview
+az resource delete --ids "$AGENT_ID" --api-version 2025-05-01-preview
 ```
 
-Delete the agent's user-assigned identity (`SRE_AGENT_IDENTITY_ID`) too if you
-want it gone. Do **not** delete the Application Insights component or the Log
+If already disabled/reprovisioned, recover the exact SRE resource/identity
+references from Azure before cleanup; never guess a target. Remove the
+Reader/Monitoring Reader assignments belonging to `IDENTITY_PRINCIPAL_ID`
+at this environment's resource group, then delete `IDENTITY_ID` if no longer
+used. These are explicit operator actions; hooks never delete or roll back.
+Do **not** delete the Application Insights component or the Log
 Analytics workspace: they are shared with the application and predate SRE.
 `azd down` removes the whole environment, SRE included.
 
@@ -197,11 +266,13 @@ Analytics workspace: they are shared with the application and predate SRE.
 | Symptom | What it means |
 | --- | --- |
 | `DEPLOY_SRE_AGENT must be true or false` | A malformed value; fix it with `azd env set DEPLOY_SRE_AGENT false` |
-| `The Microsoft.App/agents resource type is not offered…` | The subscription has no SRE access — request it, or set `DEPLOY_SRE_AGENT=false` |
-| `Region '<x>' does not offer the SRE Agent` | Set `SRE_LOCATION` to one of the listed regions |
-| `The Azure CLI is pointed at a different subscription` | Run the printed `az account set` yourself |
-| `this environment has no SRE_AGENT_ID` | Provisioning did not run with SRE enabled, or outputs are stale — `azd provision`, or `azd env refresh` |
-| `did not become ready after N attempts` | Still provisioning; re-run `./hooks/sre-setup.sh` |
+| Missing/malformed agents metadata or failed provider query | Availability unverified: check provider-read permissions, network, and the service creation wizard; do not assume registration proves eligibility |
+| Region not offered | Set `SRE_LOCATION` to one of the listed regions |
+| Context differs | Clear stale shell exports; select the intended azd environment and Azure CLI subscription/tenant yourself |
+| Missing SRE outputs | Provisioning did not run with SRE enabled, or outputs are stale — `azd provision`, or `azd env refresh` |
+| `did not become ready after N attempts` | Still provisioning/transient read failures; inspect Azure and re-run with `--environment` |
+| Core verification failed | Read-only settings, identity, scope, region, or logging target drifted; inspect before correcting, never auto-widen permissions |
+| Unknown/permanent resource read failure | Check permissions/network and inspect Azure privately; raw diagnostics are intentionally suppressed |
 | `RoleAssignmentUpdateNotPermitted` on redeploy | An assignment exists with a different principal type — check `AZURE_PRINCIPAL_TYPE` matches how you signed in |
 
 ## Manual acceptance (optional, explicitly authorized environments only)
@@ -230,7 +301,7 @@ Then check:
 4. **Scope** — `properties.knowledgeGraphConfiguration.managedResources`
    contains only this environment's resource group.
 5. **Convergence** — run `azd provision` again and re-run
-   `./hooks/sre-setup.sh`: no duplicate agent, identity, or role assignment, and
+   `./hooks/sre-setup.sh --environment sre-accept`: no duplicate agent, identity, or role assignment, and
    the same result line.
 
 Finish with `azd down` so the disposable environment stops costing money.
@@ -239,6 +310,11 @@ Finish with `azd down` so the disposable environment stops costing money.
 
 - [Deploy SRE Agent with IaC](https://learn.microsoft.com/azure/sre-agent/deploy-iac)
 - [Supported regions](https://learn.microsoft.com/azure/sre-agent/supported-regions)
+- [Create and set up SRE Agent](https://learn.microsoft.com/azure/sre-agent/usage)
 - [microsoft/sre-agent templates](https://github.com/microsoft/sre-agent) — the
   resource contract pinned here (`Microsoft.App/agents@2025-05-01-preview`) and
   the identity model follow commit `53e7b66`.
+
+Microsoft Learn guidance and the pinned core template were rechecked on
+2026-09-23. Local compilation and fake-CLI tests verify the submitted contract,
+not live subscription eligibility, resource readiness, or paid service access.
