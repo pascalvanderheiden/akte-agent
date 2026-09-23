@@ -63,12 +63,12 @@ export function SettingsModal({ open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
       <div className="bg-surface rounded-2xl shadow-card max-w-lg w-full border border-border-soft animate-slide-up" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-accent from-slate-100 to-slate-50 dark:from-white/[0.08] dark:to-white/[0.04] flex items-center justify-center border border-border-soft">
+            <div className="w-9 h-9 rounded-xl bg-accent from-slate-100 to-slate-50 dark:from-white/8 dark:to-white/4 flex items-center justify-center border border-border-soft">
               <svg className="w-4.5 h-4.5 text-text" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
               </svg>
@@ -118,7 +118,7 @@ export function SettingsModal({ open, onClose }: Props) {
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               placeholder="https://your-resource.services.ai.azure.com"
-              className="w-full px-4 py-2.5 bg-surface-2 border border-border-soft rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all placeholder:text-muted"
+              className="w-full px-4 py-2.5 bg-surface-2 border border-border-soft rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all placeholder:text-muted"
             />
           </div>
 
@@ -132,7 +132,7 @@ export function SettingsModal({ open, onClose }: Props) {
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="gpt-52"
-              className="w-full px-4 py-2.5 bg-surface-2 border border-border-soft rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all placeholder:text-muted"
+              className="w-full px-4 py-2.5 bg-surface-2 border border-border-soft rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all placeholder:text-muted"
             />
           </div>
 
@@ -155,7 +155,7 @@ export function SettingsModal({ open, onClose }: Props) {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all disabled:opacity-50 font-medium shadow-sm"
+            className="px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all disabled:opacity-50 font-medium shadow-xs"
           >
             {saving ? "Saving..." : "Save Changes"}
           </button>

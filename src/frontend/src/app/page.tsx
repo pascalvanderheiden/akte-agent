@@ -276,7 +276,7 @@ export default function Home() {
       {/* Skip to content link for accessibility */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-accent focus:text-accent-fg focus:rounded-lg focus:text-sm focus:font-medium focus:shadow-lg"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-100 focus:px-4 focus:py-2 focus:bg-accent focus:text-accent-fg focus:rounded-lg focus:text-sm focus:font-medium focus:shadow-lg"
       >
         Skip to content
       </a>
@@ -295,7 +295,7 @@ export default function Home() {
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden animate-fade-in"
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-40 lg:hidden animate-fade-in"
           onClick={closeSidebar}
         />
       )}
@@ -345,7 +345,7 @@ export default function Home() {
         ) : (
           <div className="flex-1 flex flex-col">
             {/* Mobile top bar */}
-            <div className="lg:hidden flex items-center px-4 py-3 border-b border-border-soft bg-surface backdrop-blur">
+            <div className="lg:hidden flex items-center px-4 py-3 border-b border-border-soft bg-surface backdrop-blur-sm">
               <button
                 onClick={() => setSidebarOpen(true)}
                 className="p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
@@ -404,14 +404,14 @@ export default function Home() {
                       }}
                       placeholder="Ask me anything..."
                       rows={1}
-                      className="flex-1 px-4 py-3 text-sm text-text bg-transparent resize-none focus:outline-none placeholder:text-muted leading-relaxed"
+                      className="flex-1 px-4 py-3 text-sm text-text bg-transparent resize-none focus:outline-hidden placeholder:text-muted leading-relaxed"
                       style={{ minHeight: "44px", maxHeight: "120px" }}
                     />
                     <button
                       onClick={() => { if (landingInput.trim()) startConversation(landingInput.trim()); }}
                       disabled={!landingInput.trim()}
                       aria-label="Send message"
-                      className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95"
+                      className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95"
                     >
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
@@ -419,7 +419,7 @@ export default function Home() {
                     </button>
                   </div>
                   <p className="text-[11px] text-muted text-center mt-2">
-                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px] font-mono border border-border-soft">Enter</kbd> to send · <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px] font-mono border border-border-soft">Shift+Enter</kbd> new line
+                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded-sm text-[10px] font-mono border border-border-soft">Enter</kbd> to send · <kbd className="px-1.5 py-0.5 bg-surface-2 rounded-sm text-[10px] font-mono border border-border-soft">Shift+Enter</kbd> new line
                   </p>
                 </div>
 
@@ -430,10 +430,10 @@ export default function Home() {
                       <button
                         key={i}
                         onClick={() => handleSampleQuestion(q)}
-                        className="group text-left px-4 py-3.5 rounded-xl border border-border-soft bg-surface hover:border-accent hover:bg-hover transition-all duration-300 hover:shadow-md animate-slide-up-stagger active:scale-[0.98] backdrop-blur-sm"
+                        className="group text-left px-4 py-3.5 rounded-xl border border-border-soft bg-surface hover:border-accent hover:bg-hover transition-all duration-300 hover:shadow-md animate-slide-up-stagger active:scale-[0.98] backdrop-blur-xs"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center flex-shrink-0 group-hover:bg-accent-soft transition-colors">
+                          <div className="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center shrink-0 group-hover:bg-accent-soft transition-colors">
                             <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
                             </svg>
@@ -449,7 +449,7 @@ export default function Home() {
                 {skills.filter((s) => s.enabled).length > 0 && (
                   <div className="flex flex-wrap justify-center gap-2 px-4 animate-fade-in">
                     {skills.filter((s) => s.enabled).map((s) => (
-                      <span key={s.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted bg-surface rounded-full border border-border-soft hover:border-accent hover:text-accent transition-all duration-200 cursor-default backdrop-blur-sm">
+                      <span key={s.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted bg-surface rounded-full border border-border-soft hover:border-accent hover:text-accent transition-all duration-200 cursor-default backdrop-blur-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 dark:bg-emerald-500 animate-pulse-slow" />
                         {s.name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                       </span>
@@ -465,7 +465,7 @@ export default function Home() {
       {/* Persona-import overlay (embed Variant B): shows while the relayed
           manifest is being imported, with an inline retry on failure. */}
       {embed.embed && (importStatus === "importing" || importStatus === "error") && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-bg/80 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-bg/80 backdrop-blur-xs animate-fade-in">
           <div className="w-full max-w-sm mx-4 p-6 rounded-2xl border border-border-soft bg-surface shadow-xl text-center">
             {importStatus === "importing" ? (
               <>
@@ -481,7 +481,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <h2 className="text-base font-semibold text-text mb-1">Couldn&apos;t create the persona</h2>
-                <p className="text-sm text-muted mb-4 break-words">{importError}</p>
+                <p className="text-sm text-muted mb-4 wrap-break-word">{importError}</p>
                 <button
                   onClick={runImport}
                   className="px-4 py-2 rounded-xl bg-accent text-accent-fg text-sm font-medium shadow-md hover:shadow-lg active:scale-95 transition-all"
@@ -497,7 +497,7 @@ export default function Home() {
       {/* Full-screen Agent Manager overlay — rendered on top so the active
           ChatWindow stays mounted and any in-flight stream keeps running. */}
       {skillsOpen && (
-        <div className="fixed inset-0 z-[60]">
+        <div className="fixed inset-0 z-60">
           <SkillsAdminPanel
             onClose={() => setSkillsOpen(false)}
             useCase={selectedUseCase}

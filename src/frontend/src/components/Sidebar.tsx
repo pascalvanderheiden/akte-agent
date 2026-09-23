@@ -101,17 +101,17 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           href={embedBackHref}
           className="flex items-center gap-2 px-5 py-2.5 text-xs font-medium text-muted hover:text-text bg-surface border-b border-border-soft hover:bg-hover transition-all"
         >
-          <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
           </svg>
           Back to Agentic Loop
         </a>
       )}
       {deleteTarget && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur animate-fade-in">
+        <div className="fixed inset-0 z-200 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
           <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm mx-4 shadow-card animate-scale-in">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-danger-500/10 flex items-center justify-center flex-shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-danger-500/10 flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-danger-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                 </svg>
@@ -119,7 +119,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               <h3 className="text-base font-semibold text-text-strong">Delete conversation?</h3>
             </div>
             <p className="text-xs text-muted mb-2 leading-relaxed">This will permanently delete:</p>
-            <p className="text-sm text-text font-medium break-words mb-5 px-3 py-2 bg-surface-2 rounded-lg border border-border-soft">
+            <p className="text-sm text-text font-medium wrap-break-word mb-5 px-3 py-2 bg-surface-2 rounded-lg border border-border-soft">
               {deleteTarget.title}
             </p>
             <div className="flex gap-2.5 justify-end">
@@ -143,7 +143,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
 
       <div className="px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-accent rounded-xl flex items-center justify-center shadow-card flex-shrink-0">
+          <div className="w-9 h-9 bg-accent rounded-xl flex items-center justify-center shadow-card shrink-0">
             <svg className="w-5 h-5 text-accent-fg" viewBox="0 0 24 24" fill="currentColor">
               <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
             </svg>
@@ -208,7 +208,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               value={selectedUseCase}
               onChange={(e) => onSelectUseCase(e.target.value)}
               aria-label="Select agent persona"
-              className="w-full text-sm text-text bg-surface border border-border rounded-lg pl-3 pr-9 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent appearance-none cursor-pointer hover:bg-hover transition-all"
+              className="w-full text-sm text-text bg-surface border border-border rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent appearance-none cursor-pointer hover:bg-hover transition-all"
             >
               {visibleUseCases.map((uc) => (
                 <option key={uc.name} value={uc.name} className="bg-surface text-text">
@@ -251,7 +251,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search conversations..."
               aria-label="Search conversations"
-              className="w-full text-xs text-text bg-surface border border-border-soft rounded-lg pl-8 pr-8 py-2 focus:outline-none focus:ring-1 focus:ring-accent placeholder:text-muted transition-all"
+              className="w-full text-xs text-text bg-surface border border-border-soft rounded-lg pl-8 pr-8 py-2 focus:outline-hidden focus:ring-1 focus:ring-accent placeholder:text-muted transition-all"
             />
             {searchQuery && (
               <button
@@ -321,7 +321,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); setDeleteTarget(conv); }}
-                          className="opacity-0 group-hover:opacity-100 flex-shrink-0 p-1.5 mr-1.5 text-muted hover:text-danger-500 rounded-md transition-all"
+                          className="opacity-0 group-hover:opacity-100 shrink-0 p-1.5 mr-1.5 text-muted hover:text-danger-500 rounded-md transition-all"
                           title="Delete conversation"
                           aria-label={`Delete conversation: ${conv.title}`}
                         >
@@ -371,10 +371,10 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
         <OboSignIn />
         <div className="pt-2 px-3 flex items-center justify-between gap-2">
           <p className="text-[10px] text-muted flex items-center gap-1.5 min-w-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-success-500 animate-pulse-slow flex-shrink-0"></span>
+            <span className="w-1.5 h-1.5 rounded-full bg-success-500 animate-pulse-slow shrink-0"></span>
             <span className="truncate">Copilot SDK + Foundry + MCP</span>
           </p>
-          <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
             <ThemePicker />
             <a
               href="https://github.com/kmavrodis/kratos-agent"
