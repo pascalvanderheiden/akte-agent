@@ -79,7 +79,8 @@ updates:
       # fail on their own (see the React 19 pair, #45 and #50). Listed first
       # because Dependabot assigns a dependency to the first matching group,
       # and this one deliberately has no update-types filter so it also
-      # covers majors.
+      # covers majors. Include Next.js, MSAL, and the native compiler because
+      # their React/compiler compatibility must be validated together.
       react:
         patterns:
           - react
