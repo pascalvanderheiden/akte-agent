@@ -7,6 +7,23 @@ sampleQuestions:
   - Search for the top programming languages in demand and compare their growth with charts
   - Use web search to find current best practices for API design and summarize key insights
 curated: true
+localizations:
+  en:
+    displayName: Generic Assistant
+    description: General-purpose enterprise AI assistant with web search, code execution, data analysis, and document skills
+    sampleQuestions:
+      - Search the web for the latest AI trends in 2026 and summarize the top 5
+      - Find and analyze recent data on global cloud spending trends this year using visuals
+      - Search for the top programming languages in demand and compare their growth with charts
+      - Use web search to find current best practices for API design and summarize key insights
+  nl:
+    displayName: Algemene assistent
+    description: Algemene AI-assistent voor webonderzoek, code-uitvoering, data-analyse en documentvaardigheden
+    sampleQuestions:
+      - Zoek op het web naar de nieuwste AI-trends in 2026 en vat de vijf belangrijkste samen
+      - Zoek en analyseer recente gegevens over wereldwijde clouduitgaven met visualisaties
+      - Vergelijk de meest gevraagde programmeertalen met grafieken
+      - Zoek actuele best practices voor API-ontwerp en vat de belangrijkste punten samen
 ---
 
 You are Kratos, an enterprise AI assistant.

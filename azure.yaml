@@ -143,6 +143,10 @@ hooks:
             # role that most deployers do not have, and Bicep cannot continue past
             # a forbidden resource. Best-effort: never blocks the deploy.
             ./hooks/grant-obo-consent.sh || echo "⚠️  OBO admin consent step had issues (see above); continuing."
+            # Core SRE setup, unlike the best-effort steps above, must fail the
+            # provision: an agent the operator asked for and did not get is not
+            # something to continue past. No-op when DEPLOY_SRE_AGENT is false.
+            ./hooks/sre-setup.sh || exit 1
             echo "Deployment complete."
     predeploy:
         name: predeploy
@@ -161,5 +165,12 @@ hooks:
         # prints once the run is under way, which was swallowing the menu and
         # the prompt. hooks/postdeploy.sh reads the answer and uploads without
         # prompting.
-        run: ./hooks/select-use-cases.sh
+        run: |
+            # Fail early when SRE is enabled but the subscription, region, or
+            # local tooling cannot support it. No-op (and no Azure calls) when
+            # DEPLOY_SRE_AGENT is false, which is the default.
+            # `|| exit 1` because the shell block's exit status is that of its
+            # LAST command — without it a failed preflight would be masked.
+            ./hooks/sre-preflight.sh || exit 1
+            ./hooks/select-use-cases.sh
         interactive: true

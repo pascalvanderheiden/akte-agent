@@ -1,0 +1,50 @@
+name: Dependency compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mocks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mocks
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mocks/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  obo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/obo-mcp-server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: pip install --no-cache-dir -r requirements.txt
+      - run: pip check
+      - run: python -m unittest discover -s tests -v
+
+  python-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - run: pip install uv
+      - run: uv lock --check --project src/backend
