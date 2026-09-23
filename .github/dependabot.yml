@@ -68,19 +68,30 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # TypeScript 7 type-checks the app via typescript-native. ESLint still
+    # consumes the TypeScript 6 JavaScript compiler API.
+    ignore:
+      - dependency-name: typescript
+        versions: ["7.x"]
     groups:
       # react and react-dom must upgrade together — their peer ranges are
       # locked to each other, so splitting them produces two PRs that each
       # fail on their own (see the React 19 pair, #45 and #50). Listed first
       # because Dependabot assigns a dependency to the first matching group,
       # and this one deliberately has no update-types filter so it also
-      # covers majors.
+      # covers majors. Include Next.js, MSAL, and the native compiler because
+      # their React/compiler compatibility must be validated together.
       react:
         patterns:
           - react
           - react-dom
           - "@types/react"
           - "@types/react-dom"
+          - "@azure/msal-browser"
+          - "@azure/msal-react"
+          - next
+          - eslint-config-next
+          - typescript-native
       frontend-security:
         applies-to: security-updates
         patterns: ["*"]
