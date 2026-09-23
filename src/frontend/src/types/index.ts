@@ -193,9 +193,9 @@ export interface UseCase {
 export type Locale = "en" | "nl";
 
 export interface PersonaLocalization {
-  displayName: string;
-  description: string;
-  sampleQuestions: string[];
+  displayName?: string;
+  description?: string;
+  sampleQuestions?: string[];
 }
 
 // ─── MCP Servers Admin ───

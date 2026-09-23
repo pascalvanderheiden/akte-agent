@@ -46,7 +46,8 @@ if "FOUNDRY_ENDPOINT" not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.config import Settings, get_settings
-from app.hosted_agent_invoke import parse_invoke_payload
+from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
+from app.locale import Locale
 from app.models import (
     ContentEvent,
     DoneEvent,
@@ -289,9 +290,9 @@ async def _stream_response(
     conversation_id: str,
     message: str,
     use_case: str,
-    locale: str | None = None,
     mcp_access_tokens: dict[str, str] | None = None,
     token_source: dict | None = None,
+    locale: Locale | None = None,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     start_time = time.monotonic()
@@ -332,15 +333,10 @@ async def _stream_response(
         collected_thoughts: list[str] = []
         collected_tool_calls: list[dict] = []
 
-        language = {"en": "English", "nl": "Dutch"}.get(locale or "")
-        language_instruction = (
-            f"\n\nRespond in {language} by default. Honor an explicit user request for another output language."
-            if language
-            else ""
-        )
         async for event in _copilot_agent.run(
-            message=f"{message}{language_instruction}",
+            message=message,
             conversation_id=conversation_id,
+            locale=locale,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -468,9 +464,6 @@ async def handle_invoke(request: Request) -> Response:
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
         use_case = data.get("useCase", "generic")
-        locale = data.get("locale")
-        if locale not in (None, "en", "nl"):
-            raise ValueError("locale must be 'en' or 'nl'")
 
         # Per-MCP-server user tokens for On-Behalf-Of (kept out of the message
         # text so they are never visible to the model). Coerce to a clean
@@ -495,11 +488,6 @@ async def handle_invoke(request: Request) -> Response:
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
                 message = message[:uc_match.start()] + message[uc_match.end():]
-
-            locale_match = re.search(r"<locale>\s*(en|nl)\s*</locale>", message)
-            if locale_match:
-                locale = locale or locale_match.group(1)
-                message = message[:locale_match.start()] + message[locale_match.end():]
 
             # Strip <system_instructions> — the hosted agent sets the system
             # prompt via the registry, so the prepended copy is redundant.
@@ -540,6 +528,14 @@ async def handle_invoke(request: Request) -> Response:
             # Clean up leading/trailing whitespace from tag removal
             message = message.strip()
 
+        conversation_match = re.match(r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL)
+        if conversation_match:
+            from html import unescape
+
+            if "conversationId" not in data:
+                conversation_id = unescape(conversation_match.group(1))
+            message = message[conversation_match.end():].strip()
+        locale, message = extract_invoke_locale(data, message)
         logger.info(
             "handle_invoke: useCase=%s conversation=%s registries=%s message_len=%d "
             "mcp_tokens=%s (body=%s tag=%s)",
@@ -568,8 +564,8 @@ async def handle_invoke(request: Request) -> Response:
             conversation_id,
             message,
             use_case,
-            locale,
             mcp_access_tokens,
+            locale=locale,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,

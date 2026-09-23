@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("", response_model=UseCaseList)
+@router.get("", response_model=UseCaseList, response_model_exclude_unset=True)
 async def list_use_cases(request: Request) -> UseCaseList:
     """List all available use-cases."""
     registries: dict[str, SkillRegistry] = request.app.state.registries

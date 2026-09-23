@@ -16,6 +16,7 @@ import aiohttp
 from azure.identity.aio import DefaultAzureCredential
 
 from app.config import Settings
+from app.locale import Locale
 
 logger = logging.getLogger(__name__)
 
@@ -257,10 +258,10 @@ class FoundryAgentProxy:
         conversation_id: str,
         use_case: str = "generic",
         system_prompt: str | None = None,
-        locale: str | None = None,
         agent_session_id: str | None = None,
         eval_run_id: str | None = None,
         mcp_access_tokens: dict[str, str] | None = None,
+        locale: Locale | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Invoke the hosted agent and yield event dicts.
 
@@ -281,6 +282,10 @@ class FoundryAgentProxy:
             preamble_parts.append(f"<use_case>{use_case}</use_case>")
         if system_prompt:
             preamble_parts.append(f"<system_instructions>\n{system_prompt}\n</system_instructions>")
+        # Keep conversation identity when a gateway forwards only standard input.
+        from html import escape
+
+        preamble_parts.append(f"<conversation_id>{escape(conversation_id)}</conversation_id>")
         if locale:
             preamble_parts.append(f"<locale>{locale}</locale>")
         # SECURITY: per-MCP-server user OBO tokens are NEVER embedded in the

@@ -188,3 +188,46 @@ def test_auth_enforced_when_enabled(client):
     app.dependency_overrides[get_settings] = lambda: Settings(admin_auth_enabled="true")
     resp = client.post("/api/use-cases/import", json={"manifest": _manifest()})
     assert resp.status_code == 401
+
+
+def test_partial_translation_keeps_missing_fields_optional_in_catalog(client):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(localizations={"nl": {"displayName": "Synthetische naam"}}),
+        },
+    )
+    assert response.status_code == 201
+    catalog = client.get("/api/use-cases")
+    assert catalog.status_code == 200
+    persona = catalog.json()["useCases"][0]
+    assert persona["localizations"] == {"nl": {"displayName": "Synthetische naam"}}
+    assert persona["description"] == _manifest()["description"]
+
+
+def test_invalid_prompt_localization_is_rejected_without_losing_previous_metadata(client):
+    response = client.post("/api/use-cases/import", json={"manifest": _manifest()})
+    slug = response.json()["name"]
+    url = f"/api/admin/system-prompt?use_case={slug}"
+    before = client.get(url).json()
+    invalid = "---\nlocalizations:\n  fr:\n    displayName: Nope\n---\n\nInstructions"
+    assert client.put(url, json={"content": invalid}).status_code == 422
+    assert client.get(url).json() == before
+
+
+def test_generic_catalog_has_complete_translations_and_retained_scalar_fields(client):
+    from app.main import app
+    from app.services.skill_registry import SkillRegistry
+
+    root = Path(__file__).parents[3]
+    registry = SkillRegistry()
+    registry.system_prompt = (root / "use-cases/generic/SYSTEM_PROMPT.md").read_text()
+    app.state.registries = {"generic": registry}
+    persona = client.get("/api/use-cases").json()["useCases"][0]
+    assert persona["curated"] is True
+    for locale in ("en", "nl"):
+        localized = persona["localizations"][locale]
+        assert localized["displayName"]
+        assert localized["description"]
+        assert len(localized["sampleQuestions"]) == len(persona["sampleQuestions"]) > 0
+    assert persona["displayName"] == persona["localizations"]["en"]["displayName"]

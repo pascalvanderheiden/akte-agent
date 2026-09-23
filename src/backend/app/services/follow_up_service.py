@@ -11,6 +11,8 @@ import os
 import httpx
 from azure.identity.aio import DefaultAzureCredential
 
+from app.locale import Locale
+
 logger = logging.getLogger(__name__)
 
 _credential: DefaultAzureCredential | None = None
@@ -40,6 +42,8 @@ Rules:
 - Questions should showcase capabilities: data analysis, code generation, web search, document drafting, file creation, cross-referencing multiple tools.
 - Questions should logically continue or deepen the conversation — not repeat what was already answered.
 - Keep each question under 120 characters.
+- Match the language of the assistant's response (including an explicitly requested output language).
+- Use the selected UI language only if the response has no identifiable language. Without a UI locale, infer from the conversation.
 - Do NOT include numbering, bullets, or prefixes — just the question text.
 - Return ONLY the JSON array, no other text.
 
@@ -52,7 +56,7 @@ async def generate_follow_ups(
     user_message: str,
     assistant_response: str,
     skill_names: list[str] | None = None,
-    locale: str | None = None,
+    locale: Locale | None = None,
 ) -> list[str]:
     """Return up to 3 follow-up question suggestions based on the conversation turn.
 
@@ -78,7 +82,7 @@ async def generate_follow_ups(
     user_excerpt = user_message[:500]
     assistant_excerpt = assistant_response[:1500]
 
-    language_hint = "Write the questions in Dutch." if locale == "nl" else "Write the questions in English."
+    language_hint = f"Selected UI locale (fallback only): {locale}." if locale else ""
     user_content = (
         f"User asked: {user_excerpt}\n\n"
         f"Assistant answered: {assistant_excerpt}"

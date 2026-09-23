@@ -1,5 +1,6 @@
 import { getApiUrl, getAuthConfig } from "@/lib/config";
 import { getMcpAccessToken } from "@/lib/auth";
+import { ApplicationError, responseError } from "@/lib/errors";
 import type {
   Attachment,
   EvalScenario,
@@ -7,6 +8,7 @@ import type {
   EvalMode,
   TraceList,
   TraceOperation,
+  Locale,
 } from "@/types";
 
 /**
@@ -20,7 +22,7 @@ export async function streamAgentChat(
   onDone: () => void,
   attachments?: Attachment[],
   useCase?: string,
-  locale?: "en" | "nl"
+  locale?: Locale
 ): Promise<void> {
   try {
     const payload: Record<string, unknown> = { conversationId, message };
@@ -60,48 +62,53 @@ export async function streamAgentChat(
     });
 
     if (!response.ok) {
-      throw new Error(`Agent request failed: ${response.status}`);
+      throw await responseError(response, "PROXY_ERROR");
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error("No response body");
+      throw new ApplicationError("STREAM_ERROR");
     }
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let eventType = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          // Ignore — we extract type from the data
-          continue;
-        }
-        if (line.startsWith("data: ")) {
-          const jsonStr = line.slice(6);
-          try {
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+            continue;
+          }
+          if (!line.trim()) eventType = "";
+          if (line.startsWith("data: ")) {
+            const jsonStr = line.slice(6);
             const parsed = JSON.parse(jsonStr);
-            onEvent({ type: parsed.type, data: parsed });
+            const type = parsed.type || eventType;
+            if (!type) throw new ApplicationError("STREAM_ERROR");
+            onEvent({ type, data: parsed });
 
-            if (parsed.type === "done") {
+            if (type === "done") {
               onDone();
               return;
             }
-          } catch {
-            // Skip malformed JSON
           }
         }
       }
-    }
 
-    onDone();
+      throw new ApplicationError("STREAM_ERROR");
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
   } catch (err) {
     onError(err instanceof Error ? err : new Error(String(err)));
   }
@@ -121,7 +128,7 @@ export async function createConversation(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to create conversation: ${response.status}`);
+    throw await responseError(response, "CREATE_ERROR");
   }
 
   return response.json();
@@ -161,7 +168,7 @@ export async function updateConversation(
     }
   );
   if (!response.ok) {
-    throw new Error(`Failed to update conversation: ${response.status}`);
+    throw await responseError(response, "TITLE_ERROR");
   }
 }
 
@@ -174,7 +181,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
     { method: "DELETE" }
   );
   if (!response.ok) {
-    throw new Error(`Failed to delete conversation: ${response.status}`);
+    throw await responseError(response, "DELETE_ERROR");
   }
 }
 
@@ -184,7 +191,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function listConversations(): Promise<{ conversations: unknown[] }> {
   const response = await fetch(`${getApiUrl()}/api/conversations`);
   if (!response.ok) {
-    throw new Error(`Failed to list conversations: ${response.status}`);
+    throw await responseError(response, "HISTORY_ERROR");
   }
   return response.json();
 }
@@ -195,7 +202,7 @@ export async function listConversations(): Promise<{ conversations: unknown[] }>
 export async function getConversationMessages(conversationId: string): Promise<unknown[]> {
   const response = await fetch(`${getApiUrl()}/api/conversations/${encodeURIComponent(conversationId)}/messages`);
   if (!response.ok) {
-    throw new Error(`Failed to get messages: ${response.status}`);
+    throw await responseError(response, "HISTORY_ERROR");
   }
   return response.json();
 }
@@ -206,8 +213,9 @@ import type { UseCase } from "@/types";
 
 export async function listUseCases(): Promise<UseCase[]> {
   const response = await fetch(`${getApiUrl()}/api/use-cases`);
-  if (!response.ok) throw new Error(`Failed to list use-cases: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "CATALOG_ERROR");
   const data = await response.json();
+  if (!Array.isArray(data.useCases)) throw new ApplicationError("CATALOG_ERROR");
   return data.useCases;
 }
 
@@ -223,14 +231,7 @@ export async function exportUseCase(name: string): Promise<Blob> {
     { headers: { Accept: "application/zip" } },
   );
   if (!response.ok) {
-    let detail = `${response.status}`;
-    try {
-      const body = await response.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      // Body wasn't JSON — keep the status code as the error.
-    }
-    throw new Error(`Failed to export use-case: ${detail}`);
+    throw await responseError(response, "EXPORT_ERROR");
   }
   return response.blob();
 }
@@ -267,14 +268,7 @@ export async function importPersona(
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    let detail = `${response.status}`;
-    try {
-      const body = await response.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      // Body wasn't JSON — keep the status code as the error.
-    }
-    throw new Error(`Failed to import persona: ${detail}`);
+    throw await responseError(response, "IMPORT_ERROR");
   }
   return (await response.json()) as PersonaImportResult;
 }
@@ -386,7 +380,7 @@ import type { SystemPrompt } from "@/types";
 export async function getSystemPrompt(useCase?: string): Promise<SystemPrompt> {
   const params = useCase ? `?use_case=${encodeURIComponent(useCase)}` : "";
   const response = await fetch(`${getApiUrl()}/api/admin/system-prompt${params}`);
-  if (!response.ok) throw new Error(`Failed to get system prompt: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "PROMPT_ERROR");
   return response.json();
 }
 
@@ -398,8 +392,7 @@ export async function updateSystemPrompt(content: string, useCase?: string): Pro
     body: JSON.stringify({ content }),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update system prompt: ${response.status}`);
+    throw await responseError(response, "PROMPT_ERROR");
   }
   return response.json();
 }
@@ -410,8 +403,7 @@ export async function resetSystemPrompt(useCase?: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to reset system prompt: ${response.status}`);
+    throw await responseError(response, "PROMPT_ERROR");
   }
 }
 
