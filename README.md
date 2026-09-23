@@ -117,7 +117,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 | Component | Technology | Version |
 |-----------|-----------|---------|
 | Framework | Next.js (static export) | 16 |
-| UI | React + Tailwind CSS | 19 / 3.4 |
+| UI | React + Tailwind CSS | 19 / 4 |
 | Auth | MSAL Browser / React (Azure AD) | 4 / 3 |
 | Type checking | TypeScript native compiler | 7 |
 | Markdown | react-markdown + remark-gfm | 10 / 4 |
@@ -129,6 +129,13 @@ TypeScript 6 remains installed for ESLint and Next.js tooling that use its
 JavaScript compiler API, which TypeScript 7 no longer provides. Use the npm
 scripts rather than `npx tsc`, since both packages expose a `tsc` executable.
 Linting uses ESLint's flat configuration (`npm run lint`), not `next lint`.
+
+Tailwind 4 uses `@tailwindcss/postcss`, with theme tokens and animations in
+`src/frontend/src/app/globals.css`. `npm run test:styles` checks generated
+semantic utilities, manual dark mode, typography and theme variable aliases;
+it also runs during builds. Supported browsers: Safari 16.4+, Chrome 111+,
+Firefox 128+. ESLint stays on 9 until the Next.js Babel parser and React plugin
+support 10; OBO's Pydantic/core pins must match Pydantic's exact requirement.
 
 ### Infrastructure (Bicep)
 

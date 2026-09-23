@@ -50,7 +50,7 @@ export function ThemePicker() {
           {current.swatches.map((c) => (
             <span
               key={c}
-              className="w-2.5 h-2.5 rounded-sm border border-border-soft"
+              className="w-2.5 h-2.5 rounded-xs border border-border-soft"
               style={{ background: c }}
             />
           ))}
@@ -60,7 +60,7 @@ export function ThemePicker() {
       {open && pos && typeof document !== "undefined" && createPortal(
         <div
           ref={popoverRef}
-          className="fixed z-[300] w-[280px] bg-surface border border-border rounded-xl shadow-card overflow-hidden animate-scale-in"
+          className="fixed z-300 w-[280px] bg-surface border border-border rounded-xl shadow-card overflow-hidden animate-scale-in"
           style={{ top: pos.top, left: pos.left, transform: "translateY(-100%)" }}
         >
           <div className="px-3 py-2.5 border-b border-border-soft flex items-center justify-between">
@@ -96,11 +96,11 @@ export function ThemePicker() {
                   onClick={() => { setTheme(t.id); }}
                   className={`w-full flex items-center gap-3 px-3 py-2 hover:bg-hover transition-colors text-left ${active ? "bg-accent-soft" : ""}`}
                 >
-                  <div className="flex gap-0.5 flex-shrink-0">
+                  <div className="flex gap-0.5 shrink-0">
                     {t.swatches.map((c) => (
                       <span
                         key={c}
-                        className="w-4 h-4 rounded-sm border border-border-soft"
+                        className="w-4 h-4 rounded-xs border border-border-soft"
                         style={{ background: c }}
                       />
                     ))}
@@ -110,7 +110,7 @@ export function ThemePicker() {
                     <div className="text-[10px] text-muted truncate">{t.tagline}</div>
                   </div>
                   {active && (
-                    <svg className="w-3.5 h-3.5 text-accent flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <svg className="w-3.5 h-3.5 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                     </svg>
                   )}
