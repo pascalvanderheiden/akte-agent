@@ -1,8 +1,147 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap')
+layer(base);
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-bg: var(--bg);
+
+  --color-surface-2: var(--surface-2);
+  --color-surface: var(--surface);
+
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+
+  --color-hover: var(--hover);
+
+  --color-text: var(--text);
+  --color-text-strong: var(--text-strong);
+
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-ask: var(--ask-accent);
+  --color-ask-fg: var(--ask-accent-fg);
+  --color-ask-border: var(--ask-border);
+  --color-ask-bg: var(--ask-bg);
+
+  --color-success-500: #10b981;
+  --color-success-600: #059669;
+
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+
+  --font-sans:
+    var(--font-display), Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, sans-serif;
+  --font-mono:
+    var(--theme-font-mono), 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+
+  --shadow-card: var(--theme-shadow-card);
+  --shadow-card-hover:
+    0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --shadow-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+  --animate-fade-in: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-up: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-in-left: slideInLeft 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-scale-in: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-up-stagger: slideUpStagger 0.5s cubic-bezier(0.16, 1, 0.3, 1)
+    both;
+  --animate-bounce-subtle: bounceSubtle 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes slideUp {
+    0% {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes slideInLeft {
+    0% {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes scaleIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes slideUpStagger {
+    0% {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes bounceSubtle {
+    0% {
+      transform: scale(0.95);
+    }
+    40% {
+      transform: scale(1.02);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+}
+
+/* Preserve the v3 defaults not covered by explicit utility classes. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 /* ──────────────────────────────────────────────────────────────────────
    Theme tokens
@@ -32,9 +171,9 @@
   --ask-border:   #d4a094;
   --ask-bg:       rgba(160, 41, 41, 0.06);
   --code-fg:      #a02929;
-  --shadow-card:  0 1px 2px rgba(26,26,26,0.06), 0 2px 8px rgba(26,26,26,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(26,26,26,0.06), 0 2px 8px rgba(26,26,26,0.05);
   --font-display: 'Source Serif 4';
-  --font-mono:    'IBM Plex Mono';
+  --theme-font-mono:    'IBM Plex Mono';
   color-scheme: light;
 }
 
@@ -61,9 +200,9 @@
   --ask-border:   rgba(14, 165, 233, 0.30);
   --ask-bg:       rgba(14, 165, 233, 0.08);
   --code-fg:      #ec4899;
-  --shadow-card:  0 1px 2px rgba(15,23,42,0.06), 0 2px 8px rgba(15,23,42,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(15,23,42,0.06), 0 2px 8px rgba(15,23,42,0.05);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="agentic-loop"].dark {
@@ -86,9 +225,9 @@
   --ask-border:   rgba(52, 210, 255, 0.32);
   --ask-bg:       rgba(52, 210, 255, 0.10);
   --code-fg:      #ff5ca8;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.4);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: dark;
 }
 
@@ -112,9 +251,9 @@
   --ask-border:   #e0c89a;
   --ask-bg:       rgba(224, 175, 104, 0.10);
   --code-fg:      #9854f1;
-  --shadow-card:  0 1px 2px rgba(26,27,38,0.06), 0 2px 8px rgba(26,27,38,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(26,27,38,0.06), 0 2px 8px rgba(26,27,38,0.05);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="tokyo-night"].dark {
@@ -137,7 +276,7 @@
   --ask-border:   #3d3a2d;
   --ask-bg:       rgba(224, 175, 104, 0.10);
   --code-fg:      #bb9af7;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
   color-scheme: dark;
 }
 
@@ -161,9 +300,9 @@
   --ask-border:   #f3c2a0;
   --ask-bg:       rgba(254, 100, 11, 0.08);
   --code-fg:      #8839ef;
-  --shadow-card:  0 1px 2px rgba(30,32,48,0.05), 0 2px 8px rgba(30,32,48,0.04);
+  --theme-shadow-card:  0 1px 2px rgba(30,32,48,0.05), 0 2px 8px rgba(30,32,48,0.04);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="catppuccin"].dark {
@@ -186,7 +325,7 @@
   --ask-border:   #5a4538;
   --ask-bg:       rgba(250, 179, 135, 0.10);
   --code-fg:      #cba6f7;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
   color-scheme: dark;
 }
 
@@ -210,9 +349,9 @@
   --ask-border:   #e8c7c0;
   --ask-bg:       rgba(180, 99, 122, 0.08);
   --code-fg:      #907aa9;
-  --shadow-card:  0 1px 2px rgba(87,82,121,0.05), 0 2px 8px rgba(87,82,121,0.04);
+  --theme-shadow-card:  0 1px 2px rgba(87,82,121,0.05), 0 2px 8px rgba(87,82,121,0.04);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="rose-pine"].dark {
@@ -235,7 +374,7 @@
   --ask-border:   #46313e;
   --ask-bg:       rgba(235, 188, 186, 0.10);
   --code-fg:      #c4a7e7;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
   color-scheme: dark;
 }
 
@@ -260,9 +399,9 @@
   --ask-border:   #d4a094;
   --ask-bg:       rgba(160, 41, 41, 0.06);
   --code-fg:      #a02929;
-  --shadow-card:  0 1px 2px rgba(26,26,26,0.06), 0 2px 8px rgba(26,26,26,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(26,26,26,0.06), 0 2px 8px rgba(26,26,26,0.05);
   --font-display: 'Source Serif 4';
-  --font-mono:    'IBM Plex Mono';
+  --theme-font-mono:    'IBM Plex Mono';
   color-scheme: light;
 }
 [data-theme="newsprint"].dark {
@@ -285,7 +424,7 @@
   --ask-border:   #52201a;
   --ask-bg:       rgba(227, 92, 77, 0.10);
   --code-fg:      #e35c4d;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.35);
   color-scheme: dark;
 }
 
@@ -309,9 +448,9 @@
   --ask-border:   #000000;
   --ask-bg:       rgba(250, 204, 21, 0.16);
   --code-fg:      #000000;
-  --shadow-card:  3px 3px 0 rgba(0,0,0,1);
+  --theme-shadow-card:  3px 3px 0 rgba(0,0,0,1);
   --font-display: 'Inter';
-  --font-mono:    'IBM Plex Mono';
+  --theme-font-mono:    'IBM Plex Mono';
   color-scheme: light;
 }
 [data-theme="brutalist-yellow"].dark {
@@ -334,7 +473,7 @@
   --ask-border:   #facc15;
   --ask-bg:       rgba(250, 204, 21, 0.10);
   --code-fg:      #facc15;
-  --shadow-card:  3px 3px 0 rgba(255,255,255,0.9);
+  --theme-shadow-card:  3px 3px 0 rgba(255,255,255,0.9);
   color-scheme: dark;
 }
 
@@ -358,9 +497,9 @@
   --ask-border:   #a0d4d8;
   --ask-bg:       rgba(8, 145, 178, 0.08);
   --code-fg:      #d6336c;
-  --shadow-card:  0 1px 2px rgba(10,10,20,0.06), 0 2px 8px rgba(10,10,20,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(10,10,20,0.06), 0 2px 8px rgba(10,10,20,0.05);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="neon-noir"].dark {
@@ -383,7 +522,7 @@
   --ask-border:   #1c4248;
   --ask-bg:       rgba(34, 211, 238, 0.10);
   --code-fg:      #f038a0;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.6), 0 2px 16px rgba(240,56,160,0.08);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.6), 0 2px 16px rgba(240,56,160,0.08);
   color-scheme: dark;
 }
 
@@ -407,9 +546,9 @@
   --ask-border:   #cbb6a0;
   --ask-bg:       rgba(208, 135, 112, 0.08);
   --code-fg:      #5e81ac;
-  --shadow-card:  0 1px 2px rgba(46,52,64,0.06), 0 2px 8px rgba(46,52,64,0.05);
+  --theme-shadow-card:  0 1px 2px rgba(46,52,64,0.06), 0 2px 8px rgba(46,52,64,0.05);
   --font-display: 'Inter';
-  --font-mono:    'JetBrains Mono';
+  --theme-font-mono:    'JetBrains Mono';
   color-scheme: light;
 }
 [data-theme="nord"].dark {
@@ -432,7 +571,7 @@
   --ask-border:   #5a4838;
   --ask-bg:       rgba(208, 135, 112, 0.10);
   --code-fg:      #88c0d0;
-  --shadow-card:  0 1px 2px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
+  --theme-shadow-card:  0 1px 2px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
   color-scheme: dark;
 }
 
@@ -488,7 +627,7 @@ body {
   padding: 0.125rem 0.375rem;
   border-radius: 0.375rem;
   font-size: 0.85em;
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-family: var(--theme-font-mono, 'JetBrains Mono'), monospace;
   color: var(--code-fg);
 }
 .prose pre code {

@@ -461,7 +461,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       {/* Mobile nav overlay */}
       {mobileNavOpen && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden animate-fade-in"
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-40 md:hidden animate-fade-in"
           onClick={() => setMobileNavOpen(false)}
         />
       )}
@@ -478,7 +478,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="w-9 h-9 rounded-xl bg-hover hover:bg-hover border border-border-soft flex items-center justify-center transition-all flex-shrink-0"
+              className="w-9 h-9 rounded-xl bg-hover hover:bg-hover border border-border-soft flex items-center justify-center transition-all shrink-0"
               title="Back to Chat"
             >
               <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -511,7 +511,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
               <select
                 value={useCase}
                 onChange={(e) => onSelectUseCase?.(e.target.value)}
-                className="w-full text-sm text-text-strong bg-hover border border-border-soft rounded-lg pl-3 pr-9 py-2.5 focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent appearance-none cursor-pointer hover:bg-hover hover:border-border transition-all"
+                className="w-full text-sm text-text-strong bg-hover border border-border-soft rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent appearance-none cursor-pointer hover:bg-hover hover:border-border transition-all"
               >
                 {useCases.map((uc) => (
                   <option key={uc.name} value={uc.name} className="bg-surface-2">
@@ -608,7 +608,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="border-b border-border-soft px-4 sm:px-8 py-4 bg-surface backdrop-blur">
+        <header className="border-b border-border-soft px-4 sm:px-8 py-4 bg-surface backdrop-blur-sm">
           <div className="flex items-center gap-3">
             {/* Mobile hamburger */}
             <button
@@ -631,7 +631,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             {tab === "skills" && !showCreate && (
               <button
                 onClick={() => setShowCreate(true)}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -642,7 +642,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             {tab === "mcp" && !editingMcp && !showMcpCreate && (
               <button
                 onClick={() => { resetMcpForm(); setShowMcpCreate(true); }}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -653,7 +653,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             {tab === "consistency" && analysisResult && !analysisLoading && (
               <button
                 onClick={handleRunAnalysis}
-                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
@@ -690,7 +690,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                 {mcpError && <div className="px-4 py-2.5 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20">{mcpError}</div>}
                 <div>
                   <label className="block text-sm font-medium text-text mb-1.5">Type</label>
-                  <select value={mcpType} onChange={(e) => setMcpType(e.target.value as "local" | "http" | "sse")} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all">
+                  <select value={mcpType} onChange={(e) => setMcpType(e.target.value as "local" | "http" | "sse")} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all">
                     <option value="local">Local (stdio)</option>
                     <option value="http">Remote (HTTP)</option>
                     <option value="sse">Remote (SSE)</option>
@@ -700,44 +700,44 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   <>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Command <span className="text-red-500">*</span></label>
-                      <input type="text" value={mcpCommand} onChange={(e) => setMcpCommand(e.target.value)} placeholder="faker-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpCommand} onChange={(e) => setMcpCommand(e.target.value)} placeholder="faker-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Arguments <span className="text-muted text-xs font-normal">(comma-separated)</span></label>
-                      <input type="text" value={mcpArgs} onChange={(e) => setMcpArgs(e.target.value)} placeholder="--port, 3000" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpArgs} onChange={(e) => setMcpArgs(e.target.value)} placeholder="--port, 3000" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Environment Variables <span className="text-muted text-xs font-normal">(KEY=VALUE per line)</span></label>
-                      <textarea value={mcpEnv} onChange={(e) => setMcpEnv(e.target.value)} rows={3} placeholder={"API_KEY=abc123\nDEBUG=true"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <textarea value={mcpEnv} onChange={(e) => setMcpEnv(e.target.value)} rows={3} placeholder={"API_KEY=abc123\nDEBUG=true"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Working Directory</label>
-                      <input type="text" value={mcpCwd} onChange={(e) => setMcpCwd(e.target.value)} placeholder="/path/to/dir" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpCwd} onChange={(e) => setMcpCwd(e.target.value)} placeholder="/path/to/dir" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                   </>
                 ) : (
                   <>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">URL <span className="text-red-500">*</span></label>
-                      <input type="text" value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Headers <span className="text-muted text-xs font-normal">(Key: Value per line)</span></label>
-                      <textarea value={mcpHeaders} onChange={(e) => setMcpHeaders(e.target.value)} rows={3} placeholder={"Authorization: Bearer token123\nX-Custom: value"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <textarea value={mcpHeaders} onChange={(e) => setMcpHeaders(e.target.value)} rows={3} placeholder={"Authorization: Bearer token123\nX-Custom: value"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Timeout <span className="text-muted text-xs font-normal">(seconds)</span></label>
-                      <input type="number" value={mcpTimeout} onChange={(e) => setMcpTimeout(e.target.value)} placeholder="30" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="number" value={mcpTimeout} onChange={(e) => setMcpTimeout(e.target.value)} placeholder="30" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                   </>
                 )}
                 <div>
                   <label className="block text-sm font-medium text-text mb-1.5">Tools <span className="text-muted text-xs font-normal">(comma-separated, * = all)</span></label>
-                  <input type="text" value={mcpTools} onChange={(e) => setMcpTools(e.target.value)} placeholder="*" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                  <input type="text" value={mcpTools} onChange={(e) => setMcpTools(e.target.value)} placeholder="*" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                 </div>
                 <div className="flex justify-end gap-3">
                   <button onClick={() => { setEditingMcp(null); resetMcpForm(); }} className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium">Cancel</button>
-                  <button onClick={handleSaveMcpServer} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium">Save Changes</button>
+                  <button onClick={handleSaveMcpServer} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium">Save Changes</button>
                 </div>
               </div>
             ) : showMcpCreate ? (
@@ -746,11 +746,11 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                 {mcpError && <div className="px-3 py-2 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 text-sm rounded-lg">{mcpError}</div>}
                 <div>
                   <label className="block text-sm font-medium text-text mb-1.5">Server Name <span className="text-red-500">*</span></label>
-                  <input type="text" value={mcpName} onChange={(e) => setMcpName(e.target.value)} placeholder="my-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                  <input type="text" value={mcpName} onChange={(e) => setMcpName(e.target.value)} placeholder="my-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-text mb-1.5">Type</label>
-                  <select value={mcpType} onChange={(e) => setMcpType(e.target.value as "local" | "http" | "sse")} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all">
+                  <select value={mcpType} onChange={(e) => setMcpType(e.target.value as "local" | "http" | "sse")} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all">
                     <option value="local">Local (stdio)</option>
                     <option value="http">Remote (HTTP)</option>
                     <option value="sse">Remote (SSE)</option>
@@ -760,44 +760,44 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   <>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Command <span className="text-red-500">*</span></label>
-                      <input type="text" value={mcpCommand} onChange={(e) => setMcpCommand(e.target.value)} placeholder="faker-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpCommand} onChange={(e) => setMcpCommand(e.target.value)} placeholder="faker-mcp-server" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Arguments <span className="text-muted text-xs font-normal">(comma-separated)</span></label>
-                      <input type="text" value={mcpArgs} onChange={(e) => setMcpArgs(e.target.value)} placeholder="--port, 3000" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpArgs} onChange={(e) => setMcpArgs(e.target.value)} placeholder="--port, 3000" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Environment Variables <span className="text-muted text-xs font-normal">(KEY=VALUE per line)</span></label>
-                      <textarea value={mcpEnv} onChange={(e) => setMcpEnv(e.target.value)} rows={3} placeholder={"API_KEY=abc123\nDEBUG=true"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <textarea value={mcpEnv} onChange={(e) => setMcpEnv(e.target.value)} rows={3} placeholder={"API_KEY=abc123\nDEBUG=true"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Working Directory</label>
-                      <input type="text" value={mcpCwd} onChange={(e) => setMcpCwd(e.target.value)} placeholder="/path/to/dir" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpCwd} onChange={(e) => setMcpCwd(e.target.value)} placeholder="/path/to/dir" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                   </>
                 ) : (
                   <>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">URL <span className="text-red-500">*</span></label>
-                      <input type="text" value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="text" value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Headers <span className="text-muted text-xs font-normal">(Key: Value per line)</span></label>
-                      <textarea value={mcpHeaders} onChange={(e) => setMcpHeaders(e.target.value)} rows={3} placeholder={"Authorization: Bearer token123\nX-Custom: value"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <textarea value={mcpHeaders} onChange={(e) => setMcpHeaders(e.target.value)} rows={3} placeholder={"Authorization: Bearer token123\nX-Custom: value"} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">Timeout <span className="text-muted text-xs font-normal">(seconds)</span></label>
-                      <input type="number" value={mcpTimeout} onChange={(e) => setMcpTimeout(e.target.value)} placeholder="30" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <input type="number" value={mcpTimeout} onChange={(e) => setMcpTimeout(e.target.value)} placeholder="30" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                   </>
                 )}
                 <div>
                   <label className="block text-sm font-medium text-text mb-1.5">Tools <span className="text-muted text-xs font-normal">(comma-separated, * = all)</span></label>
-                  <input type="text" value={mcpTools} onChange={(e) => setMcpTools(e.target.value)} placeholder="*" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                  <input type="text" value={mcpTools} onChange={(e) => setMcpTools(e.target.value)} placeholder="*" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                 </div>
                 <div className="flex justify-end gap-3">
                   <button onClick={() => { setShowMcpCreate(false); resetMcpForm(); }} className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium">Cancel</button>
-                  <button onClick={handleSaveMcpServer} disabled={!mcpName.trim()} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50">Add Server</button>
+                  <button onClick={handleSaveMcpServer} disabled={!mcpName.trim()} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50">Add Server</button>
                 </div>
               </div>
             ) : (
@@ -817,7 +817,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   Object.entries(mcpServers).map(([name, cfg]) => (
                     <div key={name} className="flex flex-col p-5 border border-border-soft rounded-2xl bg-surface hover:border-border hover:shadow-card-hover transition-all">
                       <div className="flex items-start gap-3 mb-3">
-                        <span className={`text-xs px-2.5 py-1 rounded-lg font-medium flex-shrink-0 ${
+                        <span className={`text-xs px-2.5 py-1 rounded-lg font-medium shrink-0 ${
                           cfg.type === "local" ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20" : "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/20"
                         }`}>{cfg.type.toUpperCase()}</span>
                         <div className="flex-1 min-w-0">
@@ -873,7 +873,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                     setPromptDirty(e.target.value !== promptContent);
                   }}
                   rows={20}
-                  className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
+                  className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
                 />
                 <div className="flex justify-between">
                   <button
@@ -897,7 +897,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                     <button
                       onClick={handleSavePrompt}
                       disabled={!promptDirty || !promptDraft.trim()}
-                      className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Save Prompt
                     </button>
@@ -925,7 +925,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
               {/* Hero / explainer */}
               <div className="rounded-2xl border border-border-soft bg-surface p-5 sm:p-6">
                 <div className="flex items-start gap-4">
-                  <div className="w-11 h-11 rounded-xl bg-accent-soft text-accent flex items-center justify-center flex-shrink-0">
+                  <div className="w-11 h-11 rounded-xl bg-accent-soft text-accent flex items-center justify-center shrink-0">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.631 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 01-2.448-2.448 14.9 14.9 0 01.06-.312m-2.24 2.39a4.493 4.493 0 00-1.757 4.306 4.493 4.493 0 004.306-1.758M16.5 9a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
                     </svg>
@@ -935,7 +935,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                       Ship <span className="text-accent">{currentDisplayName}</span> as a Foundry Hosted Agent
                     </h3>
                     <p className="mt-1 text-sm text-muted leading-relaxed">
-                      Download a self-contained <code className="font-mono text-[12px] bg-hover px-1.5 py-0.5 rounded">azd</code> project that
+                      Download a self-contained <code className="font-mono text-[12px] bg-hover px-1.5 py-0.5 rounded-sm">azd</code> project that
                       deploys this persona — skills, prompt, MCP config, and infra — as a standalone
                       Microsoft Foundry Hosted Agent in any Azure subscription. Kratos is not required at runtime.
                     </p>
@@ -990,7 +990,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                     { path: "README.md", desc: "Step-by-step deploy + invoke walkthrough." },
                   ].map((row) => (
                     <li key={row.path} className="flex items-start gap-3">
-                      <code className="font-mono text-[12px] bg-hover text-text-strong px-2 py-0.5 rounded shrink-0">{row.path}</code>
+                      <code className="font-mono text-[12px] bg-hover text-text-strong px-2 py-0.5 rounded-sm shrink-0">{row.path}</code>
                       <span className="text-muted">{row.desc}</span>
                     </li>
                   ))}
@@ -1003,18 +1003,18 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                 <ul className="space-y-1.5 text-sm text-muted list-disc pl-5">
                   <li>Azure subscription with Microsoft Foundry preview features enabled.</li>
                   <li>
-                    <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">azd</code> CLI ≥ 1.20
-                    with the <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">azure.ai.agents</code> extension.
+                    <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">azd</code> CLI ≥ 1.20
+                    with the <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">azure.ai.agents</code> extension.
                   </li>
                   <li>
                     <strong className="text-text">Foundry Project Manager</strong> role on the target Foundry project
                     (so the postdeploy hook can auto-assign <em>Foundry User</em> to the agent identity).
                   </li>
                   <li>
-                    A supported region: <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">northcentralus</code>,
-                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">eastus</code>,
-                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">swedencentral</code>,
-                    or <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded">westus</code>.
+                    A supported region: <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">northcentralus</code>,
+                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">eastus</code>,
+                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">swedencentral</code>,
+                    or <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">westus</code>.
                   </li>
                 </ul>
               </section>
@@ -1031,13 +1031,13 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   ].map((step, idx) => (
                     <li key={step.id} className="rounded-xl border border-border-soft bg-surface overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-2 border-b border-border-soft bg-surface-2">
-                        <span className="w-5 h-5 rounded-full bg-accent text-accent-fg text-[11px] font-semibold flex items-center justify-center flex-shrink-0">
+                        <span className="w-5 h-5 rounded-full bg-accent text-accent-fg text-[11px] font-semibold flex items-center justify-center shrink-0">
                           {idx + 1}
                         </span>
                         <span className="text-xs font-medium text-text flex-1">{step.label}</span>
                         <button
                           onClick={() => copyCmd(step.cmd, step.id)}
-                          className="text-[11px] text-muted hover:text-text px-2 py-1 rounded hover:bg-hover transition-all"
+                          className="text-[11px] text-muted hover:text-text px-2 py-1 rounded-sm hover:bg-hover transition-all"
                           aria-label={`Copy ${step.label}`}
                         >
                           {copiedCmd === step.id ? "Copied!" : "Copy"}
@@ -1050,9 +1050,9 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   ))}
                 </ol>
                 <p className="mt-3 text-[11px] text-muted leading-relaxed">
-                  First <code className="font-mono bg-hover px-1 py-0.5 rounded">azd up</code> takes
+                  First <code className="font-mono bg-hover px-1 py-0.5 rounded-sm">azd up</code> takes
                   ~12–18 min (Foundry account + project + ACR + agent build). Subsequent
-                  {" "}<code className="font-mono bg-hover px-1 py-0.5 rounded">azd deploy</code> is &lt; 2 min.
+                  {" "}<code className="font-mono bg-hover px-1 py-0.5 rounded-sm">azd deploy</code> is &lt; 2 min.
                 </p>
               </section>
 
@@ -1060,12 +1060,12 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
               <section className="rounded-xl border border-border-soft bg-surface-2 px-4 py-3">
                 <p className="text-[12px] text-muted leading-relaxed">
                   <strong className="text-text">Stuck?</strong> The bundle&apos;s
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded">README.md</code> covers the
+                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">README.md</code> covers the
                   three most common gotchas: 401 on first invoke (RBAC propagation, wait 5–15 min),
                   <em> session_not_ready</em> 424 (container crash — check
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded">azd ai agent monitor --session-id</code>),
+                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">azd ai agent monitor --session-id</code>),
                   and region <em>experience not available</em> (try
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded">swedencentral</code>).
+                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">swedencentral</code>).
                 </p>
               </section>
             </div>
@@ -1077,7 +1077,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                 <button
                   onClick={handleRunAnalysis}
                   disabled={analysisLoading}
-                  className="flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {analysisLoading ? (
                     <>
@@ -1098,7 +1098,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                     type="checkbox"
                     checked={includeDisabled}
                     onChange={(e) => setIncludeDisabled(e.target.checked)}
-                    className="rounded border-border-soft dark:border-slate-600 text-accent focus:ring-accent"
+                    className="rounded-sm border-border-soft dark:border-slate-600 text-accent focus:ring-accent"
                   />
                   Include disabled skills
                 </label>
@@ -1124,7 +1124,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   <div className="bg-surface border border-border-soft rounded-2xl p-6">
                     <div className="flex items-start gap-6">
                       {/* Score ring */}
-                      <div className="flex-shrink-0">
+                      <div className="shrink-0">
                         <div className={`relative w-20 h-20 rounded-full flex items-center justify-center border-4 ${
                           analysisResult.overallScore >= 90 ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10" :
                           analysisResult.overallScore >= 70 ? "border-blue-500 bg-blue-50 dark:bg-blue-500/10" :
@@ -1166,8 +1166,8 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                         onClick={() => setIssueFilter("all")}
                         className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${
                           issueFilter === "all"
-                            ? "bg-slate-900 dark:bg-white/[0.12] text-white border-transparent"
-                            : "bg-white dark:bg-white/[0.03] text-slate-600 dark:text-slate-400 border-slate-200 dark:border-white/[0.08] hover:bg-slate-50 dark:hover:bg-white/[0.06]"
+                            ? "bg-slate-900 dark:bg-white/12 text-white border-transparent"
+                            : "bg-white dark:bg-white/3 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-white/8 hover:bg-slate-50 dark:hover:bg-white/6"
                         }`}
                       >
                         All ({analysisResult.issues.length})
@@ -1229,7 +1229,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                             className="w-full flex items-start gap-3 px-4 py-3.5 text-left hover:bg-hover transition-all"
                           >
                             {/* Severity icon */}
-                            <div className={`flex-shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5 ${
+                            <div className={`shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5 ${
                               issue.severity === "critical" ? "bg-red-100 dark:bg-red-500/10" :
                               issue.severity === "warning" ? "bg-amber-100 dark:bg-amber-500/10" :
                               "bg-blue-100 dark:bg-blue-500/10"
@@ -1267,7 +1267,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                                 <p className="text-xs text-muted mt-1 line-clamp-1">{issue.description}</p>
                               )}
                             </div>
-                            <svg className={`w-4 h-4 text-slate-400 flex-shrink-0 mt-1 transition-transform ${expandedIssue === originalIdx ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <svg className={`w-4 h-4 text-slate-400 shrink-0 mt-1 transition-transform ${expandedIssue === originalIdx ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                             </svg>
                           </button>
@@ -1288,7 +1288,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                                   </div>
                                 )}
                                 {issue.recommendation && (
-                                  <div className="bg-emerald-50 dark:bg-emerald-500/[0.06] border border-emerald-100 dark:border-emerald-500/10 rounded-lg px-3 py-2.5">
+                                  <div className="bg-emerald-50 dark:bg-emerald-500/6 border border-emerald-100 dark:border-emerald-500/10 rounded-lg px-3 py-2.5">
                                     <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Recommendation</span>
                                     <p className="text-sm text-emerald-800 dark:text-emerald-300 mt-0.5 leading-relaxed">{issue.recommendation}</p>
                                   </div>
@@ -1298,8 +1298,8 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                                 {fixResults[originalIdx] ? (
                                   <div className={`rounded-lg px-3 py-2.5 border ${
                                     fixResults[originalIdx].success
-                                      ? "bg-emerald-50 dark:bg-emerald-500/[0.06] border-emerald-200 dark:border-emerald-500/10"
-                                      : "bg-red-50 dark:bg-red-500/[0.06] border-red-200 dark:border-red-500/10"
+                                      ? "bg-emerald-50 dark:bg-emerald-500/6 border-emerald-200 dark:border-emerald-500/10"
+                                      : "bg-red-50 dark:bg-red-500/6 border-red-200 dark:border-red-500/10"
                                   }`}>
                                     {fixResults[originalIdx].success ? (
                                       <div className="space-y-1">
@@ -1326,7 +1326,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                                   <button
                                     onClick={(e) => { e.stopPropagation(); handleApplyFix(issue, originalIdx); }}
                                     disabled={fixingIssue !== null}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all bg-indigo-50 dark:bg-indigo-500/[0.08] text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/[0.14] disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all bg-indigo-50 dark:bg-indigo-500/8 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/20 hover:bg-indigo-100 dark:hover:bg-indigo-500/[0.14] disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     {fixingIssue === originalIdx ? (
                                       <>
@@ -1359,10 +1359,10 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   {analysisResult.strengths.length > 0 && (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-text">Strengths</h4>
-                      <div className="bg-surface border border-border-soft rounded-xl divide-y divide-slate-100 dark:divide-white/[0.04]">
+                      <div className="bg-surface border border-border-soft rounded-xl divide-y divide-slate-100 dark:divide-white/4">
                         {analysisResult.strengths.map((strength, idx) => (
                           <div key={idx} className="flex items-start gap-3 px-4 py-3">
-                            <div className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center mt-0.5">
+                            <div className="shrink-0 w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center mt-0.5">
                               <svg className="w-3 h-3 text-emerald-500" fill="currentColor" viewBox="0 0 20 20">
                                 <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                               </svg>
@@ -1392,7 +1392,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   </p>
                   <button
                     onClick={handleRunAnalysis}
-                    className="mt-6 flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                    className="mt-6 flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
@@ -1420,7 +1420,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="my-new-skill"
-                  className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                  className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
                 />
               </div>
 
@@ -1433,7 +1433,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
                   placeholder="What this skill does"
-                  className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                  className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
                 />
               </div>
 
@@ -1446,7 +1446,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   onChange={(e) => setNewInstructions(e.target.value)}
                   rows={16}
                   placeholder="## Instructions&#10;&#10;1. Accept a query...&#10;2. Process it..."
-                  className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
+                  className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
                 />
               </div>
 
@@ -1460,7 +1460,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                 <button
                   onClick={handleCreate}
                   disabled={!newName.trim()}
-                  className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50"
+                  className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50"
                 >
                   Create Skill
                 </button>
@@ -1498,7 +1498,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                             {skill.name}
                           </span>
                           {(skill.fileCount ?? 0) > 0 && (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                            <span className="inline-flex items-center gap-0.5 text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-1.5 py-0.5 rounded-full shrink-0">
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                               </svg>
@@ -1521,7 +1521,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                       {/* Toggle */}
                       <button
                         onClick={() => handleToggle(skill)}
-                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full transition-colors ${
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors ${
                           skill.enabled ? "bg-accent" : "bg-border"
                         }`}
                       >
@@ -1542,7 +1542,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                             type="text"
                             value={editingSkill.description}
                             onChange={(e) => setEditingSkill({ ...editingSkill, description: e.target.value })}
-                            className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                            className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
                           />
                         </div>
                         <div>
@@ -1551,7 +1551,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                             value={editingSkill.instructions}
                             onChange={(e) => setEditingSkill({ ...editingSkill, instructions: e.target.value })}
                             rows={20}
-                            className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
+                            className="w-full px-4 py-3 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono leading-relaxed focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-y"
                           />
                         </div>
 
@@ -1580,17 +1580,17 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                           {showUploadForm && (
                             <div className="flex items-center gap-2 mb-3 p-2.5 bg-surface-2 border border-border-soft rounded-xl">
                               <div className="flex-1 flex items-center gap-1.5">
-                                <span className="text-xs text-muted font-mono flex-shrink-0">path:</span>
+                                <span className="text-xs text-muted font-mono shrink-0">path:</span>
                                 <input
                                   type="text"
                                   value={uploadPath}
                                   onChange={(e) => setUploadPath(e.target.value)}
                                   placeholder="scripts/"
-                                  className="flex-1 px-2 py-1 text-xs font-mono border border-border-soft rounded focus:outline-none focus:ring-1 focus:ring-accent min-w-0"
+                                  className="flex-1 px-2 py-1 text-xs font-mono border border-border-soft rounded-sm focus:outline-hidden focus:ring-1 focus:ring-accent min-w-0"
                                   onKeyDown={(e) => e.key === "Escape" && (setShowUploadForm(false), setUploadPath(""))}
                                 />
                               </div>
-                              <label className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-accent-fg bg-accent hover:bg-accent-hover rounded-xl cursor-pointer transition-colors flex-shrink-0">
+                              <label className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-accent-fg bg-accent hover:bg-accent-hover rounded-xl cursor-pointer transition-colors shrink-0">
                                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                                 </svg>
@@ -1600,7 +1600,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                               <button
                                 type="button"
                                 onClick={() => { setShowUploadForm(false); setUploadPath(""); }}
-                                className="text-muted hover:text-text transition-colors flex-shrink-0"
+                                className="text-muted hover:text-text transition-colors shrink-0"
                               >
                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1625,19 +1625,19 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                                     className="flex items-center gap-2 px-3 py-2 bg-surface-2 hover:bg-hover cursor-pointer transition-colors select-none"
                                     onClick={() => setExpandedFile(expandedFile === file.path ? null : file.path)}
                                   >
-                                    <svg className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <svg className="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                                     </svg>
                                     <span className="text-xs font-mono text-muted flex-1 truncate">{file.path}</span>
                                     <svg
-                                      className={`w-3.5 h-3.5 text-slate-400 transition-transform flex-shrink-0 ${expandedFile === file.path ? "rotate-180" : ""}`}
+                                      className={`w-3.5 h-3.5 text-slate-400 transition-transform shrink-0 ${expandedFile === file.path ? "rotate-180" : ""}`}
                                       fill="none" viewBox="0 0 24 24" stroke="currentColor"
                                     >
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
                                     <button
                                       onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.path); }}
-                                      className="p-0.5 text-muted hover:text-red-500 transition-colors flex-shrink-0"
+                                      className="p-0.5 text-muted hover:text-red-500 transition-colors shrink-0"
                                       title="Delete file"
                                     >
                                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1665,7 +1665,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                           </button>
                           <button
                             onClick={handleSaveEdit}
-                            className="px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                            className="px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
                           >
                             Save Changes
                           </button>
