@@ -915,6 +915,20 @@ All service-to-service auth uses Managed Identity with least-privilege roles:
 
 Real findings from deploying this repo end-to-end on a fresh Azure subscription. Add to this list as you hit new ones.
 
+### Foundry project fails with `RequestConflict` during provisioning
+
+**Symptom:** `azd` suggests a duplicate or soft-deleted resource, but the detailed
+error says "Another operation is in progress" on the Foundry account.
+
+**Cause:** Model deployment and project creation share an account-level lock.
+Depending only on the parent account allows both child writes to run concurrently.
+
+**Fix in this repo:** `infra/modules/ai-services.bicep` sequences account, model,
+project, then Application Insights connection. Exported projects reuse this module.
+Once any active provisioning operation has finished, retry `azd provision -e <environment>`
+with the updated template, then `azd deploy -e <environment>`. Keep the same resource
+names; this conflict does not require deleting, purging, or renaming resources.
+
 ### Postdeploy 404 "false alarm" at the tail of every `azd deploy`
 
 **Symptom:** A scary RED block at the tail of every `azd deploy <any-service>` reporting `agents/<key>/versions/<n>` not found, even though the deploy succeeded.

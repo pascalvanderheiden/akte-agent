@@ -64,3 +64,6 @@ jobs:
 
       - name: Validate Bicep
         run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Check Foundry provisioning order
+        run: python3 -m unittest discover -s infra/tests -v
