@@ -42,15 +42,14 @@ if ! command -v az >/dev/null 2>&1; then
   exit 1
 fi
 
-ACCOUNT="$(az account show --query id -o tsv 2>/dev/null)"
-if [ -z "$ACCOUNT" ]; then
+CURRENT_SUB="$(az account show --query id -o tsv 2>/dev/null)"
+if [ -z "$CURRENT_SUB" ]; then
   echo "❌ No active Azure CLI session." >&2
   echo "   Sign in yourself with 'az login' and re-run — this hook never opens a" >&2
   echo "   browser or prompts." >&2
   exit 1
 fi
 
-CURRENT_SUB="$ACCOUNT"
 if [ -n "${AZURE_SUBSCRIPTION_ID:-}" ] && [ "$CURRENT_SUB" != "${AZURE_SUBSCRIPTION_ID}" ]; then
   echo "❌ The Azure CLI is pointed at a different subscription than this azd environment." >&2
   echo "   azd environment: ${AZURE_SUBSCRIPTION_ID}" >&2

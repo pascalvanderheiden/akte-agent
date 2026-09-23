@@ -183,7 +183,9 @@ def test_identity_role_assignments_target_the_managed_identity(sre_template: dic
     assert len(identity_roles) == 2
     for role in identity_roles:
         assert role["properties"]["principalType"] == "ServicePrincipal"
-        assert "principalId" in role["properties"]["principalId"]
+        # The discovery identity, not some other principal.
+        assert "Microsoft.ManagedIdentity/userAssignedIdentities" in role["properties"]["principalId"]
+        assert role["properties"]["principalId"].endswith(".principalId]")
 
 
 # ---------------------------------------------------------------------------
