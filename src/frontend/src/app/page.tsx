@@ -24,7 +24,8 @@ function resolveLocale(): Locale {
   } catch {
     // Storage is optional in private browsing and embedded hosts.
   }
-  return navigator.languages.some((language) => language.toLowerCase().startsWith("nl")) ? "nl" : "en";
+  const browserLanguages = navigator.languages ?? [navigator.language ?? ""];
+  return browserLanguages.some((language) => language.toLowerCase().startsWith("nl")) ? "nl" : "en";
 }
 
 function localizedUseCase(useCase: UseCase | undefined, locale: Locale): UseCase | undefined {
@@ -282,7 +283,6 @@ export default function Home() {
       <label className="absolute top-3 right-3 z-[60] text-sm text-text">
         <span className="sr-only">Language</span>
         <select
-          aria-label="Language"
           className="rounded border border-border bg-surface px-2 py-1"
           value={locale}
           onChange={(event) => changeLocale(event.target.value as Locale)}

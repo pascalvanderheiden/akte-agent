@@ -306,7 +306,9 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 registries = getattr(app.state, "registries", {})
                 registry = registries.get(body.useCase)
                 skill_names = [s.name for s in registry.skills if s.enabled] if registry else []
-                follow_ups = await generate_follow_ups(body.message, full_response, skill_names, body.locale)
+                follow_ups = await generate_follow_ups(
+                    body.message, full_response, skill_names, locale=body.locale
+                )
                 if follow_ups:
                     await event_queue.put(
                         {

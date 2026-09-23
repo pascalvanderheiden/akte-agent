@@ -23,6 +23,7 @@ async def list_use_cases(request: Request) -> UseCaseList:
         description = ""
         sample_questions: list[str] = []
         curated = False
+        localizations = {}
         if registry.system_prompt:
             from app.services.skill_registry import _parse_frontmatter
 

@@ -109,7 +109,7 @@ def _build_system_prompt(manifest: PersonaManifest, slug: str) -> str:
     }
     if manifest.localizations:
         frontmatter["localizations"] = {
-            locale: localization.model_dump(exclude_defaults=True)
+            locale: localization.model_dump(exclude_unset=True)
             for locale, localization in manifest.localizations.items()
         }
     fm_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()

@@ -332,11 +332,10 @@ async def _stream_response(
         collected_thoughts: list[str] = []
         collected_tool_calls: list[dict] = []
 
+        language = {"en": "English", "nl": "Dutch"}.get(locale or "")
         language_instruction = (
-            "\n\nRespond in Dutch by default. Honor an explicit user request for another output language."
-            if locale == "nl"
-            else "\n\nRespond in English by default. Honor an explicit user request for another output language."
-            if locale == "en"
+            f"\n\nRespond in {language} by default. Honor an explicit user request for another output language."
+            if language
             else ""
         )
         async for event in _copilot_agent.run(
