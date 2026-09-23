@@ -120,7 +120,7 @@ class BlobSkillService:
             # Reachable, but this request was refused (e.g. RBAC still
             # propagating). Keep the client: reads may well succeed.
             logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
-        except (TimeoutError, asyncio.TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+        except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
             logger.warning(
                 "Blob storage at %s unreachable within %ds (%s) — using local skills only. "
                 "Expected when running outside the private endpoint's VNet.",
