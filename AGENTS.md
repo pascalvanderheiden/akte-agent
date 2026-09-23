@@ -177,6 +177,7 @@ never bumped apart. Both pairs have already broken this repo once.
 ## Conventions
 
 - Python: `ruff` for lint and format; `mypy` is configured.
+- Prefer Azure CLI (`az`) over Azure MCP tools for diagnostics and resource operations; use `azd` for application provisioning and deployment.
 - Don't hand-edit `azd`-generated values or anything under `.azure/`.
 - Prefer `azd env get-values` over reading `.azure/` files directly.
 

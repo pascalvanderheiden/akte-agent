@@ -33,7 +33,7 @@ export function SourceBadge({
   return (
     <span
       title={title}
-      className={`inline-flex items-center rounded border font-semibold uppercase tracking-wide ${palette} ${sizeCls}`}
+      className={`inline-flex items-center rounded-sm border font-semibold uppercase tracking-wide ${palette} ${sizeCls}`}
     >
       {label}
     </span>

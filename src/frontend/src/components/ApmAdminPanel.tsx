@@ -297,7 +297,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
           </div>
           <h3 className="text-sm font-semibold text-text">APM is disabled</h3>
           <p className="mt-1 text-xs text-muted">
-            Set <code className="px-1 py-0.5 rounded bg-surface-2 font-mono text-[11px]">APM_ENABLED=true</code> in the backend environment to manage packages from the UI.
+            Set <code className="px-1 py-0.5 rounded-sm bg-surface-2 font-mono text-[11px]">APM_ENABLED=true</code> in the backend environment to manage packages from the UI.
           </p>
         </div>
       </div>
@@ -335,7 +335,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
           <button
             onClick={handleUpdateAll}
             disabled={anyBusy}
-            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {busy === "update-all" ? spin : (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -351,7 +351,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       {error && (
         <div className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-start justify-between gap-3">
           <pre className="whitespace-pre-wrap font-mono text-xs flex-1">{error}</pre>
-          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600 transition-colors flex-shrink-0">
+          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600 transition-colors shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -381,7 +381,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                   <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200/80 dark:divide-white/[0.06]">
+              <tbody className="divide-y divide-slate-200/80 dark:divide-white/6">
                 {dependencies.map((dep) => {
                   const tag = `uninstall:${dep.name}`;
                   return (
@@ -441,7 +441,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                   <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200/80 dark:divide-white/[0.06]">
+              <tbody className="divide-y divide-slate-200/80 dark:divide-white/6">
                 {mcpServers.map((s) => {
                   const isLocal = s.transport === "stdio";
                   const commandOrUrl = isLocal
@@ -531,7 +531,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                     </a>
                   </div>
                   {installed && (
-                    <span className="flex-shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                       Installed
                     </span>
                   )}
@@ -543,7 +543,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                   <button
                     onClick={() => handleInstallSuggestedMcp(s)}
                     disabled={anyBusy || installed}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-accent-fg bg-accent rounded-lg transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-accent-fg bg-accent rounded-lg transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {busy === tag ? spin : (
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -579,7 +579,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               onChange={(e) => setMcpName(e.target.value)}
               placeholder="markitdown"
               required
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
           <div>
@@ -587,7 +587,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
             <select
               value={mcpTransport}
               onChange={(e) => setMcpTransport(e.target.value as "stdio" | "http" | "sse")}
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             >
               <option value="stdio">stdio</option>
               <option value="http">http</option>
@@ -605,7 +605,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 onChange={(e) => setMcpCommand(e.target.value)}
                 placeholder="uvx"
                 required
-                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
               />
             </div>
           ) : (
@@ -619,7 +619,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 onChange={(e) => setMcpUrl(e.target.value)}
                 placeholder="https://example.com/mcp"
                 required
-                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
               />
             </div>
           )}
@@ -634,7 +634,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               value={mcpArgsInput}
               onChange={(e) => setMcpArgsInput(e.target.value)}
               placeholder="markitdown-mcp"
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
         )}
@@ -647,14 +647,14 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
             onChange={(e) => setMcpEnvInput(e.target.value)}
             placeholder="GITHUB_TOKEN=ghp_...&#10;DEBUG=true"
             rows={2}
-            className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+            className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
           />
         </div>
         <div className="flex justify-end">
           <button
             type="submit"
             disabled={anyBusy || !mcpName.trim()}
-            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {busy === `install-mcp:${mcpName.trim()}` ? spin : (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -702,7 +702,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                     </a>
                   </div>
                   {installed && (
-                    <span className="flex-shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
                       Installed
                     </span>
                   )}
@@ -714,7 +714,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                   <button
                     onClick={() => handleInstallSuggested(pkg)}
                     disabled={anyBusy || installed}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-accent-fg bg-accent rounded-lg transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-accent-fg bg-accent rounded-lg transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {busy === tag ? spin : (
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -749,7 +749,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               onChange={(e) => setPkgInput(e.target.value)}
               placeholder="owner/repo or owner/repo/subdir"
               required
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
           <div>
@@ -761,7 +761,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               value={refInput}
               onChange={(e) => setRefInput(e.target.value)}
               placeholder="main / v1.2.3 / sha"
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
         </div>
@@ -771,14 +771,14 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               type="checkbox"
               checked={devInput}
               onChange={(e) => setDevInput(e.target.checked)}
-              className="rounded border-border-soft text-accent focus:ring-accent"
+              className="rounded-sm border-border-soft text-accent focus:ring-accent"
             />
             <span>Dev dependency</span>
           </label>
           <button
             type="submit"
             disabled={anyBusy || !pkgInput.trim()}
-            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {busy === "install" ? spin : (
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

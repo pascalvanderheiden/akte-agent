@@ -5,11 +5,11 @@
 **Production-ready reference architecture for building extensible AI agents on Azure**
 
 [![Azure](https://img.shields.io/badge/Azure-Deployable-0078D4?logo=microsoftazure&logoColor=white)](https://portal.azure.com)
-[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.8-000?logo=github)](https://github.com/features/copilot)
+[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.14-000?logo=github)](https://github.com/features/copilot)
 [![Microsoft Foundry](https://img.shields.io/badge/Microsoft_Foundry-Hosted_Agent-6B2FA0?logo=microsoft)](https://ai.azure.com)
 [![MCP](https://img.shields.io/badge/MCP-Skills_Protocol-FF6B35)](https://modelcontextprotocol.io)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Next.js](https://img.shields.io/badge/Next.js-15-000?logo=nextdotjs)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000?logo=nextdotjs)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 One-command deploy (`azd up`) provisions Azure services, builds containers, deploys a hosted agent to Microsoft Foundry, and serves a production frontend — all wired with Managed Identity, VNet isolation, and OpenTelemetry tracing. The agent calls Foundry models **directly** (no API Management gateway) and ships an **Entra On-Behalf-Of** MCP server that calls Microsoft Graph as the signed-in user.
@@ -87,7 +87,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Pillar | Technology | Role |
 |--------|------------|------|
-| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.8` | Agentic loop — Plan → Act → Observe → Iterate |
+| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.14` | Agentic loop — Plan → Act → Observe → Iterate |
 | **Platform** | [Microsoft Foundry](https://ai.azure.com) | Hosted agent lifecycle, model hosting, evaluation, guardrails |
 | **Extensibility** | [MCP Skills Protocol](https://modelcontextprotocol.io) | Portable, standard tool interface for agent capabilities |
 | **Persistence** | [Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/) | Conversations, messages, settings, session mappings |
@@ -103,7 +103,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 |-----------|-----------|---------|
 | Language | Python | 3.11 |
 | Web framework | FastAPI + uvicorn | ≥0.115 |
-| Agent SDK | `github-copilot-sdk` | 1.0.8 |
+| Agent SDK | `github-copilot-sdk` | 1.0.14 |
 | Agent runtime | Copilot CLI (`@github/copilot`) | latest |
 | Hosted agent protocol | `azure-ai-agentserver-invocations` | ≥1.0.0b3 |
 | Database | Azure Cosmos DB (serverless) / SQLite (local) | — |
@@ -116,11 +116,26 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Framework | Next.js (static export) | 15 |
-| UI | React + Tailwind CSS | 18 / 3.4 |
-| Auth | MSAL (Azure AD) | 3.20 |
-| Markdown | react-markdown + remark-gfm | 9.0 / 4.0 |
+| Framework | Next.js (static export) | 16 |
+| UI | React + Tailwind CSS | 19 / 4 |
+| Auth | MSAL Browser / React (Azure AD) | 4 / 3 |
+| Type checking | TypeScript native compiler | 7 |
+| Markdown | react-markdown + remark-gfm | 10 / 4 |
 | Hosting | Azure Static Web Apps | — |
+
+`npm run typecheck` invokes TypeScript 7 explicitly through the
+`typescript-native` package alias; `npm run build` runs it before exporting.
+TypeScript 6 remains installed for ESLint and Next.js tooling that use its
+JavaScript compiler API, which TypeScript 7 no longer provides. Use the npm
+scripts rather than `npx tsc`, since both packages expose a `tsc` executable.
+Linting uses ESLint's flat configuration (`npm run lint`), not `next lint`.
+
+Tailwind 4 uses `@tailwindcss/postcss`, with theme tokens and animations in
+`src/frontend/src/app/globals.css`. `npm run test:styles` checks generated
+semantic utilities, manual dark mode, typography and theme variable aliases;
+it also runs during builds. Supported browsers: Safari 16.4+, Chrome 111+,
+Firefox 128+. ESLint stays on 9 until the Next.js Babel parser and React plugin
+support 10; OBO's Pydantic/core pins must match Pydantic's exact requirement.
 
 ### Infrastructure (Bicep)
 
@@ -137,7 +152,7 @@ Azure services provisioned via `azd up`:
 - [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/) ≥1.12
 - [Azure CLI](https://learn.microsoft.com/cli/azure/)
 - [Docker](https://www.docker.com/)
-- [Node.js 20+](https://nodejs.org/)
+- [Node.js 20.9+](https://nodejs.org/)
 - [Python 3.11+](https://www.python.org/)
 
 ### Deploy to Azure
@@ -187,6 +202,24 @@ resource-name hash, so renaming one means reprovisioning it from scratch.
 Per-environment settings are set with `azd env set` while that environment is active — for example
 `azd env set DEPLOY_OBO false` to skip the on-behalf-of stack in an experiment. Values set this way
 land in that environment's `.env` only, never in another's.
+
+### Azure SRE Agent (opt-in)
+
+An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
+that observes that environment's resources and reuses its Application Insights and Log Analytics.
+It is off by default: environments never opted in create no billable SRE resource.
+This release provisions **core only**; telemetry connectors and GitHub attachment
+remain pending follow-on work:
+
+```bash
+azd env set DEPLOY_SRE_AGENT true
+azd env set SRE_CONNECT_TELEMETRY false
+azd env set SRE_CONNECT_GITHUB false
+azd provision
+```
+
+See [`docs/sre-agent.md`](./docs/sre-agent.md) for prerequisites, supported-region checks,
+permissions, outputs, cost, and cleanup (turning the flag off does **not** delete an existing agent).
 
 ### Register the Agent in Foundry (One-Time Manual Step)
 
@@ -776,7 +809,7 @@ kratos-agent/
 │   │   ├── agent.yaml              # Foundry agent manifest
 │   │   └── pyproject.toml
 │   │
-│   └── frontend/                   # Next.js 14 chat UI
+│   └── frontend/                   # Next.js 16 chat UI
 │       └── src/
 │           ├── app/                # Pages
 │           ├── components/         # ChatWindow, MessageBubble, ThoughtChain, etc.
@@ -914,6 +947,20 @@ All service-to-service auth uses Managed Identity with least-privilege roles:
 ## Troubleshooting
 
 Real findings from deploying this repo end-to-end on a fresh Azure subscription. Add to this list as you hit new ones.
+
+### Foundry project fails with `RequestConflict` during provisioning
+
+**Symptom:** `azd` suggests a duplicate or soft-deleted resource, but the detailed
+error says "Another operation is in progress" on the Foundry account.
+
+**Cause:** Model deployment and project creation share an account-level lock.
+Depending only on the parent account allows both child writes to run concurrently.
+
+**Fix in this repo:** `infra/modules/ai-services.bicep` sequences account, model,
+project, then Application Insights connection. Exported projects reuse this module.
+Once any active provisioning operation has finished, retry `azd provision -e <environment>`
+with the updated template, then `azd deploy -e <environment>`. Keep the same resource
+names; this conflict does not require deleting, purging, or renaming resources.
 
 ### Postdeploy 404 "false alarm" at the tail of every `azd deploy`
 

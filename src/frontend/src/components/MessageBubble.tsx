@@ -151,9 +151,9 @@ export function MessageBubble({ message }: Props) {
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} animate-slide-up`}>
       {/* Assistant avatar */}
       {!isUser && (
-        <div className="flex-shrink-0 mr-3 mt-1">
+        <div className="shrink-0 mr-3 mt-1">
           <div className="w-8 h-8 rounded-xl bg-accent flex items-center justify-center shadow-lg ring-1 ring-white/10">
-            <svg className="w-4 h-4 text-accent-fg drop-shadow-sm" viewBox="0 0 24 24" fill="currentColor">
+            <svg className="w-4 h-4 text-accent-fg drop-shadow-xs" viewBox="0 0 24 24" fill="currentColor">
               <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
             </svg>
           </div>
@@ -163,8 +163,8 @@ export function MessageBubble({ message }: Props) {
       <div
         className={`max-w-[75%] ${
           isUser
-            ? "rounded-2xl rounded-br-sm px-4 py-3 bg-gradient-to-br from-accent to-accent-hover text-accent-fg shadow-md"
-            : "rounded-2xl rounded-bl-sm px-4 py-3 bg-surface border border-border-soft text-text shadow-sm"
+            ? "rounded-2xl rounded-br-sm px-4 py-3 bg-linear-to-br from-accent to-accent-hover text-accent-fg shadow-md"
+            : "rounded-2xl rounded-bl-sm px-4 py-3 bg-surface border border-border-soft text-text shadow-xs"
         }`}
       >
         {isUser ? (
@@ -181,15 +181,19 @@ export function MessageBubble({ message }: Props) {
               components={{
                 img: ({ src, alt }) => {
                   if (!src) return null;
+                  const image = (
+                    <img
+                      src={src}
+                      alt={alt || ""}
+                      className="max-w-full rounded-xl border border-border-soft shadow-xs hover:shadow-md transition-shadow cursor-pointer"
+                      style={{ maxHeight: "400px" }}
+                      loading="lazy"
+                    />
+                  );
+                  if (typeof src !== "string") return image;
                   return (
                     <a href={src} target="_blank" rel="noopener noreferrer" className="block my-3">
-                      <img
-                        src={src}
-                        alt={alt || ""}
-                        className="max-w-full rounded-xl border border-border-soft shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                        style={{ maxHeight: "400px" }}
-                        loading="lazy"
-                      />
+                      {image}
                     </a>
                   );
                 },
@@ -214,7 +218,7 @@ export function MessageBubble({ message }: Props) {
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1.5 text-accent hover:text-accent underline decoration-accent/40 underline-offset-2 cursor-pointer bg-transparent border-none p-0 font-inherit text-inherit transition-colors"
                       >
-                        <svg className="w-4 h-4 inline-block flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <svg className="w-4 h-4 inline-block shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         {children}
@@ -242,7 +246,7 @@ export function MessageBubble({ message }: Props) {
 
       {/* User avatar */}
       {isUser && (
-        <div className="flex-shrink-0 ml-3 mt-1">
+        <div className="shrink-0 ml-3 mt-1">
           <div className="w-8 h-8 rounded-full bg-surface-2 flex items-center justify-center">
             <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />

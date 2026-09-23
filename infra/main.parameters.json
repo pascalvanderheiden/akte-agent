@@ -16,6 +16,18 @@
     },
     "deployObo": {
       "value": "${DEPLOY_OBO=true}"
+    },
+    "deploySreAgent": {
+      "value": "${DEPLOY_SRE_AGENT=false}"
+    },
+    "sreAgentName": {
+      "value": "${SRE_AGENT_NAME_OVERRIDE}"
+    },
+    "sreLocation": {
+      "value": "${SRE_LOCATION}"
+    },
+    "principalType": {
+      "value": "${AZURE_PRINCIPAL_TYPE=User}"
     }
   }
 }
