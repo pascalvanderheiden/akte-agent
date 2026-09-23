@@ -12,8 +12,8 @@
     "export": "npm run build"
   },
   "dependencies": {
-    "@azure/msal-browser": "^4.30.0",
-    "@azure/msal-react": "^3.0.29",
+    "@azure/msal-browser": "^5.22.0",
+    "@azure/msal-react": "^5.7.1",
     "@tailwindcss/typography": "^0.5.19",
     "next": "^16.2.11",
     "react": "^19.3.0",
