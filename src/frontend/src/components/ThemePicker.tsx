@@ -24,7 +24,8 @@ export function ThemePicker() {
     const onDown = (e: MouseEvent) => {
       if (
         triggerRef.current?.contains(e.target as Node) ||
-        popoverRef.current?.contains(e.target as Node)
+        popoverRef.current?.contains(e.target as Node) ||
+        (e.target instanceof Element && e.target.closest("[data-locale-selector]"))
       ) return;
       setOpen(false);
     };
@@ -47,6 +48,7 @@ export function ThemePicker() {
         title={t("theme.current", { name: current.label, mode: t(`theme.${mode}`) })}
         className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-hover transition-colors"
         aria-label={t("theme.change")}
+        aria-expanded={open}
       >
         <div className="flex gap-0.5">
           {current.swatches.map((c) => (
@@ -71,6 +73,7 @@ export function ThemePicker() {
               onClick={toggleMode}
               className="px-2 py-1 rounded-md text-[11px] font-medium text-text hover:bg-hover transition-colors flex items-center gap-1.5"
               title={t(mode === "dark" ? "theme.toLight" : "theme.toDark")}
+              aria-label={t(mode === "dark" ? "theme.toLight" : "theme.toDark")}
             >
               {mode === "dark" ? (
                 <>

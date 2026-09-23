@@ -144,7 +144,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             </svg>
           </div>
           <div className="flex-1 min-w-0">
-            <span className="font-semibold text-text-strong text-sm tracking-tight">Kratos Agent</span>
+            <span className="font-semibold text-text-strong text-sm tracking-tight">Akte Agent</span>
             <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
           </div>
           {onCloseMobile && (
