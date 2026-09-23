@@ -5,11 +5,11 @@
 **Production-ready reference architecture for building extensible AI agents on Azure**
 
 [![Azure](https://img.shields.io/badge/Azure-Deployable-0078D4?logo=microsoftazure&logoColor=white)](https://portal.azure.com)
-[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.8-000?logo=github)](https://github.com/features/copilot)
+[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.14-000?logo=github)](https://github.com/features/copilot)
 [![Microsoft Foundry](https://img.shields.io/badge/Microsoft_Foundry-Hosted_Agent-6B2FA0?logo=microsoft)](https://ai.azure.com)
 [![MCP](https://img.shields.io/badge/MCP-Skills_Protocol-FF6B35)](https://modelcontextprotocol.io)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Next.js](https://img.shields.io/badge/Next.js-15-000?logo=nextdotjs)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000?logo=nextdotjs)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 One-command deploy (`azd up`) provisions Azure services, builds containers, deploys a hosted agent to Microsoft Foundry, and serves a production frontend — all wired with Managed Identity, VNet isolation, and OpenTelemetry tracing. The agent calls Foundry models **directly** (no API Management gateway) and ships an **Entra On-Behalf-Of** MCP server that calls Microsoft Graph as the signed-in user.
@@ -87,7 +87,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Pillar | Technology | Role |
 |--------|------------|------|
-| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.8` | Agentic loop — Plan → Act → Observe → Iterate |
+| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.14` | Agentic loop — Plan → Act → Observe → Iterate |
 | **Platform** | [Microsoft Foundry](https://ai.azure.com) | Hosted agent lifecycle, model hosting, evaluation, guardrails |
 | **Extensibility** | [MCP Skills Protocol](https://modelcontextprotocol.io) | Portable, standard tool interface for agent capabilities |
 | **Persistence** | [Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/) | Conversations, messages, settings, session mappings |
@@ -103,7 +103,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 |-----------|-----------|---------|
 | Language | Python | 3.11 |
 | Web framework | FastAPI + uvicorn | ≥0.115 |
-| Agent SDK | `github-copilot-sdk` | 1.0.8 |
+| Agent SDK | `github-copilot-sdk` | 1.0.14 |
 | Agent runtime | Copilot CLI (`@github/copilot`) | latest |
 | Hosted agent protocol | `azure-ai-agentserver-invocations` | ≥1.0.0b3 |
 | Database | Azure Cosmos DB (serverless) / SQLite (local) | — |
@@ -116,11 +116,19 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Framework | Next.js (static export) | 15 |
-| UI | React + Tailwind CSS | 18 / 3.4 |
-| Auth | MSAL (Azure AD) | 3.20 |
-| Markdown | react-markdown + remark-gfm | 9.0 / 4.0 |
+| Framework | Next.js (static export) | 16 |
+| UI | React + Tailwind CSS | 19 / 3.4 |
+| Auth | MSAL Browser / React (Azure AD) | 4 / 3 |
+| Type checking | TypeScript native compiler | 7 |
+| Markdown | react-markdown + remark-gfm | 10 / 4 |
 | Hosting | Azure Static Web Apps | — |
+
+`npm run typecheck` invokes TypeScript 7 explicitly through the
+`typescript-native` package alias; `npm run build` runs it before exporting.
+TypeScript 6 remains installed for ESLint and Next.js tooling that use its
+JavaScript compiler API, which TypeScript 7 no longer provides. Use the npm
+scripts rather than `npx tsc`, since both packages expose a `tsc` executable.
+Linting uses ESLint's flat configuration (`npm run lint`), not `next lint`.
 
 ### Infrastructure (Bicep)
 
@@ -137,7 +145,7 @@ Azure services provisioned via `azd up`:
 - [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/) ≥1.12
 - [Azure CLI](https://learn.microsoft.com/cli/azure/)
 - [Docker](https://www.docker.com/)
-- [Node.js 20+](https://nodejs.org/)
+- [Node.js 20.9+](https://nodejs.org/)
 - [Python 3.11+](https://www.python.org/)
 
 ### Deploy to Azure
@@ -776,7 +784,7 @@ kratos-agent/
 │   │   ├── agent.yaml              # Foundry agent manifest
 │   │   └── pyproject.toml
 │   │
-│   └── frontend/                   # Next.js 14 chat UI
+│   └── frontend/                   # Next.js 16 chat UI
 │       └── src/
 │           ├── app/                # Pages
 │           ├── components/         # ChatWindow, MessageBubble, ThoughtChain, etc.

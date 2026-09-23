@@ -6,7 +6,7 @@ header (see kratos hosted-agent ``main.py``). This server validates that token,
 performs a secret-less On-Behalf-Of exchange, and returns the user's Graph
 profile — so the tool runs **as the signed-in user**, not as the agent.
 
-Transport: streamable HTTP at ``/mcp`` (FastMCP default). The Copilot SDK
+Transport: streamable HTTP at ``/mcp`` (MCPServer default). The Copilot SDK
 connects with ``{"type": "http", "url": "https://<fqdn>/mcp"}``.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from starlette.requests import Request
 
 from obo import TokenValidationError, assert_auth_config_safe, validate_user_token
@@ -26,7 +26,7 @@ logger = logging.getLogger("obo-mcp-server")
 
 PORT = int(os.environ.get("PORT", "8000"))
 
-mcp = FastMCP(name="graph-obo", host="0.0.0.0", port=PORT)
+mcp = MCPServer(name="graph-obo")
 
 
 def _bearer_from_context(ctx: Context) -> str:
@@ -80,4 +80,4 @@ def get_my_profile(ctx: Context) -> dict:
 if __name__ == "__main__":
     assert_auth_config_safe()  # refuse to start with AUTH_DISABLED outside dev
     logger.info("Starting OBO MCP server on :%d (streamable-http at /mcp)", PORT)
-    mcp.run(transport="streamable-http")
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=PORT)
