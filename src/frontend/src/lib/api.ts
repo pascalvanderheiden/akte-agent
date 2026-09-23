@@ -19,7 +19,8 @@ export async function streamAgentChat(
   onError: (error: Error) => void,
   onDone: () => void,
   attachments?: Attachment[],
-  useCase?: string
+  useCase?: string,
+  locale?: "en" | "nl"
 ): Promise<void> {
   try {
     const payload: Record<string, unknown> = { conversationId, message };
@@ -28,6 +29,9 @@ export async function streamAgentChat(
     }
     if (useCase) {
       payload.useCase = useCase;
+    }
+    if (locale) {
+      payload.locale = locale;
     }
 
     // When OBO sign-in is configured, attach the user's MCP-scoped access token

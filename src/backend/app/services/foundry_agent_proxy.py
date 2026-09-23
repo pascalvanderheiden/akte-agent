@@ -257,6 +257,7 @@ class FoundryAgentProxy:
         conversation_id: str,
         use_case: str = "generic",
         system_prompt: str | None = None,
+        locale: str | None = None,
         agent_session_id: str | None = None,
         eval_run_id: str | None = None,
         mcp_access_tokens: dict[str, str] | None = None,
@@ -280,6 +281,8 @@ class FoundryAgentProxy:
             preamble_parts.append(f"<use_case>{use_case}</use_case>")
         if system_prompt:
             preamble_parts.append(f"<system_instructions>\n{system_prompt}\n</system_instructions>")
+        if locale:
+            preamble_parts.append(f"<locale>{locale}</locale>")
         # SECURITY: per-MCP-server user OBO tokens are NEVER embedded in the
         # prompt/input text. A bearer in input_text would enter the model's
         # context and be captured by GenAI message-content traces / gateway logs.
@@ -304,6 +307,8 @@ class FoundryAgentProxy:
             "conversationId": conversation_id,
             "useCase": use_case,
         }
+        if locale:
+            payload["locale"] = locale
         # Forward per-MCP-server user tokens in the JSON body — the ONLY channel
         # for OBO bearers. The Invocations gateway preserves body fields (unlike
         # custom HTTP headers or, deliberately, the prompt), so the hosted agent

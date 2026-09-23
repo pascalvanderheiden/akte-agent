@@ -6,7 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { SkillsAdminPanel } from "@/components/SkillsAdminPanel";
 import AgentLoop from "@/components/AgentLoop";
-import { Conversation, UseCase, Skill } from "@/types";
+import { Conversation, UseCase, Skill, Locale } from "@/types";
 import { listUseCases, listConversations, createConversation, deleteConversation, listSkills, importPersona } from "@/lib/api";
 import { loadRuntimeConfig } from "@/lib/config";
 import { readEmbedParams, takeImportManifest, settlePersonaUrl, type EmbedParams } from "@/lib/embed";
@@ -15,6 +15,22 @@ import { useTheme, THEMES, type ThemeName, type Mode } from "@/components/ThemeP
 type ImportStatus = "idle" | "importing" | "error" | "done";
 
 const THEME_NAMES = new Set(THEMES.map((t) => t.id));
+const LOCALE_STORAGE_KEY = "kratos.locale";
+
+function resolveLocale(): Locale {
+  try {
+    const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (saved === "en" || saved === "nl") return saved;
+  } catch {
+    // Storage is optional in private browsing and embedded hosts.
+  }
+  return navigator.languages.some((language) => language.toLowerCase().startsWith("nl")) ? "nl" : "en";
+}
+
+function localizedUseCase(useCase: UseCase | undefined, locale: Locale): UseCase | undefined {
+  const localization = useCase?.localizations?.[locale];
+  return localization ? { ...useCase, ...localization } : useCase;
+}
 
 export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -26,6 +42,7 @@ export default function Home() {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [useCases, setUseCases] = useState<UseCase[]>([]);
   const [selectedUseCase, setSelectedUseCase] = useState<string>("generic");
+  const [locale, setLocale] = useState<Locale>("en");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -48,6 +65,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    setLocale(resolveLocale());
     // Load runtime config (resolves API URL from /config.json if present)
     loadRuntimeConfig().then(() => {
     setConfigReady(true);
@@ -74,6 +92,15 @@ export default function Home() {
       });
     }); // end loadRuntimeConfig
   }, []);
+
+  const changeLocale = (nextLocale: Locale) => {
+    setLocale(nextLocale);
+    try {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
+    } catch {
+      // Preserve the active choice even when browser storage is unavailable.
+    }
+  };
 
   // Fetch skills whenever the selected use-case changes (only after config is loaded)
   useEffect(() => {
@@ -242,6 +269,18 @@ export default function Home() {
       >
         Skip to content
       </a>
+      <label className="absolute top-3 right-3 z-[60] text-sm text-text">
+        <span className="sr-only">Language</span>
+        <select
+          aria-label="Language"
+          className="rounded border border-border bg-surface px-2 py-1"
+          value={locale}
+          onChange={(event) => changeLocale(event.target.value as Locale)}
+        >
+          <option value="en">English</option>
+          <option value="nl">Nederlands</option>
+        </select>
+      </label>
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
@@ -270,6 +309,7 @@ export default function Home() {
           useCases={useCases}
           selectedUseCase={selectedUseCase}
           onSelectUseCase={setSelectedUseCase}
+          locale={locale}
           onCloseMobile={closeSidebar}
           embedBackHref={embed.embed ? (embed.back || "/reference/kratos") : null}
         />
@@ -290,6 +330,7 @@ export default function Home() {
             onTitleChange={handleTitleChange}
             initialMessage={pendingMessage ?? undefined}
             onOpenSidebar={() => setSidebarOpen(true)}
+            locale={locale}
           />
         ) : (
           <div className="flex-1 flex flex-col">
@@ -323,11 +364,11 @@ export default function Home() {
 
                   <h1 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
                     <span className="gradient-text">
-                      {useCases.find((uc) => uc.name === selectedUseCase)?.displayName || "Kratos Agent"}
+                      {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.displayName || "Kratos Agent"}
                     </span>
                   </h1>
                   <p className="text-muted text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
-                    {useCases.find((uc) => uc.name === selectedUseCase)?.description || (
+                    {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.description || (
                       <>Enterprise AI Agent powered by GitHub Copilot SDK &amp; Microsoft Foundry</>
                     )}
                   </p>
@@ -373,9 +414,9 @@ export default function Home() {
                 </div>
 
                 {/* Sample questions */}
-                {(useCases.find((uc) => uc.name === selectedUseCase)?.sampleQuestions ?? []).length > 0 && (
+                {(localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.sampleQuestions ?? []).length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8 stagger-children">
-                    {useCases.find((uc) => uc.name === selectedUseCase)!.sampleQuestions.map((q, i) => (
+                    {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)!.sampleQuestions.map((q, i) => (
                       <button
                         key={i}
                         onClick={() => handleSampleQuestion(q)}

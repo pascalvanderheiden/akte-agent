@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Conversation, ChatMessage, ToolCallInfo, RunStats, Attachment } from "@/types";
+import { Conversation, ChatMessage, ToolCallInfo, RunStats, Attachment, Locale } from "@/types";
 import { streamAgentChat, getConversationMessages, updateConversation } from "@/lib/api";
 import { MessageBubble } from "./MessageBubble";
 import { ThoughtChain } from "./ThoughtChain";
@@ -18,9 +18,10 @@ interface Props {
   onTitleChange?: (conversationId: string, title: string) => void;
   initialMessage?: string;
   onOpenSidebar?: () => void;
+  locale: Locale;
 }
 
-export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar }: Props) {
+export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar, locale }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -319,7 +320,8 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
         setUserInputPrompt(null);
       },
       currentAttachments,
-      conversation.useCase
+      conversation.useCase,
+      locale
     );
   };
 

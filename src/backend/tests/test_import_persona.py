@@ -78,6 +78,30 @@ def test_system_prompt_frontmatter_mapping(client, tmp_path):
     assert "claims triage assistant" in text.split("---\n", 2)[2]
 
 
+def test_import_preserves_localized_persona_metadata(client, tmp_path):
+    manifest = _manifest(
+        localizations={
+            "en": {
+                "displayName": "Claims Triage Bot",
+                "description": "Triages insurance claims.",
+                "sampleQuestions": ["Triage claim 12345"],
+            },
+            "nl": {
+                "displayName": "Schadebeoordelaar",
+                "description": "Beoordeelt verzekeringsclaims.",
+                "sampleQuestions": ["Beoordeel claim 12345"],
+            },
+        }
+    )
+    response = client.post("/api/use-cases/import", json={"manifest": manifest})
+    assert response.status_code == 201, response.text
+
+    text = (tmp_path / "use-cases" / "claims-triage-bot" / "SYSTEM_PROMPT.md").read_text()
+    frontmatter = yaml.safe_load(text.split("---\n", 2)[1])
+    assert frontmatter["localizations"]["nl"]["displayName"] == "Schadebeoordelaar"
+    assert frontmatter["localizations"]["en"]["sampleQuestions"] == ["Triage claim 12345"]
+
+
 def test_apm_and_mcp_mapping(client, tmp_path):
     client.post("/api/use-cases/import", json={"manifest": _manifest()})
     uc_dir = tmp_path / "use-cases" / "claims-triage-bot"

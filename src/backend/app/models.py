@@ -97,6 +97,7 @@ class AgentRequest(BaseModel):
     conversationId: str
     message: str
     useCase: str = "generic"
+    locale: Literal["en", "nl"] | None = None
     attachments: list[Attachment] = Field(default_factory=list)
     # Per-MCP-server user access tokens, keyed by MCP server name
     # (e.g. {"graph-obo": "<entra access token>"}). Sent by the frontend after
@@ -297,12 +298,19 @@ class UseCaseInfo(BaseModel):
     skillCount: int = 0
     sampleQuestions: list[str] = Field(default_factory=list)
     curated: bool = False
+    localizations: dict[Literal["en", "nl"], "PersonaLocalization"] = Field(default_factory=dict)
 
 
 class UseCaseList(BaseModel):
     """List of available use-cases."""
 
     useCases: list[UseCaseInfo]
+
+
+class PersonaLocalization(BaseModel):
+    displayName: str = ""
+    description: str = ""
+    sampleQuestions: list[str] = Field(default_factory=list)
 
 
 # ─── Persona Import (threadlight-design-compatible manifest) ─────────────────
@@ -342,6 +350,7 @@ class PersonaManifest(BaseModel):
     instructions: str = ""
     displayName: str | None = None
     sampleQuestions: list[str] = Field(default_factory=list)
+    localizations: dict[Literal["en", "nl"], PersonaLocalization] = Field(default_factory=dict)
     skills: list[ImportSkill] = Field(default_factory=list)
     mcpServers: list[ImportMcpServer] = Field(default_factory=list)
     traits: list[str] = Field(default_factory=list)

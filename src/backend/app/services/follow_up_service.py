@@ -52,6 +52,7 @@ async def generate_follow_ups(
     user_message: str,
     assistant_response: str,
     skill_names: list[str] | None = None,
+    locale: str | None = None,
 ) -> list[str]:
     """Return up to 3 follow-up question suggestions based on the conversation turn.
 
@@ -77,11 +78,12 @@ async def generate_follow_ups(
     user_excerpt = user_message[:500]
     assistant_excerpt = assistant_response[:1500]
 
+    language_hint = "Write the questions in Dutch." if locale == "nl" else "Write the questions in English."
     user_content = (
         f"User asked: {user_excerpt}\n\n"
         f"Assistant answered: {assistant_excerpt}"
         f"{skills_hint}\n\n"
-        "Generate 3 follow-up questions."
+        f"{language_hint}\n\nGenerate 3 follow-up questions."
     )
 
     try:

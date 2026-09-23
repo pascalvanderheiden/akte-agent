@@ -187,6 +187,15 @@ export interface UseCase {
   sampleQuestions: string[];
   /** True when the persona has been hand-curated and approved for demos. Defaults to false. */
   curated?: boolean;
+  localizations?: Partial<Record<Locale, PersonaLocalization>>;
+}
+
+export type Locale = "en" | "nl";
+
+export interface PersonaLocalization {
+  displayName: string;
+  description: string;
+  sampleQuestions: string[];
 }
 
 // ─── MCP Servers Admin ───

@@ -289,6 +289,7 @@ async def _stream_response(
     conversation_id: str,
     message: str,
     use_case: str,
+    locale: str | None = None,
     mcp_access_tokens: dict[str, str] | None = None,
     token_source: dict | None = None,
 ):
@@ -331,8 +332,15 @@ async def _stream_response(
         collected_thoughts: list[str] = []
         collected_tool_calls: list[dict] = []
 
+        language_instruction = (
+            "\n\nRespond in Nederlands by default. Honor an explicit user request for another output language."
+            if locale == "nl"
+            else "\n\nRespond in English by default. Honor an explicit user request for another output language."
+            if locale == "en"
+            else ""
+        )
         async for event in _copilot_agent.run(
-            message=message,
+            message=f"{message}{language_instruction}",
             conversation_id=conversation_id,
         ):
             if isinstance(event, ThoughtEvent):
@@ -461,6 +469,9 @@ async def handle_invoke(request: Request) -> Response:
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
         use_case = data.get("useCase", "generic")
+        locale = data.get("locale")
+        if locale not in (None, "en", "nl"):
+            raise ValueError("locale must be 'en' or 'nl'")
 
         # Per-MCP-server user tokens for On-Behalf-Of (kept out of the message
         # text so they are never visible to the model). Coerce to a clean
@@ -485,6 +496,11 @@ async def handle_invoke(request: Request) -> Response:
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
                 message = message[:uc_match.start()] + message[uc_match.end():]
+
+            locale_match = re.search(r"<locale>\s*(en|nl)\s*</locale>", message)
+            if locale_match:
+                locale = locale or locale_match.group(1)
+                message = message[:locale_match.start()] + message[locale_match.end():]
 
             # Strip <system_instructions> — the hosted agent sets the system
             # prompt via the registry, so the prepended copy is redundant.
@@ -553,6 +569,7 @@ async def handle_invoke(request: Request) -> Response:
             conversation_id,
             message,
             use_case,
+            locale,
             mcp_access_tokens,
             token_source={
                 "mcp_token_body_keys": body_token_keys,

@@ -107,6 +107,11 @@ def _build_system_prompt(manifest: PersonaManifest, slug: str) -> str:
         "sampleQuestions": list(manifest.sampleQuestions),
         "curated": True,
     }
+    if manifest.localizations:
+        frontmatter["localizations"] = {
+            locale: localization.model_dump(exclude_defaults=True)
+            for locale, localization in manifest.localizations.items()
+        }
     fm_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()
     body = manifest.instructions.strip() or f"You are {display}, an enterprise AI assistant."
     return f"---\n{fm_yaml}\n---\n\n{body}\n"

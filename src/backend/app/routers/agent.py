@@ -160,6 +160,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 conversation_id=body.conversationId,
                 use_case=body.useCase,
                 system_prompt=system_prompt,
+                locale=body.locale,
                 agent_session_id=agent_session_id,
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
@@ -305,7 +306,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 registries = getattr(app.state, "registries", {})
                 registry = registries.get(body.useCase)
                 skill_names = [s.name for s in registry.skills if s.enabled] if registry else []
-                follow_ups = await generate_follow_ups(body.message, full_response, skill_names)
+                follow_ups = await generate_follow_ups(body.message, full_response, skill_names, body.locale)
                 if follow_ups:
                     await event_queue.put(
                         {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Conversation, UseCase } from "@/types";
+import { Conversation, Locale, UseCase } from "@/types";
 import { ThemePicker } from "./ThemePicker";
 import { OboSignIn } from "./OboSignIn";
 
@@ -45,13 +45,14 @@ interface Props {
   useCases: UseCase[];
   selectedUseCase: string;
   onSelectUseCase: (name: string) => void;
+  locale: Locale;
   onCloseMobile?: () => void;
   /** When embedded under a host (agentic-loop-site), the same-origin path to
    *  return to. Null when not embedded — hides the "Back to Agentic Loop" button. */
   embedBackHref?: string | null;
 }
 
-export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, onOpenSettings, onOpenSkills, onOpenAgenticLoop, useCases, selectedUseCase, onSelectUseCase, onCloseMobile, embedBackHref }: Props) {
+export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, onOpenSettings, onOpenSkills, onOpenAgenticLoop, useCases, selectedUseCase, onSelectUseCase, locale, onCloseMobile, embedBackHref }: Props) {
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [personaFilter, setPersonaFilter] = useState<"curated" | "all">("curated");
@@ -211,7 +212,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             >
               {visibleUseCases.map((uc) => (
                 <option key={uc.name} value={uc.name} className="bg-surface text-text">
-                  {uc.displayName} ({uc.skillCount} skills)
+                  {uc.localizations?.[locale]?.displayName || uc.displayName} ({uc.skillCount} skills)
                 </option>
               ))}
             </select>
