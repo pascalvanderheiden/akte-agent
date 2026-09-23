@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ChatWindow } from "@/components/ChatWindow";
 import { Sidebar } from "@/components/Sidebar";
 import { SettingsModal } from "@/components/SettingsModal";
@@ -29,7 +29,13 @@ function resolveLocale(): Locale {
 
 function localizedUseCase(useCase: UseCase | undefined, locale: Locale): UseCase | undefined {
   const localization = useCase?.localizations?.[locale];
-  return localization ? { ...useCase, ...localization } : useCase;
+  if (!useCase || !localization) return useCase;
+  return {
+    ...useCase,
+    displayName: localization.displayName || useCase.displayName,
+    description: localization.description || useCase.description,
+    sampleQuestions: localization.sampleQuestions.length ? localization.sampleQuestions : useCase.sampleQuestions,
+  };
 }
 
 export default function Home() {
@@ -58,6 +64,10 @@ export default function Home() {
   const importManifestRef = useRef<unknown>(null);
   const bootstrappedRef = useRef(false);
   const { setTheme, setMode } = useTheme();
+  const activeUseCase = useMemo(
+    () => localizedUseCase(useCases.find((useCase) => useCase.name === selectedUseCase), locale),
+    [locale, selectedUseCase, useCases],
+  );
 
   // Read embed args from the URL once on mount (client-only static export).
   useEffect(() => {
@@ -364,11 +374,11 @@ export default function Home() {
 
                   <h1 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
                     <span className="gradient-text">
-                      {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.displayName || "Kratos Agent"}
+                      {activeUseCase?.displayName || "Kratos Agent"}
                     </span>
                   </h1>
                   <p className="text-muted text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
-                    {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.description || (
+                    {activeUseCase?.description || (
                       <>Enterprise AI Agent powered by GitHub Copilot SDK &amp; Microsoft Foundry</>
                     )}
                   </p>
@@ -414,9 +424,9 @@ export default function Home() {
                 </div>
 
                 {/* Sample questions */}
-                {(localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)?.sampleQuestions ?? []).length > 0 && (
+                {(activeUseCase?.sampleQuestions ?? []).length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8 stagger-children">
-                    {localizedUseCase(useCases.find((uc) => uc.name === selectedUseCase), locale)!.sampleQuestions.map((q, i) => (
+                    {activeUseCase!.sampleQuestions.map((q, i) => (
                       <button
                         key={i}
                         onClick={() => handleSampleQuestion(q)}

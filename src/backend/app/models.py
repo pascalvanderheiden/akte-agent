@@ -286,6 +286,12 @@ class SkillList(BaseModel):
     skills: list[SkillResponse]
 
 
+class PersonaLocalization(BaseModel):
+    displayName: str = ""
+    description: str = ""
+    sampleQuestions: list[str] = Field(default_factory=list)
+
+
 # ─── System Prompt Admin ───
 
 
@@ -298,19 +304,13 @@ class UseCaseInfo(BaseModel):
     skillCount: int = 0
     sampleQuestions: list[str] = Field(default_factory=list)
     curated: bool = False
-    localizations: dict[Literal["en", "nl"], "PersonaLocalization"] = Field(default_factory=dict)
+    localizations: dict[Literal["en", "nl"], PersonaLocalization] = Field(default_factory=dict)
 
 
 class UseCaseList(BaseModel):
     """List of available use-cases."""
 
     useCases: list[UseCaseInfo]
-
-
-class PersonaLocalization(BaseModel):
-    displayName: str = ""
-    description: str = ""
-    sampleQuestions: list[str] = Field(default_factory=list)
 
 
 # ─── Persona Import (threadlight-design-compatible manifest) ─────────────────

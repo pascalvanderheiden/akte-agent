@@ -333,7 +333,7 @@ async def _stream_response(
         collected_tool_calls: list[dict] = []
 
         language_instruction = (
-            "\n\nRespond in Nederlands by default. Honor an explicit user request for another output language."
+            "\n\nRespond in Dutch by default. Honor an explicit user request for another output language."
             if locale == "nl"
             else "\n\nRespond in English by default. Honor an explicit user request for another output language."
             if locale == "en"
