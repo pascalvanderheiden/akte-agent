@@ -8,11 +8,13 @@ No Cosmos DB involvement.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import TypeAdapter, ValidationError
 
 from app.auth import require_authenticated_user
-from app.models import SystemPromptResponse, SystemPromptUpdate
+from app.locale import Locale
+from app.models import PersonaLocalization, SystemPromptResponse, SystemPromptUpdate
 from app.services.copilot_agent import DEFAULT_SYSTEM_PROMPT
-from app.services.skill_registry import SkillRegistry
+from app.services.skill_registry import SkillRegistry, _parse_frontmatter, _update_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -44,22 +46,39 @@ async def update_system_prompt(
     """Update the system prompt for a use-case. Persists to Blob Storage / local disk."""
     registry = _get_registry(request, use_case)
 
-    registry.system_prompt = body.content
+    old_metadata, _ = _parse_frontmatter(registry.system_prompt)
+    new_metadata, _ = _parse_frontmatter(body.content)
+    content = body.content
+    # Body-only edits must not discard discovery metadata. Full-frontmatter
+    # editors can deliberately replace translations, including with an empty map.
+    if not new_metadata and old_metadata:
+        content = _update_frontmatter(content, **old_metadata)
+    elif "localizations" not in new_metadata and "localizations" in old_metadata:
+        content = _update_frontmatter(content, localizations=old_metadata["localizations"])
+
+    metadata, _ = _parse_frontmatter(content)
+    try:
+        TypeAdapter(dict[Locale, PersonaLocalization]).validate_python(metadata.get("localizations", {}))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST"}) from exc
 
     # Persist to blob storage or local disk
     blob_service = getattr(registry, "_blob_service", None)
     if blob_service and blob_service.is_available:
         blob_path = f"use-cases/{use_case}/SYSTEM_PROMPT.md"
-        await blob_service.upload_file(blob_path, body.content.encode())
+        await blob_service.upload_file(blob_path, content.encode())
     else:
         from pathlib import Path
 
-        prompt_path = Path("use-cases") / use_case / "SYSTEM_PROMPT.md"
+        prompt_path = (
+            blob_service.local_dir(use_case) if blob_service else Path("use-cases") / use_case
+        ) / "SYSTEM_PROMPT.md"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(body.content)
+        prompt_path.write_text(content)
 
-    logger.info("System prompt updated for use-case '%s' (%d chars)", use_case, len(body.content))
-    return SystemPromptResponse(content=body.content, isDefault=False)
+    registry.system_prompt = content
+    logger.info("System prompt updated for use-case '%s' (%d chars)", use_case, len(content))
+    return SystemPromptResponse(content=content, isDefault=False)
 
 
 @router.delete("", status_code=204)
