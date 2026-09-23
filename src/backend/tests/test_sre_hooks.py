@@ -68,7 +68,9 @@ elif cli == "az" and args[:2] == ["account", "show"]:
 elif cli == "az" and args[:2] == ["provider", "show"]:
     key = "PROVIDER"
 elif cli == "az" and args[:2] == ["resource", "show"]:
-    key = "RESOURCE"
+    key = "ENDPOINT" if "properties.agentEndpoint" in args else "RESOURCE"
+elif cli == "az" and args[:2] == ["account", "get-access-token"]:
+    key = "TOKEN"
 else:
     print("Unexpected CLI call", file=sys.stderr)
     sys.exit(99)
@@ -88,7 +90,8 @@ if key == "RESOURCE":
         resource["state"] = states[min(index, len(states) - 1)]
         payload = json.dumps(resource)
 if exit_code:
-    print(os.environ["SRE_GITHUB_PAT"], file=sys.stderr)
+    print(os.environ.get("FAKE_" + key + "_ERROR", "Unexpected CLI failure"), file=sys.stderr)
+    print(os.environ.get("SRE_GITHUB_PAT", ""), file=sys.stderr)
 print(payload)
 sys.exit(exit_code)
 """
@@ -98,12 +101,12 @@ sys.exit(exit_code)
 def fake_bin(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for cli in ("az", "azd"):
+    for cli in ("az", "azd", "curl"):
         file = bin_dir / cli
         file.write_text(f"#!{sys.executable}\n{FAKE_CLI}")
         file.chmod(0o755)
     # No real az/azd on PATH, even when a fake is removed for missing-tool cases.
-    for tool in ("bash", "sh", "dirname", "jq", "tr", "grep", "mktemp", "sleep", "rm"):
+    for tool in ("bash", "sh", "dirname", "jq", "tr", "grep", "mktemp", "sleep", "rm", "python3"):
         found = shutil.which(tool)
         assert found, f"Required cloud-free test tool missing: {tool}"
         (bin_dir / tool).symlink_to(found)
@@ -167,6 +170,9 @@ def run_hook(
         "FAKE_ACCOUNT": json.dumps({"id": SUB_ID, "tenantId": TENANT_ID, "user": {"type": "user"}}),
         "FAKE_PROVIDER": json.dumps(PROVIDER),
         "FAKE_RESOURCE": json.dumps(RESOURCE),
+        "FAKE_ENDPOINT": "null",
+        "SRE_GITHUB_ATTEMPTS": "2",
+        "SRE_GITHUB_DELAY_SECONDS": "0",
         **settings,
     }
     proc = subprocess.run(
@@ -376,7 +382,7 @@ def test_ready_core_keeps_optional_results_truthful(telemetry: str, github: str,
     assert result_line(proc) == f"SRE_RESULT core=ready telemetry={ts} github={gs}"
     assert f"SRE_TELEMETRY_RESULT app_insights={ts} log_analytics={ts}" in proc.stdout
     reads = cli_calls(log, "az", ("resource", "show"))
-    assert len(reads) == 1
+    assert len(reads) == (3 if github == "true" else 1)
     assert reads[0][reads[0].index("--ids") + 1] == AGENT_ID
     assert reads[0][reads[0].index("--subscription") + 1] == SUB_ID
     assert reads[0][reads[0].index("--api-version") + 1] == "2025-05-01-preview"
@@ -562,7 +568,7 @@ def lifecycle_workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"
     hooks = root / "hooks"
     hooks.mkdir(parents=True)
-    for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh"):
+    for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh", "sre-github.py"):
         shutil.copy2(HOOKS / name, hooks / name)
     for name in ("select-use-cases", "grant-obo-consent", "assign-agent-roles", "postdeploy"):
         file = hooks / f"{name}.sh"
@@ -670,6 +676,9 @@ def test_workflow_options_execute_safely_and_clear_old_overrides(
             "DEPLOY_SRE_AGENT_INPUT": "true",
             "SRE_LOCATION_INPUT": location,
             "SRE_AGENT_NAME_INPUT": name,
+            "SRE_CONNECT_GITHUB_INPUT": "true",
+            "SRE_GITHUB_REPOSITORY_URL_INPUT": "",
+            "SRE_GITHUB_BRANCH_INPUT": "",
         },
         command=step["run"],
     )
@@ -677,7 +686,9 @@ def test_workflow_options_execute_safely_and_clear_old_overrides(
     assert cli_calls(log) == [
         ["azd", "env", "set", "DEPLOY_SRE_AGENT", "true"],
         ["azd", "env", "set", "SRE_CONNECT_TELEMETRY", "false"],
-        ["azd", "env", "set", "SRE_CONNECT_GITHUB", "false"],
+        ["azd", "env", "set", "SRE_CONNECT_GITHUB", "true"],
+        ["azd", "env", "set", "SRE_GITHUB_REPOSITORY_URL", ""],
+        ["azd", "env", "set", "SRE_GITHUB_BRANCH", ""],
         ["azd", "env", "set", "SRE_LOCATION", location],
         ["azd", "env", "set", "SRE_AGENT_NAME_OVERRIDE", name],
         ["azd", "env", "set", "AZURE_PRINCIPAL_TYPE", "ServicePrincipal"],

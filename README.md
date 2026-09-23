@@ -208,8 +208,8 @@ land in that environment's `.env` only, never in another's.
 An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
 that observes that environment's resources and reuses its Application Insights and Log Analytics.
 It is off by default: environments never opted in create no billable SRE resource.
-This release provisions **core only**; telemetry connectors and GitHub attachment
-remain pending follow-on work:
+The read-only core supports optional GitHub Code Access registration; current
+source access remains a separate verification step. For explicit **core-only**:
 
 ```bash
 azd env set DEPLOY_SRE_AGENT true

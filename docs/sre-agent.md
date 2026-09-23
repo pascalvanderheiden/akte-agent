@@ -7,8 +7,9 @@ assignments, and the SRE hooks make no Azure calls at all.
 
 What this release provisions is the **read-only core**: the agent resource, its
 identities, least-privilege discovery permissions, and outputs. Workload
-telemetry connectors and GitHub repository attachment are separate pieces of
-work and are reported as `pending` rather than pretended to be connected.
+telemetry connectors are separate work. GitHub Code Access setup registers and
+reads back the intended repository/branch, but reports `pending` until current
+source access can be proven; registration alone is not a working connection.
 
 ## Enabling it
 
@@ -24,7 +25,9 @@ azd provision
 | --- | --- | --- |
 | `DEPLOY_SRE_AGENT` | `false` | Provision the SRE Agent for this environment |
 | `SRE_CONNECT_TELEMETRY` | `true` | Attempt the workload telemetry connectors (not implemented yet → `pending`) |
-| `SRE_CONNECT_GITHUB` | `true` | Attempt repository attachment (not implemented yet → `pending`) |
+| `SRE_CONNECT_GITHUB` | `true` | Attempt GitHub Code Access registration and readback |
+| `SRE_GITHUB_REPOSITORY_URL` | `https://github.com/pascalvanderheiden/akte-agent` | HTTPS repository URL; `github.com` or an existing GitHub Enterprise Cloud host |
+| `SRE_GITHUB_BRANCH` | discovered | Target repository's default branch; never the local checkout branch |
 | `SRE_AGENT_NAME_OVERRIDE` | derived | Name override. The default is `<namePrefix>sre-<resourceToken>`, deterministic per environment (`namePrefix` is the optional `AZURE_RESOURCE_PREFIX` plus a hyphen, empty when unset). Preflight accepts 3-63 character lowercase DNS labels, starting with a letter and ending with a letter/digit; Azure still validates service naming/uniqueness. Named separately from the `SRE_AGENT_NAME` output so a provisioned name never becomes an implicit override |
 | `SRE_LOCATION` | `AZURE_LOCATION` | Region for the agent, when the application's region does not offer SRE |
 | `AZURE_PRINCIPAL_TYPE` | detected by preflight | `User`, `ServicePrincipal`, or explicit `Group`. Preflight persists a detected type with `azd env set`; inability to determine/persist it is a failure. Direct Bicep use defaults to `User`, so CI callers must supply `ServicePrincipal` |
@@ -34,10 +37,15 @@ such as `yes`, `1`, and `TRUE` fail explicitly rather than passing a hook and
 then failing ARM. Optional switches are validated when SRE is enabled.
 
 The manual Deploy workflow exposes `deploy_sre_agent`, `sre_location`, and
-`sre_agent_name`. They apply only when `provision` is selected, with both
-integration switches set to `false`. Blank overrides clear earlier values.
+`sre_agent_name`, `sre_connect_github`, `sre_github_repository_url`, and
+`sre_github_branch`. Configuration inputs apply only when `provision` is selected;
+telemetry remains off in this slice. Blank overrides clear earlier values.
 Deploy-only runs refresh existing outputs and deploy application services;
-they neither configure nor create SRE.
+they never create SRE. When `sre_connect_github` is selected, a dedicated setup
+step reruns the existing environment's persisted SRE options after refresh.
+Its optional environment secret `SRE_GITHUB_PAT` is scoped to that step alone.
+To opt out completely during provisioning, set `sre_connect_github=false`;
+on deploy-only runs that input skips the dedicated setup step.
 
 ## Core-only mode
 
@@ -83,7 +91,7 @@ optional integrations use:
   locations and the pinned API version, but provider metadata is not a
   guarantee of service eligibility. Confirm the subscription's available
   regions in the creation wizard at <https://sre.azure.com>.
-- **Bash, azd, Azure CLI, and jq.** The hooks check required tools only when
+- **Bash, azd, Azure CLI, and jq; Python 3.11+ and curl for GitHub setup.** The hooks check required tools only when
   enabled. Standalone `--environment` loading needs azd/jq even for a disabled
   environment, but makes no Azure calls when disabled.
 - **Azure CLI signed in** to the same subscription as the azd environment. The
@@ -190,9 +198,9 @@ environment-specific default.
 Telemetry (#36) must use `SRE_AGENT_PRINCIPAL_ID` (the system-assigned
 connector identity), the distinct `SRE_APP_INSIGHTS_APP_ID`, and the two
 monitoring ARM IDs. Discovery/actions use the separate user-assigned identity.
-GitHub (#37) must discover `properties.agentEndpoint` using `SRE_AGENT_ID`
-before authenticated data-plane calls. Neither integration is implemented
-by this PR.
+GitHub discovers `properties.agentEndpoint` using `SRE_AGENT_ID` after the
+core checks, then requests the explicit `https://azuresre.dev` audience.
+The helper never synthesizes a hostname or changes Azure context.
 
 Extend the existing setup/result helpers rather than creating another agent
 or duplicating core checks. Core readiness currently verifies ARM
@@ -212,7 +220,7 @@ environment:
 This reads an allowlist from `azd env get-values --output json`, never
 shell-evaluates it, and clears stale SRE values inherited from other
 environments. Normal azd hooks use their injected environment. No generated
-`.azure/` files are edited, and no authentication tokens are requested.
+`.azure/` files are edited. Tokens are requested only by enabled integrations.
 
 Readiness attempts are bounded (`SRE_READY_ATTEMPTS`, default 10, allowed
 1-60; `SRE_READY_DELAY_SECONDS`, default 15, allowed 0-300). Supply these
@@ -224,6 +232,114 @@ Azure CLI's own network timeout behavior.
 
 Standalone preflight uses the same selection:
 `./hooks/sre-preflight.sh --environment <azd-environment>`.
+
+## GitHub authorization and verification
+
+```bash
+azd env set SRE_CONNECT_GITHUB true
+azd env set SRE_GITHUB_REPOSITORY_URL https://github.com/pascalvanderheiden/akte-agent
+# Optional; otherwise discover this repository's default branch.
+azd env set SRE_GITHUB_BRANCH main
+./hooks/sre-setup.sh --environment <azd-environment>
+```
+
+The hook is noninteractive with closed stdin: it never runs `gh`, opens a
+browser, waits for OAuth, or reuses a local GitHub credential. Authenticate
+outside the hook in <https://sre.azure.com>, select the environment's agent,
+then **Builder > Code Access** (or **Knowledge base > Add repository**).
+Complete or renew authorization there and rerun setup. Public visibility does
+not replace SRE authorization.
+
+For headless setup, inject a dedicated `SRE_GITHUB_PAT` into the setup process
+from your secret manager; never `azd env set` it or put it in a command argument.
+Prefer a selected-repository fine-grained token with **Metadata: Read** and
+**Contents: Read** only. Microsoft guidance inconsistently calls PATs
+fine-grained while listing classic `repo`/`public_repo` scopes; compatibility
+with a read-only token is not guaranteed. If the service requires broader
+scopes, leave setup pending and complete a read-only BYO App authorization
+manually. Do not grant write scopes to make this hook pass. The hook creates
+no app, OAuth connector, MCP connector, webhook, or issue/PR capability.
+Enterprise Cloud (`*.ghe.com`) requires an existing BYO App; a supplied PAT is
+never sent to that host.
+
+Existing matching domain records are candidates, **not proof of usable auth**.
+They are preserved even when a PAT was supplied; an expired/ambiguous existing
+authorization must be renewed in the portal, not overwritten automatically.
+Other domains and registrations are never changed. A new PAT is installed only
+when no target-domain record exists. The hook lists registrations, reuses an
+exact URL/branch match regardless of its name, or PUTs a deterministic
+URL-and-branch-specific name. It reads back the exact URL, branch, and type;
+duplicates, name collisions, malformed data, and mismatches fail explicitly.
+Changing the branch adds a distinct registration and preserves the old one.
+
+Default-branch and current-commit lookup use GitHub's HTTPS REST API with only
+the dedicated PAT, if supplied, otherwise anonymously. A private repo may be
+usable by SRE while this independent lookup is unavailable: supply an explicit
+branch. Never guess `main` or use the current checkout. A `Ready` clone at the
+current GitHub commit is reported as verified **clone evidence**, still
+`pending`: a cached clone cannot prove current auth or a fresh source read.
+No hook path currently reports GitHub `ready`; even successful registration
+requires the manual read-only acceptance below.
+
+`SRE_GITHUB_ATTEMPTS` (default 3, range 1-10) and
+`SRE_GITHUB_DELAY_SECONDS` (default 5, range 0-30) bound propagation/readiness
+retries. Each CLI call is capped at 45 seconds and each HTTP request at 30
+seconds. No OAuth wait loop exists. Missing auth, denied default-branch
+discovery, missing ARM endpoint, or unverified clone access are `pending`.
+Recognized SRE sign-in/tenant restrictions and HTTP 403/501 are `unavailable`.
+Unexpected HTTP/CLI errors, invalid configuration/JSON, network timeout or
+transient HTTP retry exhaustion are `failed` with nonzero exit. Core and
+independent telemetry results survive optional failures.
+
+PAT JSON uses a private temporary directory (0700) and file (0600); headers
+travel to curl on stdin, never in argv. The PAT is removed from child
+environments. Request/response files are removed on normal success/failure and
+handled termination. Curl ignores user config and does not follow redirects.
+Raw CLI/HTTP responses and exception details are suppressed, including auth
+errors; tokens do not enter azd values, Bicep, ARM history, summaries or artifacts.
+Do not run under an external environment-dumping/debug wrapper.
+
+### API evidence and limits
+
+Checked 2026-09-23 against Microsoft Learn and upstream commit
+`53e7b66ef79bccf0b79cc331d5c64bb03b75a4b0`:
+
+- [`apply-extras.sh`](https://github.com/microsoft/sre-agent/blob/53e7b66ef79bccf0b79cc331d5c64bb03b75a4b0/sreagent-templates/bicep/apply-extras.sh)
+  and [`Apply-Extras.ps1`](https://github.com/microsoft/sre-agent/blob/53e7b66ef79bccf0b79cc331d5c64bb03b75a4b0/sreagent-templates/bicep/Apply-Extras.ps1)
+  agree on domain normalization `github.com` -> `github_com`,
+  `PUT /api/v2/github/domains/{normalized-domain}` with `{authType:"Pat",pat:...}`,
+  and `PUT /api/v2/repos/{name}` with
+  `{name,type:"CodeRepo",properties:{url,type:"GitHub",branch}}`.
+  One older bash section spells the route `github.com`; this implementation
+  uses the normalized route corroborated by both scripts, without fallback.
+  The deprecated `GitHubOAuth` connector is not used.
+- [`verify-agent.sh`](https://github.com/microsoft/sre-agent/blob/53e7b66ef79bccf0b79cc331d5c64bb03b75a4b0/sreagent-templates/bin/verify-agent.sh)
+  establishes domain `.values` and repository `.value`/array list envelopes.
+  Domain names accept dotted or normalized spelling; unknown shapes fail rather
+  than treating any nonempty collection as authorized.
+- [`bootstrap-agent.ps1`, `Wait-ForRepositoryCommit`](https://github.com/microsoft/sre-agent/blob/53e7b66ef79bccf0b79cc331d5c64bb03b75a4b0/labs/onboardinglab/scripts/bootstrap-agent.ps1)
+  corroborates exact URL, `properties.cloneStatus == "Ready"` and
+  `properties.latestCommit`; this hook also checks the branch. These fields
+  lack a pinned freshness/auth-liveness guarantee.
+- [API reference](https://learn.microsoft.com/azure/sre-agent/api-reference)
+  documents repository GET/list and `POST /api/v2/repos/{name}/test`, but no
+  test response schema proving a fresh branch read. The hook does not invent
+  that schema, call chat, or upgrade cached evidence to `ready`.
+- [GitHub authentication/permissions](https://learn.microsoft.com/azure/sre-agent/github-connector)
+  and [BYO App](https://learn.microsoft.com/azure/sre-agent/connect-github-enterprise-cloud)
+  document host restrictions and read-only app permissions.
+
+### Optional live GitHub acceptance
+
+Only in an explicitly authorized environment: run setup, inspect Code Access
+for the exact repository/branch, test the connection there, then ask SRE to
+read a known file from that branch and compare its returned contents/commit
+with GitHub. Do not ask it to create a PR, issue, or deployment. Record the
+actual access outcome separately from the hook's conservative `pending`.
+Rerun setup and confirm the same repository name, no duplicate registration,
+no domain replacement, and unchanged independent integration results. Revoke
+or expire auth and confirm a cached clone is never presented as fresh access.
+None of these paid/live checks run automatically in CI.
 
 ## Cost and usage
 
