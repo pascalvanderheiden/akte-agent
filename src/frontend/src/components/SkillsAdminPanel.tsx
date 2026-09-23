@@ -8,6 +8,9 @@ import { ApmAdminPanel } from "./ApmAdminPanel";
 import { EvalsAdminPanel } from "./EvalsAdminPanel";
 import { TracesAdminPanel } from "./TracesAdminPanel";
 import { SourceBadge } from "./SourceBadge";
+import { useLocale } from "./LocaleProvider";
+import { localizeUseCase } from "@/lib/i18n";
+import { errorCode, type ErrorCode } from "@/lib/errors";
 
 type Tab = "skills" | "prompt" | "mcp" | "consistency" | "apm" | "evals" | "traces" | "deploy";
 
@@ -16,9 +19,13 @@ interface Props {
   useCase?: string;
   useCases?: UseCase[];
   onSelectUseCase?: (name: string) => void;
+  onPersonaChange?: () => Promise<void>;
 }
 
-export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], onSelectUseCase }: Props) {
+export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], onSelectUseCase, onPersonaChange }: Props) {
+  const { locale, t, formatNumber } = useLocale();
+  const [promptError, setPromptError] = useState<ErrorCode | null>(null);
+  const [promptSaved, setPromptSaved] = useState(false);
   const [tab, setTab] = useState<Tab>("skills");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(false);
@@ -70,7 +77,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
 
   // Deploy / export state
   const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<ErrorCode | null>(null);
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
 
   // Consistency analysis state
@@ -97,7 +104,8 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
 
   const loadPrompt = async () => {
     setPromptLoading(true);
-    setError("");
+    setPromptError(null);
+    setPromptSaved(false);
     try {
       const data = await getSystemPrompt(useCase);
       setPromptContent(data.content);
@@ -105,7 +113,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       setPromptIsDefault(data.isDefault);
       setPromptDirty(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load system prompt");
+      setPromptError(errorCode(err, "PROMPT_ERROR"));
     } finally {
       setPromptLoading(false);
     }
@@ -268,25 +276,30 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
   };
 
   const handleSavePrompt = async () => {
-    setError("");
+    setPromptError(null);
+    setPromptSaved(false);
     try {
       const data = await updateSystemPrompt(promptDraft, useCase);
       setPromptContent(data.content);
+      setPromptDraft(data.content);
       setPromptIsDefault(data.isDefault);
       setPromptDirty(false);
+      setPromptSaved(true);
+      await onPersonaChange?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save system prompt");
+      setPromptError(errorCode(err, "PROMPT_ERROR"));
     }
   };
 
   const handleResetPrompt = async () => {
-    if (!confirm("Reset to the default system prompt? Your custom prompt will be deleted.")) return;
-    setError("");
+    if (!confirm(t("prompt.confirmReset"))) return;
+    setPromptError(null);
     try {
       await resetSystemPrompt(useCase);
       await loadPrompt();
+      await onPersonaChange?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to reset system prompt");
+      setPromptError(errorCode(err, "PROMPT_ERROR"));
     }
   };
 
@@ -398,7 +411,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
   };
 
   const currentUseCaseMeta = useCases.find((uc) => uc.name === useCase);
-  const currentDisplayName = currentUseCaseMeta?.displayName ?? useCase;
+  const currentDisplayName = currentUseCaseMeta ? localizeUseCase(currentUseCaseMeta, locale).displayName : useCase;
 
   const handleExport = async () => {
     if (!useCase || exporting) return;
@@ -415,7 +428,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : "Export failed");
+      setExportError(errorCode(err, "EXPORT_ERROR"));
     } finally {
       setExporting(false);
     }
@@ -427,19 +440,19 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       setCopiedCmd(id);
       setTimeout(() => setCopiedCmd((cur) => (cur === id ? null : cur)), 1500);
     } catch {
-      // Clipboard unavailable (insecure context) — silently no-op.
+      setExportError("CLIPBOARD_ERROR");
     }
   };
 
   const navItems: { id: Tab; label: string; icon: string }[] = [
     { id: "skills", label: "Skills", icon: "puzzle" },
-    { id: "prompt", label: "System Prompt", icon: "document" },
+    { id: "prompt", label: t("prompt.title"), icon: "document" },
     { id: "mcp", label: "MCP Servers", icon: "server" },
     { id: "apm", label: "APM", icon: "package" },
     { id: "consistency", label: "Consistency", icon: "shield" },
     { id: "evals", label: "Evals", icon: "chart" },
     { id: "traces", label: "Traces", icon: "activity" },
-    { id: "deploy", label: "Deploy", icon: "rocket" },
+    { id: "deploy", label: t("export.deploy"), icon: "rocket" },
   ];
 
   const renderNavIcon = (icon: string) => {
@@ -479,19 +492,21 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             <button
               onClick={onClose}
               className="w-9 h-9 rounded-xl bg-hover hover:bg-hover border border-border-soft flex items-center justify-center transition-all shrink-0"
-              title="Back to Chat"
+              title={t("backChat")}
+              aria-label={t("backChat")}
             >
               <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
               </svg>
             </button>
             <div className="flex-1 min-w-0">
-              <h1 className="font-semibold text-text-strong text-sm tracking-tight">Agent Manager</h1>
-              <p className="text-[11px] text-muted">Configure skills, prompts &amp; MCP</p>
+              <h1 className="font-semibold text-text-strong text-sm tracking-tight">{t("manager")}</h1>
+              <p className="text-[11px] text-muted">{t("managerDescription")}</p>
             </div>
             {/* Mobile close */}
             <button
               onClick={() => setMobileNavOpen(false)}
+              aria-label={t("closeSidebar")}
               className="md:hidden p-1.5 text-muted hover:text-text-strong rounded-lg hover:bg-hover transition-all"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -505,17 +520,18 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
         {useCases.length > 1 && (
           <div className="px-4 pb-3">
             <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5 px-1">
-              Agent Persona
+              {t("persona")}
             </label>
             <div className="relative">
               <select
                 value={useCase}
+                aria-label={t("selectPersona")}
                 onChange={(e) => onSelectUseCase?.(e.target.value)}
                 className="w-full text-sm text-text-strong bg-hover border border-border-soft rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent focus:border-accent appearance-none cursor-pointer hover:bg-hover hover:border-border transition-all"
               >
                 {useCases.map((uc) => (
                   <option key={uc.name} value={uc.name} className="bg-surface-2">
-                    {uc.displayName} ({uc.skillCount} skills)
+                    {localizeUseCase(uc, locale).displayName} ({t("skillCount", { count: uc.skillCount })})
                   </option>
                 ))}
               </select>
@@ -579,17 +595,17 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" />
             </svg>
-            Back to Chat
+            {t("backChat")}
           </button>
           <div className="pt-2 px-3 flex items-center justify-between">
             <p className="text-[10px] text-muted flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse-slow"></span>
-              {useCase.replace(/-/g, " ")}
+              {currentDisplayName}
             </p>
             <button
               onClick={toggleMode}
               className="p-1.5 text-muted hover:text-text-strong rounded-lg hover:bg-hover transition-all"
-              title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={t(mode === "dark" ? "theme.toLight" : "theme.toDark")}
             >
               {mode === "dark" ? (
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -608,11 +624,12 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="border-b border-border-soft px-4 sm:px-8 py-4 bg-surface backdrop-blur-sm">
+        <header className="border-b border-border-soft pl-4 pr-32 py-4 bg-surface backdrop-blur-sm">
           <div className="flex items-center gap-3">
             {/* Mobile hamburger */}
             <button
               onClick={() => setMobileNavOpen(true)}
+              aria-label={t("openSidebar")}
               className="md:hidden p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -621,10 +638,10 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
             </button>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-semibold text-text">
-                {tab === "skills" ? (showCreate ? "Create Skill" : "Skills") : tab === "prompt" ? "System Prompt" : tab === "consistency" ? "Consistency Analysis" : tab === "apm" ? "APM Packages" : tab === "evals" ? "Evaluations" : tab === "traces" ? "Traces" : tab === "deploy" ? "Deploy as Foundry Agent" : (editingMcp ? `Edit: ${editingMcp.name}` : showMcpCreate ? "Add MCP Server" : "MCP Servers")}
+                {tab === "skills" ? (showCreate ? "Create Skill" : "Skills") : tab === "prompt" ? t("prompt.title") : tab === "consistency" ? "Consistency Analysis" : tab === "apm" ? "APM Packages" : tab === "evals" ? "Evaluations" : tab === "traces" ? "Traces" : tab === "deploy" ? t("export.title") : (editingMcp ? `Edit: ${editingMcp.name}` : showMcpCreate ? "Add MCP Server" : "MCP Servers")}
               </h2>
               <p className="text-xs text-muted mt-0.5">
-                {tab === "skills" ? `${skills.filter(s => s.enabled).length} of ${skills.length} active` : tab === "prompt" ? "Configure the system prompt for all conversations" : tab === "consistency" ? "Detect contradictions, overlaps, and gaps in your agent configuration" : tab === "apm" ? "Manage Agent Package Manager dependencies for this use-case" : tab === "evals" ? "Validate agent behavior with automated eval scenarios" : tab === "traces" ? "App Insights waterfall view for recent operations" : tab === "deploy" ? "Package this persona as a standalone Microsoft Foundry Hosted Agent" : `${Object.keys(mcpServers).length} server${Object.keys(mcpServers).length !== 1 ? "s" : ""} configured`}
+                {tab === "skills" ? `${skills.filter(s => s.enabled).length} of ${skills.length} active` : tab === "prompt" ? t("prompt.subtitle") : tab === "consistency" ? "Detect contradictions, overlaps, and gaps in your agent configuration" : tab === "apm" ? "Manage Agent Package Manager dependencies for this use-case" : tab === "evals" ? "Validate agent behavior with automated eval scenarios" : tab === "traces" ? "App Insights waterfall view for recent operations" : tab === "deploy" ? t("export.subtitle") : `${Object.keys(mcpServers).length} server${Object.keys(mcpServers).length !== 1 ? "s" : ""} configured`}
               </p>
             </div>
             {/* Action buttons */}
@@ -681,7 +698,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
           {tab === "mcp" ? (
             /* ── MCP Servers tab ── */
             mcpLoading ? (
-              <div className="flex items-center justify-center py-12">
+              <div role="status" aria-label={t("loading")} className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent" />
               </div>
             ) : editingMcp ? (
@@ -851,23 +868,26 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
           ) : tab === "prompt" ? (
             /* ── System Prompt tab ── */
             promptLoading ? (
-              <div className="flex items-center justify-center py-12">
+              <div role="status" aria-label={t("loading")} className="flex items-center justify-center py-12">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent" />
               </div>
             ) : (
               <div className="max-w-3xl space-y-5">
+                {promptError && <p role="alert" className="text-red-600 text-sm">{t(`error.${promptError}`)}</p>}
+                {promptSaved && <p role="status" className="text-sm">{t("prompt.saved")}</p>}
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-text">
-                    System prompt sent to the LLM at the start of every conversation
+                    {t("prompt.label")}
                   </label>
                   {promptIsDefault ? (
-                    <span className="text-xs bg-surface-2 dark:bg-slate-700/50 text-muted px-2 py-0.5 rounded-full">Default</span>
+                    <span className="text-xs bg-surface-2 dark:bg-slate-700/50 text-muted px-2 py-0.5 rounded-full">{t("prompt.default")}</span>
                   ) : (
-                    <span className="text-xs bg-accent-soft text-accent px-2 py-0.5 rounded-full">Custom</span>
+                    <span className="text-xs bg-accent-soft text-accent px-2 py-0.5 rounded-full">{t("prompt.custom")}</span>
                   )}
                 </div>
                 <textarea
                   value={promptDraft}
+                  aria-label={t("prompt.title")}
                   onChange={(e) => {
                     setPromptDraft(e.target.value);
                     setPromptDirty(e.target.value !== promptContent);
@@ -881,7 +901,7 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                     disabled={promptIsDefault}
                     className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                   >
-                    Reset to Default
+                    {t("prompt.reset")}
                   </button>
                   <div className="flex gap-3">
                     <button
@@ -892,19 +912,19 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                       disabled={!promptDirty}
                       className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      Discard
+                      {t("prompt.discard")}
                     </button>
                     <button
                       onClick={handleSavePrompt}
                       disabled={!promptDirty || !promptDraft.trim()}
                       className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Save Prompt
+                      {t("prompt.save")}
                     </button>
                   </div>
                 </div>
                 <p className="text-xs text-muted">
-                  Changes take effect on the next new conversation. Existing sessions are not affected.
+                  {t("prompt.effect")}
                 </p>
               </div>
             )
@@ -932,12 +952,10 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="text-base font-semibold text-text-strong">
-                      Ship <span className="text-accent">{currentDisplayName}</span> as a Foundry Hosted Agent
+                      {t("export.ship", { name: currentDisplayName })}
                     </h3>
                     <p className="mt-1 text-sm text-muted leading-relaxed">
-                      Download a self-contained <code className="font-mono text-[12px] bg-hover px-1.5 py-0.5 rounded-sm">azd</code> project that
-                      deploys this persona — skills, prompt, MCP config, and infra — as a standalone
-                      Microsoft Foundry Hosted Agent in any Azure subscription. Kratos is not required at runtime.
+                      {t("export.description")}
                     </p>
                   </div>
                 </div>
@@ -954,40 +972,40 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                           <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={3} className="opacity-25" />
                           <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth={3} className="opacity-75" strokeLinecap="round" />
                         </svg>
-                        Packing&hellip;
+                        {t("export.packing")}
                       </>
                     ) : (
                       <>
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                         </svg>
-                        Download {useCase}-foundry-agent.zip
+                        {t("downloadNamed", { name: `${useCase}-foundry-agent.zip` })}
                       </>
                     )}
                   </button>
                   <p className="text-[11px] text-muted">
-                    Typical bundle: ~150 files, ~300 KB. Generated on demand from the live persona configuration.
+                    {t("export.size")}
                   </p>
                 </div>
 
                 {exportError && (
-                  <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-xs border border-red-100 dark:border-red-500/20">
-                    {exportError}
+                  <div role="alert" className="mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-xs border border-red-100 dark:border-red-500/20">
+                    {t(`error.${exportError}`)}
                   </div>
                 )}
               </div>
 
               {/* What's inside */}
               <section>
-                <h4 className="text-sm font-semibold text-text-strong mb-3">What&apos;s inside the ZIP</h4>
+                <h4 className="text-sm font-semibold text-text-strong mb-3">{t("export.contents")}</h4>
                 <ul className="space-y-2 text-sm text-text">
                   {[
-                    { path: "infra/", desc: "Bicep for Foundry account, project, ACR, monitoring, and RBAC." },
-                    { path: "src/hosted-agent/", desc: "MAF orchestrator container — pinned to agent-framework-core ~=1.7.0." },
-                    { path: "src/backend/app/", desc: "Persona runtime: skills, system prompt, MCP config, SkillsProvider wiring." },
-                    { path: "use-cases/" + useCase + "/", desc: "This persona's curated skills + assets (frozen at download time)." },
-                    { path: "azure.yaml + agent.yaml", desc: "azd service map + ContainerAgent schema for the azure.ai.agents extension." },
-                    { path: "README.md", desc: "Step-by-step deploy + invoke walkthrough." },
+                    { path: "infra/", desc: t("export.infra") },
+                    { path: "src/hosted-agent/", desc: t("export.hosted") },
+                    { path: "src/backend/app/", desc: t("export.backend") },
+                    { path: "use-cases/" + useCase + "/", desc: t("export.persona") },
+                    { path: "azure.yaml + agent.yaml", desc: t("export.config") },
+                    { path: "README.md", desc: t("export.readme") },
                   ].map((row) => (
                     <li key={row.path} className="flex items-start gap-3">
                       <code className="font-mono text-[12px] bg-hover text-text-strong px-2 py-0.5 rounded-sm shrink-0">{row.path}</code>
@@ -999,48 +1017,37 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
 
               {/* Prerequisites */}
               <section>
-                <h4 className="text-sm font-semibold text-text-strong mb-3">Prerequisites</h4>
+                <h4 className="text-sm font-semibold text-text-strong mb-3">{t("export.prerequisites")}</h4>
                 <ul className="space-y-1.5 text-sm text-muted list-disc pl-5">
-                  <li>Azure subscription with Microsoft Foundry preview features enabled.</li>
-                  <li>
-                    <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">azd</code> CLI ≥ 1.20
-                    with the <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">azure.ai.agents</code> extension.
-                  </li>
-                  <li>
-                    <strong className="text-text">Foundry Project Manager</strong> role on the target Foundry project
-                    (so the postdeploy hook can auto-assign <em>Foundry User</em> to the agent identity).
-                  </li>
-                  <li>
-                    A supported region: <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">northcentralus</code>,
-                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">eastus</code>,
-                    {" "}<code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">swedencentral</code>,
-                    or <code className="font-mono text-[12px] bg-hover text-text px-1.5 py-0.5 rounded-sm">westus</code>.
-                  </li>
+                  <li>{t("export.subscription")}</li>
+                  <li>{t("export.cli")}</li>
+                  <li>{t("export.role")}</li>
+                  <li>{t("export.region")}</li>
                 </ul>
               </section>
 
               {/* Deploy steps */}
               <section>
-                <h4 className="text-sm font-semibold text-text-strong mb-3">Deploy</h4>
+                <h4 className="text-sm font-semibold text-text-strong mb-3">{t("export.deploy")}</h4>
                 <ol className="space-y-3">
                   {[
-                    { id: "unzip", label: "Unzip + enter the project", cmd: `unzip ${useCase}-foundry-agent.zip && cd ${useCase}-foundry-agent` },
-                    { id: "auth", label: "Authenticate with Azure", cmd: "azd auth login" },
-                    { id: "up", label: "Provision infra + deploy the agent", cmd: `azd up -e ${useCase}-prod` },
-                    { id: "invoke", label: "Smoke test the deployed agent", cmd: 'azd ai agent invoke "Hello!"' },
+                    { id: "unzip", label: t("export.unzip"), cmd: `unzip ${useCase}-foundry-agent.zip && cd ${useCase}-foundry-agent` },
+                    { id: "auth", label: t("export.auth"), cmd: "azd auth login" },
+                    { id: "up", label: t("export.provision"), cmd: `azd up -e ${useCase}-prod` },
+                    { id: "invoke", label: t("export.invoke"), cmd: 'azd ai agent invoke "Hello!"' },
                   ].map((step, idx) => (
                     <li key={step.id} className="rounded-xl border border-border-soft bg-surface overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-2 border-b border-border-soft bg-surface-2">
                         <span className="w-5 h-5 rounded-full bg-accent text-accent-fg text-[11px] font-semibold flex items-center justify-center shrink-0">
-                          {idx + 1}
+                          {formatNumber(idx + 1)}
                         </span>
                         <span className="text-xs font-medium text-text flex-1">{step.label}</span>
                         <button
                           onClick={() => copyCmd(step.cmd, step.id)}
                           className="text-[11px] text-muted hover:text-text px-2 py-1 rounded-sm hover:bg-hover transition-all"
-                          aria-label={`Copy ${step.label}`}
+                          aria-label={t("copyNamed", { name: step.label })}
                         >
-                          {copiedCmd === step.id ? "Copied!" : "Copy"}
+                          {t(copiedCmd === step.id ? "copied" : "copy")}
                         </button>
                       </div>
                       <pre className="px-4 py-2.5 text-xs font-mono text-text-strong overflow-x-auto">
@@ -1050,22 +1057,14 @@ export function SkillsAdminPanel({ onClose, useCase = "generic", useCases = [], 
                   ))}
                 </ol>
                 <p className="mt-3 text-[11px] text-muted leading-relaxed">
-                  First <code className="font-mono bg-hover px-1 py-0.5 rounded-sm">azd up</code> takes
-                  ~12–18 min (Foundry account + project + ACR + agent build). Subsequent
-                  {" "}<code className="font-mono bg-hover px-1 py-0.5 rounded-sm">azd deploy</code> is &lt; 2 min.
+                  {t("export.timing")}
                 </p>
               </section>
 
               {/* Footer / troubleshooting */}
               <section className="rounded-xl border border-border-soft bg-surface-2 px-4 py-3">
                 <p className="text-[12px] text-muted leading-relaxed">
-                  <strong className="text-text">Stuck?</strong> The bundle&apos;s
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">README.md</code> covers the
-                  three most common gotchas: 401 on first invoke (RBAC propagation, wait 5–15 min),
-                  <em> session_not_ready</em> 424 (container crash — check
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">azd ai agent monitor --session-id</code>),
-                  and region <em>experience not available</em> (try
-                  {" "}<code className="font-mono bg-hover text-text px-1 py-0.5 rounded-sm">swedencentral</code>).
+                  {t("export.help")}
                 </p>
               </section>
             </div>

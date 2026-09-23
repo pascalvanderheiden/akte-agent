@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.locale import Locale
+
 # ─── Enums ───
 
 
@@ -97,6 +99,7 @@ class AgentRequest(BaseModel):
     conversationId: str
     message: str
     useCase: str = "generic"
+    locale: Locale | None = None
     attachments: list[Attachment] = Field(default_factory=list)
     # Per-MCP-server user access tokens, keyed by MCP server name
     # (e.g. {"graph-obo": "<entra access token>"}). Sent by the frontend after
@@ -203,6 +206,7 @@ class CopilotStudioRequest(BaseModel):
         description="Optional conversation ID to continue a multi-turn session. Leave empty to start a new conversation.",
     )
     useCase: str = Field(default="generic", description="Use-case identifier")
+    locale: Locale | None = None
 
 
 class CopilotStudioResponse(BaseModel):
@@ -285,6 +289,12 @@ class SkillList(BaseModel):
     skills: list[SkillResponse]
 
 
+class PersonaLocalization(BaseModel):
+    displayName: str = ""
+    description: str = ""
+    sampleQuestions: list[str] = Field(default_factory=list)
+
+
 # ─── System Prompt Admin ───
 
 
@@ -297,6 +307,7 @@ class UseCaseInfo(BaseModel):
     skillCount: int = 0
     sampleQuestions: list[str] = Field(default_factory=list)
     curated: bool = False
+    localizations: dict[Locale, PersonaLocalization] = Field(default_factory=dict)
 
 
 class UseCaseList(BaseModel):
@@ -342,6 +353,7 @@ class PersonaManifest(BaseModel):
     instructions: str = ""
     displayName: str | None = None
     sampleQuestions: list[str] = Field(default_factory=list)
+    localizations: dict[Locale, PersonaLocalization] = Field(default_factory=dict)
     skills: list[ImportSkill] = Field(default_factory=list)
     mcpServers: list[ImportMcpServer] = Field(default_factory=list)
     traits: list[str] = Field(default_factory=list)

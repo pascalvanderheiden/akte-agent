@@ -46,7 +46,8 @@ if "FOUNDRY_ENDPOINT" not in os.environ:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 from app.config import Settings, get_settings
-from app.hosted_agent_invoke import parse_invoke_payload
+from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
+from app.locale import Locale
 from app.models import (
     ContentEvent,
     DoneEvent,
@@ -291,6 +292,7 @@ async def _stream_response(
     use_case: str,
     mcp_access_tokens: dict[str, str] | None = None,
     token_source: dict | None = None,
+    locale: Locale | None = None,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     start_time = time.monotonic()
@@ -334,6 +336,7 @@ async def _stream_response(
         async for event in _copilot_agent.run(
             message=message,
             conversation_id=conversation_id,
+            locale=locale,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -525,6 +528,14 @@ async def handle_invoke(request: Request) -> Response:
             # Clean up leading/trailing whitespace from tag removal
             message = message.strip()
 
+        conversation_match = re.match(r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL)
+        if conversation_match:
+            from html import unescape
+
+            if "conversationId" not in data:
+                conversation_id = unescape(conversation_match.group(1))
+            message = message[conversation_match.end():].strip()
+        locale, message = extract_invoke_locale(data, message)
         logger.info(
             "handle_invoke: useCase=%s conversation=%s registries=%s message_len=%d "
             "mcp_tokens=%s (body=%s tag=%s)",
@@ -554,6 +565,7 @@ async def handle_invoke(request: Request) -> Response:
             message,
             use_case,
             mcp_access_tokens,
+            locale=locale,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,

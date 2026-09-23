@@ -55,11 +55,17 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    const storedTheme = localStorage.getItem("kratos-theme-name");
+    let storedTheme: string | null = null;
+    let storedMode: string | null = null;
+    try {
+      storedTheme = localStorage.getItem("kratos-theme-name");
+      storedMode = localStorage.getItem("kratos-theme-mode");
+    } catch {
+      // Embedded hosts may disable storage; defaults remain usable.
+    }
     if (storedTheme && THEME_IDS.has(storedTheme as ThemeName)) {
       setThemeState(storedTheme as ThemeName);
     }
-    const storedMode = localStorage.getItem("kratos-theme-mode");
     if (storedMode === "dark" || storedMode === "light") {
       setModeState(storedMode);
     } else if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches) {
@@ -74,8 +80,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (mode === "dark") root.classList.add("dark");
     else root.classList.remove("dark");
     if (hydrated) {
-      localStorage.setItem("kratos-theme-name", theme);
-      localStorage.setItem("kratos-theme-mode", mode);
+      try {
+        localStorage.setItem("kratos-theme-name", theme);
+        localStorage.setItem("kratos-theme-mode", mode);
+      } catch {
+        // Preserve this visit's theme even without persistent storage.
+      }
     }
   }, [theme, mode, hydrated]);
 

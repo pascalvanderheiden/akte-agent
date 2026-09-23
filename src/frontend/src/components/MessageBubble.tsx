@@ -6,6 +6,42 @@ import remarkGfm from "remark-gfm";
 import { ChatMessage, Attachment } from "@/types";
 
 import { getApiUrl } from "@/lib/config";
+import { useLocale } from "./LocaleProvider";
+import { responseError } from "@/lib/errors";
+
+function DownloadLink({ href, filename, children, className }: { href: string; filename: string; children: React.ReactNode; className?: string }) {
+  const { t } = useLocale();
+  const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState(false);
+  return (
+    <>
+      <a href={href} download={filename} aria-label={t("downloadNamed", { name: filename })} title={t("download")} className={className}
+        onClick={async (event) => {
+          event.preventDefault();
+          if (pending) return;
+          setFailed(false);
+          setPending(true);
+          try {
+            const response = await fetch(href);
+            if (!response.ok) throw await responseError(response, "DOWNLOAD_ERROR");
+            const url = URL.createObjectURL(await response.blob());
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+          } catch {
+            setFailed(true);
+          } finally {
+            setPending(false);
+          }
+        }}>
+        {pending ? t("downloading") : children}
+      </a>
+      {failed && <span role="alert" className="block text-red-600 text-xs">{t("error.DOWNLOAD_ERROR")}</span>}
+    </>
+  );
+}
 
 /** Build the download-link prefix on demand so it picks up runtime config. */
 function getDlPrefix(): string {
@@ -61,10 +97,11 @@ function getFileIcon(name: string) {
 
 /** Renders attachment chips for user messages */
 function AttachmentChips({ attachments }: { attachments: Attachment[] }) {
+  const { t } = useLocale();
   return (
     <div className="flex flex-wrap gap-1.5 mt-2">
       {attachments.map((att, idx) => {
-        const name = att.displayName || ("path" in att ? att.path : "file");
+        const name = att.displayName || ("path" in att ? att.path : t("file"));
         return (
           <span
             key={idx}
@@ -81,6 +118,7 @@ function AttachmentChips({ attachments }: { attachments: Attachment[] }) {
 
 /** Inline PDF preview with expand/collapse */
 function PdfPreview({ href, filename }: { href: string; filename: string }) {
+  const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const inlineUrl = href.includes("?") ? `${href}&inline=true` : `${href}?inline=true`;
 
@@ -97,23 +135,22 @@ function PdfPreview({ href, filename }: { href: string; filename: string }) {
           <button
             onClick={() => setExpanded(!expanded)}
             className="p-1.5 text-muted hover:text-text rounded-md hover:bg-hover transition-all"
-            title={expanded ? "Collapse" : "Expand preview"}
+            title={t(expanded ? "collapse" : "expandPreview")}
+            aria-label={t(expanded ? "collapse" : "expandPreview")}
           >
             <svg className={`w-4 h-4 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
             </svg>
           </button>
-          <a
+          <DownloadLink
             href={href}
-            download={filename}
-            rel="noopener noreferrer"
+            filename={filename}
             className="p-1.5 text-muted hover:text-accent rounded-md hover:bg-hover transition-all"
-            title="Download"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
-          </a>
+          </DownloadLink>
         </div>
       </div>
       {expanded && (
@@ -132,7 +169,7 @@ function PdfPreview({ href, filename }: { href: string; filename: string }) {
           <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
           </svg>
-          <span className="text-sm">Click to preview PDF</span>
+          <span className="text-sm">{t("previewPdf")}</span>
         </button>
       )}
     </div>
@@ -144,6 +181,7 @@ interface Props {
 }
 
 export function MessageBubble({ message }: Props) {
+  const { t } = useLocale();
   const isUser = message.role === "user";
   const content = isUser ? message.content : rewriteFilePaths(message.content);
 
@@ -212,17 +250,16 @@ export function MessageBubble({ message }: Props) {
 
                     // Default — download link with icon
                     return (
-                      <a
+                      <DownloadLink
                         href={href}
-                        download={urlFilename}
-                        rel="noopener noreferrer"
+                        filename={urlFilename}
                         className="inline-flex items-center gap-1.5 text-accent hover:text-accent underline decoration-accent/40 underline-offset-2 cursor-pointer bg-transparent border-none p-0 font-inherit text-inherit transition-colors"
                       >
                         <svg className="w-4 h-4 inline-block shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         {children}
-                      </a>
+                      </DownloadLink>
                     );
                   }
                   return (
@@ -240,6 +277,7 @@ export function MessageBubble({ message }: Props) {
             >
               {content}
             </ReactMarkdown>
+            {content.includes(getDlPrefix()) && <p className="text-xs text-muted">{t("temporaryFiles")}</p>}
           </div>
         )}
       </div>
