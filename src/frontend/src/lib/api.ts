@@ -1,6 +1,6 @@
 import { getApiUrl, getAuthConfig } from "@/lib/config";
 import { getMcpAccessToken } from "@/lib/auth";
-import { ApplicationError, responseError } from "@/lib/errors";
+import { ApplicationError, responseError, type ErrorCode } from "@/lib/errors";
 import type {
   Attachment,
   EvalScenario,
@@ -617,11 +617,8 @@ export async function applyAnalysisFix(
 
 // ─── Evals ─────────────────────────────────────────────────────────────────
 
-async function readJson<T>(response: Response, errPrefix: string): Promise<T> {
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`${errPrefix} (${response.status})${body ? `: ${body}` : ""}`);
-  }
+async function readJson<T>(response: Response, code: ErrorCode): Promise<T> {
+  if (!response.ok) throw await responseError(response, code);
   return response.json();
 }
 
@@ -629,8 +626,9 @@ export async function listEvalScenarios(useCase: string): Promise<EvalScenario[]
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/scenarios`,
   );
-  const data = await readJson<{ scenarios: EvalScenario[] }>(r, "List scenarios failed");
-  return data.scenarios ?? [];
+  const data = await readJson<{ scenarios: EvalScenario[] }>(r, "EVAL_LOAD");
+  if (!Array.isArray(data.scenarios)) throw new ApplicationError("EVAL_LOAD");
+  return data.scenarios;
 }
 
 export async function generateEvalScenarios(
@@ -645,7 +643,9 @@ export async function generateEvalScenarios(
       body: JSON.stringify({ count: 10, persist: false, instructions: "", ...body }),
     },
   );
-  return readJson(r, "Generate scenarios failed");
+  const data = await readJson<{ scenarios: EvalScenario[]; persisted: boolean }>(r, "EVAL_GENERATE");
+  if (!Array.isArray(data.scenarios)) throw new ApplicationError("EVAL_GENERATE");
+  return data;
 }
 
 export async function upsertEvalScenario(
@@ -660,7 +660,7 @@ export async function upsertEvalScenario(
       body: JSON.stringify(scenario),
     },
   );
-  return readJson(r, "Save scenario failed");
+  return readJson(r, "EVAL_SAVE");
 }
 
 export async function deleteEvalScenario(useCase: string, name: string): Promise<void> {
@@ -669,7 +669,7 @@ export async function deleteEvalScenario(useCase: string, name: string): Promise
     { method: "DELETE" },
   );
   if (!r.ok && r.status !== 404) {
-    throw new Error(`Delete scenario failed: ${r.status}`);
+    throw await responseError(r, "EVAL_DELETE");
   }
 }
 
@@ -685,22 +685,23 @@ export async function startEvalRun(
       body: JSON.stringify(body),
     },
   );
-  return readJson(r, "Start eval run failed");
+  return readJson(r, "EVAL_START");
 }
 
 export async function listEvalRuns(useCase: string): Promise<EvalRun[]> {
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/runs`,
   );
-  const data = await readJson<{ runs: EvalRun[] }>(r, "List runs failed");
-  return data.runs ?? [];
+  const data = await readJson<{ runs: EvalRun[] }>(r, "EVAL_LOAD");
+  if (!Array.isArray(data.runs)) throw new ApplicationError("EVAL_LOAD");
+  return data.runs;
 }
 
 export async function getEvalRun(useCase: string, runId: string): Promise<EvalRun> {
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/runs/${encodeURIComponent(runId)}`,
   );
-  return readJson(r, "Get run failed");
+  return readJson(r, "EVAL_POLL");
 }
 
 // ─── Traces ────────────────────────────────────────────────────────────────
@@ -720,7 +721,9 @@ export async function listTraceOperations(filters: {
   if (filters.maxOperations) params.set("limit", String(filters.maxOperations));
   const qs = params.toString();
   const r = await fetch(`${getApiUrl()}/api/traces/operations${qs ? `?${qs}` : ""}`);
-  return readJson(r, "List trace operations failed");
+  const data = await readJson<TraceList>(r, "TRACE_LOAD");
+  if (!Array.isArray(data.operations) || !data.summary) throw new ApplicationError("TRACE_LOAD");
+  return data;
 }
 
 export async function getTraceOperation(
@@ -730,5 +733,7 @@ export async function getTraceOperation(
   const r = await fetch(
     `${getApiUrl()}/api/traces/operations/${encodeURIComponent(operationId)}?hours=${lookbackHours}`,
   );
-  return readJson(r, "Get trace operation failed");
+  const data = await readJson<TraceOperation>(r, "TRACE_DETAIL");
+  if (!Array.isArray(data.spans) || !Array.isArray(data.logs)) throw new ApplicationError("TRACE_DETAIL");
+  return data;
 }
