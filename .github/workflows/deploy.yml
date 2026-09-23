@@ -30,6 +30,14 @@ on:
         description: "Upload use-case skills to blob storage (needs network access to the storage account)"
         type: boolean
         default: false
+      deploy_sre_agent:
+        description: "Provision the opt-in read-only Azure SRE Agent (needs `provision: true` and SRE access in the subscription)"
+        type: boolean
+        default: false
+      sre_location:
+        description: "Region for the SRE Agent (blank = same region as the application, if supported)"
+        type: string
+        default: ""
       run_integration_tests:
         description: "Run integration tests after deploying"
         type: boolean
@@ -107,6 +115,26 @@ jobs:
               --subscription "$AZURE_SUBSCRIPTION_ID" \
               --no-prompt
 
+      # Nonsecret SRE options, recorded with the supported azd command rather
+      # than by editing .azure/. Always written, so turning the input off in a
+      # later run stops future provisioning from creating an agent. It does not
+      # delete an agent that already exists — see docs/sre-agent.md.
+      - name: Configure SRE Agent options
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+        run: |
+          azd env set DEPLOY_SRE_AGENT "${{ inputs.deploy_sre_agent }}"
+          # This slice provisions the read-only core only; the connectors and
+          # repository attachment are separate work.
+          azd env set SRE_CONNECT_TELEMETRY false
+          azd env set SRE_CONNECT_GITHUB false
+          if [ -n "${{ inputs.sre_location }}" ]; then
+            azd env set SRE_LOCATION "${{ inputs.sre_location }}"
+          fi
+          # CI signs in with a federated service principal, so role assignments
+          # must not assume a User principal.
+          azd env set AZURE_PRINCIPAL_TYPE ServicePrincipal
+
       - name: Provision infrastructure
         if: inputs.provision
         env:
@@ -145,6 +173,7 @@ jobs:
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Provisioned | ${{ inputs.provision }} |"
             echo "| Skills uploaded | ${{ inputs.upload_use_cases }} |"
+            echo "| SRE Agent | ${{ inputs.deploy_sre_agent }} (core-only) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:
