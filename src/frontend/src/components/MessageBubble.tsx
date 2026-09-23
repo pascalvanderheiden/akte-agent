@@ -181,15 +181,19 @@ export function MessageBubble({ message }: Props) {
               components={{
                 img: ({ src, alt }) => {
                   if (!src) return null;
+                  const image = (
+                    <img
+                      src={src}
+                      alt={alt || ""}
+                      className="max-w-full rounded-xl border border-border-soft shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+                      style={{ maxHeight: "400px" }}
+                      loading="lazy"
+                    />
+                  );
+                  if (typeof src !== "string") return image;
                   return (
                     <a href={src} target="_blank" rel="noopener noreferrer" className="block my-3">
-                      <img
-                        src={src}
-                        alt={alt || ""}
-                        className="max-w-full rounded-xl border border-border-soft shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                        style={{ maxHeight: "400px" }}
-                        loading="lazy"
-                      />
+                      {image}
                     </a>
                   );
                 },
