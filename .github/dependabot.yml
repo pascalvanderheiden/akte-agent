@@ -29,10 +29,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # Pydantic 2.13.5 requires core 2.46.5 exactly; 2.49 is not compatible.
+    # Pydantic 2.13.5 requires core 2.46.5 exactly. Ignore incompatible
+    # standalone core releases; revisit this range with the grouped parent bump.
     ignore:
       - dependency-name: pydantic-core
-        versions: [">=2.49,<2.50"]
+        versions: [">=2.47,<2.50"]
     groups:
       obo-security:
         applies-to: security-updates

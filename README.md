@@ -203,6 +203,24 @@ Per-environment settings are set with `azd env set` while that environment is ac
 `azd env set DEPLOY_OBO false` to skip the on-behalf-of stack in an experiment. Values set this way
 land in that environment's `.env` only, never in another's.
 
+### Azure SRE Agent (opt-in)
+
+An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
+that observes that environment's resources and reuses its Application Insights and Log Analytics.
+It is off by default: environments never opted in create no billable SRE resource.
+This release provisions **core only**; telemetry connectors and GitHub attachment
+remain pending follow-on work:
+
+```bash
+azd env set DEPLOY_SRE_AGENT true
+azd env set SRE_CONNECT_TELEMETRY false
+azd env set SRE_CONNECT_GITHUB false
+azd provision
+```
+
+See [`docs/sre-agent.md`](./docs/sre-agent.md) for prerequisites, supported-region checks,
+permissions, outputs, cost, and cleanup (turning the flag off does **not** delete an existing agent).
+
 ### Register the Agent in Foundry (One-Time Manual Step)
 
 After `azd up`, register the agent in the Foundry portal so traces appear in the Operate tab:
