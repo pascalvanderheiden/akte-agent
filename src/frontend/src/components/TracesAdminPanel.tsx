@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
 import { listTraceOperations, getTraceOperation } from "@/lib/api";
 import type { SpanCategory, TraceList, TraceOperation, TraceSpan } from "@/types";
 

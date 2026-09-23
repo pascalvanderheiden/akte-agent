@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type JSX } from "react";
 import { generateEvalScenarios, upsertEvalScenario } from "@/lib/api";
 import type { EvalScenario } from "@/types";
 

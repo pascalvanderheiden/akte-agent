@@ -52,6 +52,10 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   parent: aiFoundry
   name: projectName
   location: location
+  // Concurrent project/model writes lock the same account and cause RequestConflict.
+  dependsOn: [
+    modelDeployment
+  ]
   identity: {
     type: 'SystemAssigned'
   }
