@@ -122,14 +122,18 @@ jobs:
       - name: Configure SRE Agent options
         env:
           AZURE_ENV_NAME: ${{ inputs.environment }}
+          # Passed through env rather than interpolated into the script body,
+          # so a value cannot be executed by the runner.
+          DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
+          SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
         run: |
-          azd env set DEPLOY_SRE_AGENT "${{ inputs.deploy_sre_agent }}"
+          azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
           # This slice provisions the read-only core only; the connectors and
           # repository attachment are separate work.
           azd env set SRE_CONNECT_TELEMETRY false
           azd env set SRE_CONNECT_GITHUB false
-          if [ -n "${{ inputs.sre_location }}" ]; then
-            azd env set SRE_LOCATION "${{ inputs.sre_location }}"
+          if [ -n "$SRE_LOCATION_INPUT" ]; then
+            azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"
           fi
           # CI signs in with a federated service principal, so role assignments
           # must not assume a User principal.

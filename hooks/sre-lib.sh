@@ -9,9 +9,13 @@
 # The contract
 # ------------
 # Three components are reported independently:
-#   core       the SRE Agent resource itself   — disabled | ready | failed
-#   telemetry  workload telemetry connectors   — disabled | ready | pending |
-#   github     repository attachment             unavailable | failed
+#   core       the SRE Agent resource itself
+#   telemetry  workload telemetry connectors
+#   github     repository attachment
+#
+# core is one of: disabled | ready | failed
+# telemetry and github are each one of:
+#   disabled | ready | pending | unavailable | failed
 #
 # States mean:
 #   disabled     switched off for this environment; nothing was attempted

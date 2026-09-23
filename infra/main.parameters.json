@@ -21,7 +21,7 @@
       "value": "${DEPLOY_SRE_AGENT=false}"
     },
     "sreAgentName": {
-      "value": "${SRE_AGENT_NAME}"
+      "value": "${SRE_AGENT_NAME_OVERRIDE}"
     },
     "sreLocation": {
       "value": "${SRE_LOCATION}"

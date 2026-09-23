@@ -25,7 +25,7 @@ azd provision
 | `DEPLOY_SRE_AGENT` | `false` | Provision the SRE Agent for this environment |
 | `SRE_CONNECT_TELEMETRY` | `true` | Attempt the workload telemetry connectors (not implemented yet → `pending`) |
 | `SRE_CONNECT_GITHUB` | `true` | Attempt repository attachment (not implemented yet → `pending`) |
-| `SRE_AGENT_NAME` | derived | Name override. The default is `sre-<resourceToken>`, deterministic per environment |
+| `SRE_AGENT_NAME_OVERRIDE` | derived | Name override. The default is `<AZURE_RESOURCE_PREFIX->sre-<resourceToken>`, deterministic per environment. Named separately from the `SRE_AGENT_NAME` output so a provisioned name never becomes an implicit override |
 | `SRE_LOCATION` | `AZURE_LOCATION` | Region for the agent, when the application's region does not offer SRE |
 | `AZURE_PRINCIPAL_TYPE` | `User` | Principal type of the deployer; preflight sets it from the current Azure CLI session |
 

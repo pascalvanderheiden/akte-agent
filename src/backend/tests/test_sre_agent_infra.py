@@ -256,6 +256,6 @@ def test_no_agent_endpoint_is_constructed_from_a_hostname(main_template: dict[st
 def test_parameter_file_defaults_sre_off() -> None:
     params = json.loads((INFRA / "main.parameters.json").read_text())["parameters"]
     assert params["deploySreAgent"]["value"] == "${DEPLOY_SRE_AGENT=false}"
-    assert params["sreAgentName"]["value"] == "${SRE_AGENT_NAME}"
+    assert params["sreAgentName"]["value"] == "${SRE_AGENT_NAME_OVERRIDE}"
     assert params["sreLocation"]["value"] == "${SRE_LOCATION}"
     assert params["principalType"]["value"] == "${AZURE_PRINCIPAL_TYPE=User}"

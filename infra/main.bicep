@@ -38,7 +38,7 @@ param deployObo bool = true
 @description('Deploy an opt-in, read-only Azure SRE Agent for this environment. Default false: environments that have not opted in get no SRE resources and no SRE role assignments. Enabling requires SRE service availability in the subscription and region — hooks/sre-preflight.sh checks that before provisioning.')
 param deploySreAgent bool = false
 
-@description('Optional name override for the SRE Agent. Empty (default) derives a deterministic, environment-scoped name.')
+@description('Optional name override for the SRE Agent, from SRE_AGENT_NAME_OVERRIDE. Empty (default) derives a deterministic, environment-scoped name. Deliberately not named after the SRE_AGENT_NAME output: azd writes outputs back into the environment, which would pin the derived name as an override on the next provision.')
 param sreAgentName string = ''
 
 @description('Optional region override for the SRE Agent. Empty (default) uses the application location, which preflight verifies is supported rather than silently relocating anything.')
