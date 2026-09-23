@@ -123,23 +123,23 @@ const STATUS_COLORS = {
  */
 const KIND_COLORS: Record<ToolKind, { bg: string; text: string; border: string; dot: string; label: string }> = {
   mcp: {
-    bg: "bg-sky-50 dark:bg-sky-500/[0.08]",
+    bg: "bg-sky-50 dark:bg-sky-500/8",
     text: "text-sky-700 dark:text-sky-300",
     border: "border-sky-200 dark:border-sky-500/30",
     dot: "bg-sky-500",
     label: "MCP",
   },
   skill: {
-    bg: "bg-violet-50 dark:bg-violet-500/[0.08]",
+    bg: "bg-violet-50 dark:bg-violet-500/8",
     text: "text-violet-700 dark:text-violet-300",
     border: "border-violet-200 dark:border-violet-500/30",
     dot: "bg-violet-500",
     label: "Skill",
   },
   builtin: {
-    bg: "bg-slate-100 dark:bg-white/[0.05]",
+    bg: "bg-slate-100 dark:bg-white/5",
     text: "text-slate-600 dark:text-slate-300",
-    border: "border-slate-200 dark:border-white/[0.08]",
+    border: "border-slate-200 dark:border-white/8",
     dot: "bg-slate-400",
     label: "Built-in",
   },
@@ -254,7 +254,7 @@ function ToolDetail({ tc }: { tc: ToolCallInfo }) {
   const formattedOutput = tc.output && tc.output !== "None" && tc.output !== "" ? formatToolText(tc.output) : null;
 
   return (
-    <div className="rounded-xl border border-border-soft bg-surface overflow-hidden shadow-sm dark:shadow-none">
+    <div className="rounded-xl border border-border-soft bg-surface overflow-hidden shadow-xs dark:shadow-none">
       <button
         className="w-full flex items-center gap-2 px-3.5 py-2 hover:bg-hover transition-colors text-left"
         onClick={() => setExpanded(!expanded)}
@@ -328,17 +328,17 @@ function TokenBar({
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted">
         <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-sm bg-accent inline-block" />
+          <span className="w-2 h-2 rounded-xs bg-accent inline-block" />
             Prompt <span className="font-mono text-text font-medium">{prompt.toLocaleString()}</span>
         </span>
         {reasoning > 0 && (
           <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" />
+            <span className="w-2 h-2 rounded-xs bg-amber-400 inline-block" />
             Reasoning <span className="font-mono text-text font-medium">{reasoning.toLocaleString()}</span>
           </span>
         )}
         <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-sm bg-emerald-400 inline-block" />
+          <span className="w-2 h-2 rounded-xs bg-emerald-400 inline-block" />
             Output <span className="font-mono text-text font-medium">{(completion - reasoning).toLocaleString()}</span>
         </span>
       </div>
@@ -391,7 +391,7 @@ export function ThoughtChain({
           key={latestThought}
           className="flex items-center gap-2 text-xs text-muted animate-fade-in"
         >
-          <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+          <span className="relative flex h-1.5 w-1.5 shrink-0">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-70" />
             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
           </span>
@@ -405,7 +405,7 @@ export function ThoughtChain({
       {uniqueTools.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {isStreaming && (
-            <div className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin flex-shrink-0" />
+            <div className="w-4 h-4 rounded-full border-2 border-accent border-t-transparent animate-spin shrink-0" />
           )}
           {uniqueTools.map((tc, i) => (
             <ToolPill key={`${tc.skillName}-${i}`} tc={tc} count={callCount.get(tc.skillName)} />
@@ -438,7 +438,7 @@ export function ThoughtChain({
             className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-hover transition-colors cursor-pointer"
           >
             <svg
-              className="w-3.5 h-3.5 text-accent flex-shrink-0"
+              className="w-3.5 h-3.5 text-accent shrink-0"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

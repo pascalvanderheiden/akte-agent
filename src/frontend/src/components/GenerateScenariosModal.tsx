@@ -75,7 +75,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
+      className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in"
       onClick={handleClose}
     >
       <div
@@ -83,7 +83,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center border border-accent">
               <svg className="w-4 h-4 text-accent-fg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -131,7 +131,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
                 max={50}
                 value={count}
                 onChange={(e) => setCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
               />
             </div>
             <div className="col-span-2">
@@ -143,7 +143,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
                 onChange={(e) => setInstructions(e.target.value)}
                 rows={2}
                 placeholder="Focus on edge cases around authentication flows..."
-                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none"
+                className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none"
               />
             </div>
           </div>
@@ -152,7 +152,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
             <button
               onClick={handleGenerate}
               disabled={generating || saving}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {generating ? (
                 <>
@@ -189,7 +189,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
                       type="text"
                       value={scenario.name}
                       onChange={(e) => updateDraft(idx, { name: e.target.value })}
-                      className="flex-1 px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm font-medium text-text focus:outline-none focus:ring-1 focus:ring-accent"
+                      className="flex-1 px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm font-medium text-text focus:outline-hidden focus:ring-1 focus:ring-accent"
                       placeholder="Scenario name"
                     />
                     <button
@@ -207,14 +207,14 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
                     onChange={(e) => updateDraft(idx, { input_message: e.target.value })}
                     rows={2}
                     placeholder="Input message…"
-                    className="w-full px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-accent resize-none"
+                    className="w-full px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm text-text focus:outline-hidden focus:ring-1 focus:ring-accent resize-none"
                   />
                   <textarea
                     value={scenario.expected_behavior}
                     onChange={(e) => updateDraft(idx, { expected_behavior: e.target.value })}
                     rows={2}
                     placeholder="Expected behavior…"
-                    className="w-full px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm text-text focus:outline-none focus:ring-1 focus:ring-accent resize-none"
+                    className="w-full px-2.5 py-1.5 bg-surface border border-border-soft rounded-lg text-sm text-text focus:outline-hidden focus:ring-1 focus:ring-accent resize-none"
                   />
                 </div>
               ))}
@@ -223,7 +223,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-soft flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-border-soft shrink-0">
           <button
             onClick={handleClose}
             disabled={generating || saving}
@@ -235,7 +235,7 @@ export function GenerateScenariosModal({ useCase, open, onClose, onGenerated }: 
             <button
               onClick={handleSaveAll}
               disabled={saving || generating}
-              className="flex items-center gap-2 px-5 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium disabled:opacity-50"
+              className="flex items-center gap-2 px-5 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium disabled:opacity-50"
             >
               {saving ? (
                 <>
