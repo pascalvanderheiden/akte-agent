@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     cosmos_db_database: str = "kratos-agent"
 
     # Root containing self-contained persona assets.  This deliberately has no
-    # package-manager behaviour; APIM_USE_CASES_ROOT remains an input alias so
+    # package-manager behaviour; APM_USE_CASES_ROOT remains an input alias so
     # existing deployments keep locating their assets during upgrade.
     persona_assets_root: str = Field(
         default="use-cases",

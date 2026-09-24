@@ -160,7 +160,7 @@ export default function Home() {
 
   const handleSelectConversation = (conv: Conversation) => {
     setActiveConversation(conv);
-    setSelectedUseCase(conv.useCase || "");
+    setSelectedUseCase(conv.useCase || "akte-agent");
     setPendingMessage(null);
     setSidebarOpen(false);
   };
