@@ -161,9 +161,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             >
               {!useCases.some((persona) => persona.name === selectedUseCase) && (
                 <option value={selectedUseCase} disabled>
-                  {useCases.some((persona) => persona.name === selectedUseCase)
-                    ? selectedUseCase
-                    : `${t("unavailablePersona")}: ${selectedUseCase}`}
+                  {`${t("unavailablePersona")}: ${selectedUseCase}`}
                 </option>
               )}
               {useCases.map((uc) => (

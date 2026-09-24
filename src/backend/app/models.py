@@ -39,6 +39,8 @@ class Conversation(BaseModel):
     id: str
     userId: str
     title: str
+    # Empty preserves legacy records with missing persona metadata; only new
+    # work uses the Akte default above.
     useCase: str = ""
     status: ConversationStatus = ConversationStatus.ACTIVE
     createdAt: datetime

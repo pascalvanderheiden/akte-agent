@@ -303,8 +303,7 @@ class SkillRegistry:
     async def update_skill(self, name: str, updates: dict) -> SkillMetadata | None:
         """Update a skill in the registry and persist to blob via SKILL.md.
 
-        Note: operates on self-contained blob-local skills only. Updating an
-        writes a blob copy that shadows the APM original on next load.
+        Note: operates on self-contained blob-local skills only.
         """
         skill = self.skills.get(name)
         if not skill:

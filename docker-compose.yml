@@ -28,7 +28,6 @@ services:
       LOCAL_DATA_DIR: /data
       PERSONA_ASSETS_ROOT: /app/use-cases
       ENVIRONMENT: development
-      APM_ENABLED: "true"
       # OBO: point the in-sandbox agent at the local OBO MCP server so the
       # graph-obo tool auto-attaches exactly as it does in the cloud. This is the
       # local equivalent of the OBO_MCP_SERVER_MCP_URL env declared in agent.yaml.
