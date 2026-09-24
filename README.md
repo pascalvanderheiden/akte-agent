@@ -95,6 +95,57 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 ---
 
+## Bilingual chat foundation
+
+The language selector supports English and Nederlands. A valid saved
+`kratos.locale` preference wins over the first supported browser language;
+otherwise English is used. Storage is optional. Changing language keeps the
+persona, conversation, history, draft and attachments; it does not translate
+source material or historical messages.
+
+For additional localized screens, use `useLocale()` from
+`src/frontend/src/components/LocaleProvider.tsx`, already mounted in the root
+layout. It exposes `locale`, `setLocale`, `ready`, typed `t(key, params)`,
+`formatDate`, `formatNumber` (including Intl currency options),
+`formatRelativeTime`, and `formatDuration`. Add matching keys and interpolation
+parameters to both catalogs in `src/frontend/src/lib/i18n.ts`; do not introduce
+another locale store or selector. `ready` indicates client preference resolution,
+not completion of API loading. Keep state keyed by conversation/persona, not
+language. `lib/errors.ts` provides stable application error codes; render
+`t(\`error.${code}\`)` instead of exposing raw service diagnostics.
+
+`localizeUseCase(persona, locale)` overlays optional `localizations.en` / `.nl`
+presentation fields on the existing scalar fields. Missing fields retain the
+original value; explicit empty values are retained. Discovery stays dynamic and
+the chat selector defaults to curated personas. Generic includes both complete
+translations. Authenticated import, prompt editing and ZIP export preserve
+metadata; body-only prompt edits retain frontmatter, while full-frontmatter
+edits can intentionally replace the localization map.
+
+`POST /api/agent/chat` and `POST /api/copilot-studio/chat` accept optional
+`locale: "en" | "nl"`. Omission leaves the old language behavior unchanged;
+unsupported values return validation errors. The UI sends locale every turn.
+The proxy carries locale and conversation identity in gateway-compatible input
+context as well as JSON. The hosted runtime applies a per-turn language default
+without recreating the SDK session. Explicit output-language requests take
+precedence, do not change jurisdiction, and follow-up generation is instructed
+to follow the response language (UI locale is only a fallback).
+
+The foundation covers landing, chat, sidebar, files, persona import, prompt
+editing and export. Settings/help, skill/package management and evaluation/trace
+panels have separate localization tickets.
+
+Deterministic browser coverage lives in the existing
+`.copilot/skills/e2e-smoke/tests/09-locale.spec.ts` harness. Serve a local static
+frontend export, set `KRATOS_FRONTEND_URL` and `KRATOS_BACKEND_URL` to that local
+origin, and run `npx playwright test tests/09-locale.spec.ts --project=browser`
+from the harness directory. The same tests support a `NEXT_PUBLIC_BASE_PATH`
+build and matching mounted frontend URL. API/model responses are intercepted
+synthetic fixtures; these tests do **not** establish live-model language quality.
+Backend transport and metadata checks are in `test_locale_contracts.py`,
+`test_import_persona.py`, and `test_project_exporter.py`. No deployment or
+credentials are required for these checks.
+
 ## Tech Stack
 
 ### Backend
@@ -208,8 +259,10 @@ land in that environment's `.env` only, never in another's.
 An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
 that observes that environment's resources and reuses its Application Insights and Log Analytics.
 It is off by default: environments never opted in create no billable SRE resource.
-The read-only core supports optional GitHub Code Access registration; current
-source access remains a separate verification step. For explicit **core-only**:
+Workload telemetry connectors and their read-only permissions are configured
+after core provisioning by default, alongside optional GitHub Code Access
+registration. Query and current source access remain `pending` until verified
+through SRE. For an explicit **core-only** deployment:
 
 ```bash
 azd env set DEPLOY_SRE_AGENT true

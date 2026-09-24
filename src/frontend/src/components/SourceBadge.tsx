@@ -1,4 +1,5 @@
 "use client";
+import { useLocale } from "./LocaleProvider";
 
 /**
  * Tiny provenance badge for a skill's origin.
@@ -14,6 +15,7 @@ export function SourceBadge({
   source?: string | null;
   size?: "xs" | "sm";
 }) {
+  const { t } = useLocale();
   if (!source) return null;
 
   const kind = source.startsWith("apm:") ? "apm" : source;
@@ -26,7 +28,7 @@ export function SourceBadge({
   };
 
   const label = kind === "apm" ? "APM" : kind.toUpperCase();
-  const title = apmPackage ? `APM package: ${apmPackage}` : `Source: ${kind}`;
+  const title = apmPackage ? t("apmPackage", { name: apmPackage }) : t("source", { name: kind });
   const palette = styles[kind] ?? styles.local;
   const sizeCls = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-1.5 py-0.5 text-[9px]";
 

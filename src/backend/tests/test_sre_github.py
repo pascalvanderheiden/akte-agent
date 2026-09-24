@@ -354,6 +354,9 @@ def test_github_failure_does_not_rewrite_telemetry_state(fake_bin: Path, log: Pa
     assert proc.returncode == 1
     assert result_line(proc) == "SRE_RESULT core=ready telemetry=pending github=failed"
     assert "SRE_TELEMETRY_RESULT app_insights=pending log_analytics=pending" in proc.stdout
+    assert "Telemetry app-insights configured/read back" in proc.stdout
+    assert "Telemetry log-analytics configured/read back" in proc.stdout
+    assert len(cli_calls(log, "az", ("deployment", "group", "create"))) == 2
 
 
 def test_pat_workflow_scope_and_entry_point() -> None:
@@ -477,3 +480,132 @@ def test_invalid_workflow_github_switch_fails_before_persisting(fake_bin: Path, 
     )
     assert proc.returncode != 0
     assert cli_calls(log) == []
+
+
+@pytest.mark.parametrize("telemetry", ["disabled", "configured", "pending", "restricted", "failed"])
+@pytest.mark.parametrize("github", ["disabled", "configured", "pending", "restricted", "failed"])
+def test_combined_optional_integrations(telemetry: str, github: str, fake_bin: Path, log: Path) -> None:
+    items = []
+    if github == "configured":
+        items = sequence()
+    elif github != "disabled":
+        items = [response("/api/v2/github/domains", status={"pending": 401, "restricted": 403, "failed": 500}[github])]
+    env = settings(
+        items,
+        SRE_CONNECT_TELEMETRY="false" if telemetry == "disabled" else "true",
+        SRE_CONNECT_GITHUB="false" if github == "disabled" else "true",
+        SRE_READY_ATTEMPTS="2",
+        SRE_READY_DELAY_SECONDS="0",
+    )
+    if telemetry in ("pending", "restricted", "failed"):
+        code = {
+            "pending": "AuthorizationFailed",
+            "restricted": "RequestDisallowedByPolicy",
+            "failed": "InvalidTemplate",
+        }[telemetry]
+        env["FAKE_DEPLOY_APP_ERRORS"] = json.dumps([f"ERROR: ({code})"])
+    proc = run_hook(SETUP, fake_bin, log, env, args=("--environment", "demo"))
+    ts = {
+        "disabled": "disabled",
+        "configured": "pending",
+        "pending": "pending",
+        "restricted": "unavailable",
+        "failed": "failed",
+    }[telemetry]
+    gs = {
+        "disabled": "disabled",
+        "configured": "pending",
+        "pending": "pending",
+        "restricted": "unavailable",
+        "failed": "failed",
+    }[github]
+    assert proc.returncode == int("failed" in (telemetry, github)), proc.stdout + proc.stderr
+    assert result_line(proc) == f"SRE_RESULT core=ready telemetry={ts} github={gs}"
+    law = "disabled" if telemetry == "disabled" else "pending"
+    assert f"SRE_TELEMETRY_RESULT app_insights={ts} log_analytics={law}" in proc.stdout
+    calls = cli_calls(log)
+    deployments = cli_calls(log, "az", ("deployment", "group", "create"))
+    assert len(deployments) == (0 if telemetry == "disabled" else 2)
+    assert len(cli_calls(log, "curl")) == len(items)
+    if telemetry != "disabled":
+        assert "Telemetry log-analytics configured/read back" in proc.stdout
+    assert len(cli_calls(log, "az", ("account", "get-access-token"))) == int(github != "disabled")
+    assert cli_calls(log, "azd", ("env", "set")) == []
+    assert all("delete" not in call and "login" not in call and "provision" not in call for call in calls)
+    assert TOKEN not in proc.stdout + proc.stderr + log.read_text()
+    assert SENTINEL_SECRET not in log.read_text()
+    assert list(fake_bin.parent.glob("sre-github-*")) == []
+    assert list(fake_bin.parent.glob("tmp.*")) == []
+
+
+def test_combined_rerun_retains_sources_without_redeploying_core(fake_bin: Path, log: Path) -> None:
+    env = settings(sequence(pat=True) + sequence(existing=True), SRE_CONNECT_TELEMETRY="true")
+    for _ in range(2):
+        proc = run_hook(SETUP, fake_bin, log, env, args=("--environment", "demo"))
+        assert proc.returncode == 0, proc.stderr
+        assert result_line(proc) == "SRE_RESULT core=ready telemetry=pending github=pending"
+        assert "SRE_TELEMETRY_RESULT app_insights=pending log_analytics=pending" in proc.stdout
+    deployments = cli_calls(log, "az", ("deployment", "group", "create"))
+    assert len(deployments) == 4
+    assert all("source=app-insights" in call or "source=log-analytics" in call for call in deployments)
+    names = [call[call.index("--name") + 1] for call in deployments]
+    assert names[:2] == names[2:]
+    writes = [json.loads(line) for line in log.read_text().splitlines() if json.loads(line).get("method") == "PUT"]
+    assert len(writes) == 2  # One domain, one repository; neither duplicated on rerun.
+    assert cli_calls(log, "az", ("resource", "create")) == []
+    assert cli_calls(log, "az", ("deployment", "sub")) == []
+    assert cli_calls(log, "azd", ("provision",)) == []
+    assert cli_calls(log, "azd", ("env", "set")) == []
+    assert TOKEN not in log.read_text() and SENTINEL_SECRET not in log.read_text()
+    assert list(fake_bin.parent.glob("sre-github-*")) == []
+    assert list(fake_bin.parent.glob("tmp.*")) == []
+
+
+@pytest.mark.parametrize(
+    "telemetry,github", [("true", "true"), ("true", "false"), ("false", "true"), ("false", "false")]
+)
+def test_workflow_passes_independent_optional_flags(telemetry: str, github: str, fake_bin: Path, log: Path) -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
+    inputs = workflow[True]["workflow_dispatch"]["inputs"]
+    assert inputs["sre_connect_telemetry"]["default"] is True
+    assert inputs["sre_connect_github"]["default"] is True
+    step = next(
+        step for step in workflow["jobs"]["deploy"]["steps"] if step.get("name") == "Configure SRE Agent options"
+    )
+    proc = run_hook(
+        SETUP,
+        fake_bin,
+        log,
+        {
+            "DEPLOY_SRE_AGENT_INPUT": "true",
+            "SRE_CONNECT_TELEMETRY_INPUT": telemetry,
+            "SRE_CONNECT_GITHUB_INPUT": github,
+            "SRE_GITHUB_REPOSITORY_URL_INPUT": URL,
+            "SRE_GITHUB_BRANCH_INPUT": "release/test",
+            "SRE_LOCATION_INPUT": "",
+            "SRE_AGENT_NAME_INPUT": "",
+        },
+        command=step["run"],
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = cli_calls(log, "azd", ("env", "set"))
+    assert ["azd", "env", "set", "SRE_CONNECT_TELEMETRY", telemetry] in calls
+    assert ["azd", "env", "set", "SRE_CONNECT_GITHUB", github] in calls
+    assert ["azd", "env", "set", "SRE_GITHUB_BRANCH", "release/test"] in calls
+    assert SENTINEL_SECRET not in log.read_text()
+
+
+def test_workflow_pat_step_runs_both_integrations_without_core_provision(fake_bin: Path, log: Path) -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["deploy"]["steps"]
+    step = next(step for step in steps if step.get("name") == "Set up SRE GitHub access")
+    env = settings(sequence(pat=True), SRE_CONNECT_TELEMETRY="true")
+    proc = run_hook(SETUP, fake_bin, log, env, command=step["run"])
+    assert proc.returncode == 0, proc.stderr
+    assert result_line(proc) == "SRE_RESULT core=ready telemetry=pending github=pending"
+    assert len(cli_calls(log, "az", ("deployment", "group", "create"))) == 2
+    assert cli_calls(log, "az", ("deployment", "sub")) == []
+    assert cli_calls(log, "azd", ("provision",)) == []
+    assert cli_calls(log, "azd", ("env", "set")) == []
+    assert TOKEN not in proc.stdout + proc.stderr + log.read_text()
+    assert SENTINEL_SECRET not in log.read_text()

@@ -34,6 +34,10 @@ on:
         description: "Provision the opt-in read-only Azure SRE Agent (needs `provision: true` and SRE access in the subscription)"
         type: boolean
         default: false
+      sre_connect_telemetry:
+        description: "Configure read-only workload telemetry connectors when provisioning SRE (query verification remains manual)"
+        type: boolean
+        default: true
       sre_location:
         description: "Region for the SRE Agent (blank = same region as the application, if supported)"
         type: string
@@ -141,6 +145,7 @@ jobs:
           # Passed through env rather than interpolated into the script body,
           # so a value cannot be executed by the runner.
           DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
+          SRE_CONNECT_TELEMETRY_INPUT: ${{ inputs.sre_connect_telemetry }}
           SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
           SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
           SRE_CONNECT_GITHUB_INPUT: ${{ inputs.sre_connect_github }}
@@ -148,11 +153,11 @@ jobs:
           SRE_GITHUB_BRANCH_INPUT: ${{ inputs.sre_github_branch }}
         run: |
           source ./hooks/sre-lib.sh
-          sre_bool SRE_CONNECT_GITHUB "$SRE_CONNECT_GITHUB_INPUT" true >/dev/null || exit 1
+          sre_bool SRE_CONNECT_GITHUB "${SRE_CONNECT_GITHUB_INPUT:-}" true >/dev/null || exit 1
+          sre_bool SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-}" true >/dev/null || exit 1
           azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
-          # Telemetry setup is a separate integration.
-          azd env set SRE_CONNECT_TELEMETRY false
-          azd env set SRE_CONNECT_GITHUB "$SRE_CONNECT_GITHUB_INPUT"
+          azd env set SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-true}"
+          azd env set SRE_CONNECT_GITHUB "${SRE_CONNECT_GITHUB_INPUT:-true}"
           azd env set SRE_GITHUB_REPOSITORY_URL "$SRE_GITHUB_REPOSITORY_URL_INPUT"
           azd env set SRE_GITHUB_BRANCH "$SRE_GITHUB_BRANCH_INPUT"
           # Empty inputs clear old overrides rather than retaining stale values.

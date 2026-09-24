@@ -24,6 +24,8 @@ APP_ID = "33333333-3333-3333-3333-333333333333"
 RG_ID = f"/subscriptions/{SUB_ID}/resourceGroups/rg-demo"
 AGENT_ID = f"{RG_ID}/providers/Microsoft.App/agents/sre-demo"
 IDENTITY_ID = f"{RG_ID}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-sre-demo"
+APP_RESOURCE_ID = f"{RG_ID}/providers/Microsoft.Insights/components/appi-demo"
+WORKSPACE_ID = f"{RG_ID}/providers/Microsoft.OperationalInsights/workspaces/log-demo"
 SENTINEL_SECRET = "ghp_SYNTHETIC_SENTINEL_NOT_A_REAL_TOKEN"  # noqa: S105
 PROVIDER: dict[str, Any] = {
     "registrationState": "Registered",
@@ -69,15 +71,51 @@ elif cli == "az" and args[:2] == ["provider", "show"]:
     key = "PROVIDER"
 elif cli == "az" and args[:2] == ["resource", "show"]:
     key = "ENDPOINT" if "properties.agentEndpoint" in args else "RESOURCE"
+    resource_id = args[args.index("--ids") + 1]
+    if "/connectors/" in resource_id:
+        key = "CONNECTOR_APP" if resource_id.endswith("/app-insights") else "CONNECTOR_LOG"
+    elif "/Microsoft.Insights/" in resource_id:
+        key = "SOURCE_APP"
+    elif "/Microsoft.OperationalInsights/" in resource_id:
+        key = "SOURCE_LOG"
 elif cli == "az" and args[:2] == ["account", "get-access-token"]:
     key = "TOKEN"
+elif cli == "az" and args[:3] == ["deployment", "group", "create"]:
+    key = "DEPLOY_APP" if "source=app-insights" in args else "DEPLOY_LOG"
+    template = Path(args[args.index("--template-file") + 1])
+    assert json.loads(template.read_text()) == {"resources": []}
+    assert template.stat().st_mode & 0o077 == 0
+elif cli == "az" and args[:2] == ["bicep", "version"]:
+    assert os.environ.get("AZURE_BICEP_CHECK_VERSION") == "false"
+    key = "BICEP_VERSION"
+elif cli == "az" and args[:2] == ["bicep", "build"]:
+    assert os.environ.get("AZURE_BICEP_CHECK_VERSION") == "false"
+    assert Path(args[args.index("--file") + 1]).name == "sre-telemetry.bicep"
+    key = "BICEP_BUILD"
 else:
     print("Unexpected CLI call", file=sys.stderr)
     sys.exit(99)
 exit_code = int(os.environ.get("FAKE_" + key + "_EXIT", "0"))
 payload = os.environ.get("FAKE_" + key, "{}")
+if key.startswith(("SOURCE_", "DEPLOY_", "CONNECTOR_")):
+    index = sum(call["cli"] == cli and call["args"] == args for call in calls)
+    errors = json.loads(os.environ.get("FAKE_" + key + "_ERRORS", "[]"))
+    if errors:
+        error = errors[min(index, len(errors) - 1)]
+        if error:
+            if error.startswith("ERROR: {"):
+                body = json.loads(error.removeprefix("ERROR: "))
+                body["message"] = os.environ["SRE_GITHUB_PAT"]
+                error = "ERROR: " + json.dumps(body)
+            else:
+                error += " " + os.environ["SRE_GITHUB_PAT"]
+            print(error, file=sys.stderr)
+            sys.exit(1)
+    responses = json.loads(os.environ.get("FAKE_" + key + "_RESPONSES", "[]"))
+    if responses:
+        payload = json.dumps(responses[min(index, len(responses) - 1)])
 if key == "RESOURCE":
-    index = sum(call["cli"] == "az" and call["args"][:2] == ["resource", "show"] for call in calls)
+    index = sum(call["cli"] == cli and call["args"] == args for call in calls)
     errors = json.loads(os.environ.get("FAKE_ERRORS", "[]"))
     if errors:
         error = errors[min(index, len(errors) - 1)]
@@ -144,6 +182,8 @@ def setup_env(**overrides: str) -> dict[str, str]:
             "SRE_AGENT_PRINCIPAL_ID": PRINCIPAL_ID,
             "SRE_AGENT_IDENTITY_ID": IDENTITY_ID,
             "SRE_APP_INSIGHTS_APP_ID": APP_ID,
+            "SRE_APP_INSIGHTS_ID": APP_RESOURCE_ID,
+            "SRE_LOG_ANALYTICS_ID": WORKSPACE_ID,
             **overrides,
         }
     )
@@ -173,6 +213,15 @@ def run_hook(
         "FAKE_ENDPOINT": "null",
         "SRE_GITHUB_ATTEMPTS": "2",
         "SRE_GITHUB_DELAY_SECONDS": "0",
+        "FAKE_SOURCE_APP": json.dumps(
+            {"id": APP_RESOURCE_ID, "tags": {"azd-env-name": "demo"}, "appId": APP_ID, "workspaceId": WORKSPACE_ID}
+        ),
+        "FAKE_SOURCE_LOG": json.dumps({"id": WORKSPACE_ID, "tags": {"azd-env-name": "demo"}}),
+        "FAKE_DEPLOY_APP": json.dumps({"state": "Succeeded"}),
+        "FAKE_DEPLOY_LOG": json.dumps({"state": "Succeeded"}),
+        "FAKE_CONNECTOR_APP": json.dumps(connector("app-insights")),
+        "FAKE_CONNECTOR_LOG": json.dumps(connector("log-analytics")),
+        "FAKE_BICEP_BUILD": json.dumps({"resources": []}),
         **settings,
     }
     proc = subprocess.run(
@@ -186,6 +235,24 @@ def run_hook(
     )
     assert SENTINEL_SECRET not in proc.stdout + proc.stderr
     return proc
+
+
+def connector(source: str) -> dict[str, Any]:
+    app = source == "app-insights"
+    resource_id = APP_RESOURCE_ID if app else WORKSPACE_ID
+    return {
+        "id": f"{AGENT_ID}/connectors/{source}",
+        "properties": {
+            "identity": "system",
+            "dataConnectorType": "AppInsights" if app else "LogAnalytics",
+            "dataSource": resource_id,
+            "extendedProperties": {
+                "armResourceId": resource_id,
+                "resource": {"name": resource_id.rsplit("/", 1)[1]},
+                **({"appId": APP_ID} if app else {}),
+            },
+        },
+    }
 
 
 def cli_calls(log: Path, cli: str = "", verb: tuple[str, ...] = ()) -> list[list[str]]:
@@ -382,11 +449,15 @@ def test_ready_core_keeps_optional_results_truthful(telemetry: str, github: str,
     assert result_line(proc) == f"SRE_RESULT core=ready telemetry={ts} github={gs}"
     assert f"SRE_TELEMETRY_RESULT app_insights={ts} log_analytics={ts}" in proc.stdout
     reads = cli_calls(log, "az", ("resource", "show"))
-    assert len(reads) == (3 if github == "true" else 1)
+    assert len(reads) == 1 + (4 if telemetry == "true" else 0) + (2 if github == "true" else 0)
     assert reads[0][reads[0].index("--ids") + 1] == AGENT_ID
     assert reads[0][reads[0].index("--subscription") + 1] == SUB_ID
     assert reads[0][reads[0].index("--api-version") + 1] == "2025-05-01-preview"
-    assert all(call[:3] in (["az", "account", "show"], ["az", "resource", "show"]) for call in cli_calls(log, "az"))
+    deployments = cli_calls(log, "az", ("deployment",))
+    assert len(deployments) == (2 if telemetry == "true" else 0)
+    if telemetry == "true":
+        assert "configured/read back" in proc.stdout
+        assert "pending connector-identity query verification (not ready)" in proc.stdout
 
 
 @pytest.mark.parametrize(
@@ -568,7 +639,7 @@ def lifecycle_workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"
     hooks = root / "hooks"
     hooks.mkdir(parents=True)
-    for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh", "sre-github.py"):
+    for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh", "sre-telemetry.sh", "sre-github.py"):
         shutil.copy2(HOOKS / name, hooks / name)
     for name in ("select-use-cases", "grant-obo-consent", "assign-agent-roles", "postdeploy"):
         file = hooks / f"{name}.sh"
@@ -685,7 +756,7 @@ def test_workflow_options_execute_safely_and_clear_old_overrides(
     assert proc.returncode == 0, proc.stderr
     assert cli_calls(log) == [
         ["azd", "env", "set", "DEPLOY_SRE_AGENT", "true"],
-        ["azd", "env", "set", "SRE_CONNECT_TELEMETRY", "false"],
+        ["azd", "env", "set", "SRE_CONNECT_TELEMETRY", "true"],
         ["azd", "env", "set", "SRE_CONNECT_GITHUB", "true"],
         ["azd", "env", "set", "SRE_GITHUB_REPOSITORY_URL", ""],
         ["azd", "env", "set", "SRE_GITHUB_BRANCH", ""],
@@ -693,3 +764,328 @@ def test_workflow_options_execute_safely_and_clear_old_overrides(
         ["azd", "env", "set", "SRE_AGENT_NAME_OVERRIDE", name],
         ["azd", "env", "set", "AZURE_PRINCIPAL_TYPE", "ServicePrincipal"],
     ]
+
+
+def telemetry_env(**overrides: str) -> dict[str, str]:
+    return setup_env(
+        **{"SRE_CONNECT_TELEMETRY": "true", "SRE_READY_ATTEMPTS": "3", "SRE_READY_DELAY_SECONDS": "0", **overrides}
+    )
+
+
+def test_telemetry_deploys_each_source_with_selected_outputs_and_no_secrets(fake_bin: Path, log: Path) -> None:
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(), args=("--environment", "demo"))
+    assert proc.returncode == 0, proc.stderr
+    deployments = cli_calls(log, "az", ("deployment", "group", "create"))
+    assert len(deployments) == 2
+    for call, source in zip(deployments, ("app-insights", "log-analytics"), strict=True):
+        assert call[call.index("--subscription") + 1] == SUB_ID
+        assert call[call.index("--resource-group") + 1] == "rg-demo"
+        assert call[call.index("--mode") + 1] == "Incremental"
+        assert call[call.index("--query") + 1] == "{state:properties.provisioningState}"
+        assert f"source={source}" in call
+        assert f"agentPrincipalId={PRINCIPAL_ID}" in call
+        assert "agentName=sre-demo" in call
+        assert f"appInsightsResourceId={APP_RESOURCE_ID}" in call
+        assert f"logAnalyticsResourceId={WORKSPACE_ID}" in call
+        assert f"appInsightsAppId={APP_ID}" in call
+        assert not any("token" in arg.lower() or "password" in arg.lower() for arg in call)
+    assert "telemetry=pending" in result_line(proc)
+    assert "not ready" in proc.stdout
+    assert list(fake_bin.parent.glob("tmp.*")) == []
+    assert all("rest" not in call and "get-access-token" not in call for call in cli_calls(log, "az"))
+
+
+@pytest.mark.parametrize(
+    "key", ["SOURCE_APP", "DEPLOY_APP", "CONNECTOR_APP", "SOURCE_LOG", "DEPLOY_LOG", "CONNECTOR_LOG"]
+)
+@pytest.mark.parametrize(
+    "error,state,exit_code",
+    [
+        ("AuthorizationFailed", "pending", 0),
+        ("RequestDisallowedByPolicy", "unavailable", 0),
+        ("InvalidTemplate", "failed", 1),
+        ("InvalidApiVersionParameter", "failed", 1),
+        ("NoRegisteredProviderFound", "failed", 1),
+        ("Unexpected", "failed", 1),
+    ],
+)
+def test_telemetry_independent_errors_preserve_core_and_other_connector(
+    key: str, error: str, state: str, exit_code: int, fake_bin: Path, log: Path
+) -> None:
+    env = telemetry_env(**{f"FAKE_{key}_ERRORS": json.dumps([f"ERROR: ({error})"]), "SRE_CONNECT_GITHUB": "true"})
+    proc = run_hook(SETUP, fake_bin, log, env)
+    assert proc.returncode == exit_code, proc.stderr
+    app, law = (state, "pending") if key.endswith("APP") else ("pending", state)
+    assert f"SRE_TELEMETRY_RESULT app_insights={app} log_analytics={law}" in proc.stdout
+    assert result_line(proc) == f"SRE_RESULT core=ready telemetry={state} github=pending"
+    other = "log-analytics" if key.endswith("APP") else "app-insights"
+    assert f"Telemetry {other} configured/read back" in proc.stdout
+    assert "GitHub pending:" in proc.stderr  # Optional failure did not short-circuit the next integration.
+    assert "properties.agentEndpoint" in cli_calls(log, "az", ("resource", "show"))[-1]
+    calls = cli_calls(log, "az")
+    assert all("delete" not in call and "login" not in call and "install" not in call for call in calls)
+    assert list(fake_bin.parent.glob("tmp.*")) == []
+
+
+@pytest.mark.parametrize(
+    "details,state,exit_code",
+    [
+        ([{"code": "AuthorizationFailed"}], "pending", 0),
+        ([{"code": "RequestDisallowedByPolicy"}], "unavailable", 0),
+        ([{"code": "RequestDisallowedByPolicy"}, {"code": "InvalidTemplate"}], "failed", 1),
+        ([{"code": "DeploymentFailed", "details": [{"code": "Forbidden"}]}], "pending", 0),
+    ],
+)
+def test_telemetry_nested_arm_errors_never_hide_template_defects(
+    details: list[dict[str, Any]], state: str, exit_code: int, fake_bin: Path, log: Path
+) -> None:
+    error = "ERROR: " + json.dumps({"error": {"code": "DeploymentFailed", "details": details}})
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_DEPLOY_APP_ERRORS=json.dumps([error])))
+    assert proc.returncode == exit_code, proc.stderr
+    assert f"app_insights={state} log_analytics=pending" in proc.stdout
+
+
+@pytest.mark.parametrize("key", ["SOURCE_APP", "DEPLOY_APP", "CONNECTOR_APP"])
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_telemetry_propagation_retries_are_bounded_and_exhaustion_is_nonzero(
+    key: str, exhausted: bool, fake_bin: Path, log: Path
+) -> None:
+    errors = (
+        ["ERROR: (PrincipalNotFound)"] if exhausted else ["ERROR: (ResourceNotFound)", "ERROR: (TooManyRequests)", ""]
+    )
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(**{f"FAKE_{key}_ERRORS": json.dumps(errors)}))
+    assert proc.returncode == (1 if exhausted else 0), proc.stderr
+    if key == "DEPLOY_APP":
+        calls = [c for c in cli_calls(log, "az", ("deployment",)) if "source=app-insights" in c]
+    else:
+        target = APP_RESOURCE_ID if key == "SOURCE_APP" else f"{AGENT_ID}/connectors/app-insights"
+        calls = [c for c in cli_calls(log, "az", ("resource",)) if target in c]
+    assert len(calls) == 3
+    assert "app_insights=pending log_analytics=pending" in proc.stdout
+    assert "Telemetry log-analytics configured/read back" in proc.stdout
+    if exhausted:
+        assert "exhausted 3 attempts" in proc.stdout
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_telemetry_connector_readiness_has_one_retry_budget(exhausted: bool, fake_bin: Path, log: Path) -> None:
+    waiting = connector("app-insights")
+    waiting["properties"]["provisioningState"] = "Updating"
+    responses = [waiting] if exhausted else [waiting, waiting, connector("app-insights")]
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_CONNECTOR_APP_RESPONSES=json.dumps(responses)))
+    assert proc.returncode == (1 if exhausted else 0), proc.stderr
+    reads = [c for c in cli_calls(log, "az", ("resource",)) if f"{AGENT_ID}/connectors/app-insights" in c]
+    assert len(reads) == 3
+
+
+@pytest.mark.parametrize("state", ["Failed", "Unknown", None, 5, False])
+def test_telemetry_invalid_connector_state_fails_without_retry(state: Any, fake_bin: Path, log: Path) -> None:
+    response = connector("app-insights")
+    response["properties"]["provisioningState"] = state
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_CONNECTOR_APP=json.dumps(response)))
+    assert proc.returncode == 1
+    assert "app_insights=failed log_analytics=pending" in proc.stdout
+    reads = [c for c in cli_calls(log, "az", ("resource",)) if f"{AGENT_ID}/connectors/app-insights" in c]
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize("key", ["SOURCE_APP", "DEPLOY_APP", "CONNECTOR_APP"])
+@pytest.mark.parametrize("payload", ["invalid json", "null", "[]", "{}"])
+def test_telemetry_malformed_success_is_nonzero(key: str, payload: str, fake_bin: Path, log: Path) -> None:
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(**{f"FAKE_{key}": payload}))
+    assert proc.returncode == 1
+    assert "app_insights=failed log_analytics=pending" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("id",), "foreign"),
+        (("properties", "identity"), IDENTITY_ID),
+        (("properties", "dataConnectorType"), "LogAnalytics"),
+        (("properties", "dataSource"), WORKSPACE_ID),
+        (("properties", "extendedProperties", "appId"), "ingestion-key-not-app-id"),
+        (("properties", "extendedProperties", "armResourceId"), WORKSPACE_ID),
+        (("properties", "extendedProperties", "resource", "name"), "foreign"),
+    ],
+)
+def test_telemetry_readback_verifies_target_and_identity(
+    path: tuple[str, ...], value: str, fake_bin: Path, log: Path
+) -> None:
+    response = connector("app-insights")
+    target = response
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_CONNECTOR_APP=json.dumps(response)))
+    assert proc.returncode == 1
+    assert "read-back differs" in proc.stderr
+
+
+@pytest.mark.parametrize("key", ["SRE_APP_INSIGHTS_ID", "SRE_LOG_ANALYTICS_ID"])
+@pytest.mark.parametrize("value", ["", "foreign", f"{RG_ID}/providers/Microsoft.Insights/components/../../foreign"])
+def test_telemetry_missing_or_foreign_monitoring_outputs_are_isolated(
+    key: str, value: str, fake_bin: Path, log: Path
+) -> None:
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(**{key: value}))
+    assert proc.returncode == 1
+    assert "core=ready" in result_line(proc)
+    source = "app-insights" if key == "SRE_APP_INSIGHTS_ID" else "log-analytics"
+    assert all(f"source={source}" not in c for c in cli_calls(log, "az", ("deployment",)))
+
+
+@pytest.mark.parametrize(
+    "key", ["SRE_AGENT_ID", "SRE_AGENT_PRINCIPAL_ID", "SRE_APP_INSIGHTS_APP_ID", "SRE_APP_INSIGHTS_ID"]
+)
+def test_telemetry_rejects_stale_injected_outputs(key: str, fake_bin: Path, log: Path) -> None:
+    selected = telemetry_env(**{key: "stale"})
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_VALUES=json.dumps(selected)))
+    assert proc.returncode == 1
+    assert "selected environment" in proc.stderr
+    assert all("source=app-insights" not in c for c in cli_calls(log, "az", ("deployment",)))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"FAKE_BICEP_VERSION_EXIT": "1"}, {"FAKE_BICEP_BUILD_EXIT": "1"}, {"FAKE_BICEP_BUILD": "null"}],
+)
+def test_telemetry_missing_compiler_and_compile_errors_fail_without_install(
+    overrides: dict[str, str], fake_bin: Path, log: Path
+) -> None:
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(**overrides))
+    assert proc.returncode == 1
+    assert result_line(proc) == "SRE_RESULT core=ready telemetry=failed github=disabled"
+    assert cli_calls(log, "az", ("deployment",)) == []
+    assert all("install" not in c and "upgrade" not in c for c in cli_calls(log))
+    assert list(fake_bin.parent.glob("tmp.*")) == []
+
+
+def test_telemetry_repeat_runs_preserve_connector_and_deployment_names(fake_bin: Path, log: Path) -> None:
+    for _ in range(2):
+        proc = run_hook(SETUP, fake_bin, log, telemetry_env())
+        assert proc.returncode == 0, proc.stderr
+    deployments = cli_calls(log, "az", ("deployment",))
+    names = [c[c.index("--name") + 1] for c in deployments]
+    assert names[:2] == names[2:] and len(set(names)) == 2
+    for first, second in zip(deployments[:2], deployments[2:], strict=True):
+        assert first[first.index("--parameters") :] == second[second.index("--parameters") :]
+
+
+@pytest.mark.parametrize("suffix", ["a", "b"])
+def test_telemetry_deployment_name_preserves_long_agent_identity(suffix: str, fake_bin: Path, log: Path) -> None:
+    name = "s" * 62 + suffix
+    agent_id = AGENT_ID.replace("sre-demo", name)
+    resource = copy.deepcopy(RESOURCE)
+    resource["id"] = agent_id
+    overrides = {"SRE_AGENT_NAME": name, "SRE_AGENT_ID": agent_id, "FAKE_RESOURCE": json.dumps(resource)}
+    for key, source in (("FAKE_CONNECTOR_APP", "app-insights"), ("FAKE_CONNECTOR_LOG", "log-analytics")):
+        response = connector(source)
+        response["id"] = f"{agent_id}/connectors/{source}"
+        overrides[key] = json.dumps(response)
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(**overrides))
+    assert proc.returncode == 0, proc.stderr
+    names = [c[c.index("--name") + 1] for c in cli_calls(log, "az", ("deployment",))]
+    assert names == [f"a{name}", f"l{name}"]
+    assert all(len(n) == 64 for n in names)
+
+
+@pytest.mark.parametrize("value,success", [("false", True), ("true", True), ("TRUE", False), ("yes", False)])
+def test_workflow_telemetry_boolean_matches_local_hook(value: str, success: bool, fake_bin: Path, log: Path) -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
+    assert workflow[True]["workflow_dispatch"]["inputs"]["sre_connect_telemetry"]["default"] is True
+    step = next(s for s in workflow["jobs"]["deploy"]["steps"] if s.get("name") == "Configure SRE Agent options")
+    proc = run_hook(
+        SETUP,
+        fake_bin,
+        log,
+        {"SRE_CONNECT_TELEMETRY_INPUT": value, "DEPLOY_SRE_AGENT_INPUT": "true"},
+        command=step["run"],
+    )
+    assert (proc.returncode == 0) == success
+    if success:
+        assert ["azd", "env", "set", "SRE_CONNECT_TELEMETRY", value] in cli_calls(log)
+    else:
+        assert cli_calls(log) == []
+
+
+def test_telemetry_off_skips_compilation_and_every_workload_call(fake_bin: Path, log: Path) -> None:
+    proc = run_hook(
+        SETUP,
+        fake_bin,
+        log,
+        setup_env(SRE_APP_INSIGHTS_ID="", SRE_LOG_ANALYTICS_ID="", FAKE_BICEP_VERSION_EXIT="1"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert result_line(proc) == "SRE_RESULT core=ready telemetry=disabled github=disabled"
+    assert all(c[:3] in (["az", "account", "show"], ["az", "resource", "show"]) for c in cli_calls(log, "az"))
+    assert len(cli_calls(log, "az", ("resource",))) == 1
+
+
+def test_telemetry_default_is_enabled_without_a_persisted_switch(fake_bin: Path, log: Path) -> None:
+    env = telemetry_env()
+    del env["SRE_CONNECT_TELEMETRY"]
+    proc = run_hook(SETUP, fake_bin, log, env)
+    assert proc.returncode == 0, proc.stderr
+    assert len(cli_calls(log, "az", ("deployment",))) == 2
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        'ERROR: {"code":"AuthorizationFailed","details":"invalid"}',
+        'ERROR: {"error":{"code":"DeploymentFailed","details":["invalid"]}}',
+        "unstructured transport failure",
+    ],
+)
+def test_telemetry_malformed_errors_are_failures_not_restrictions(error: str, fake_bin: Path, log: Path) -> None:
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_DEPLOY_APP_ERRORS=json.dumps([error])))
+    assert proc.returncode == 1
+    assert "app_insights=failed log_analytics=pending" in proc.stdout
+
+
+@pytest.mark.parametrize("field,value", [("tags", {}), ("appId", "foreign"), ("workspaceId", "foreign")])
+def test_telemetry_monitoring_drift_blocks_only_affected_deployment(
+    field: str, value: Any, fake_bin: Path, log: Path
+) -> None:
+    response = {"id": APP_RESOURCE_ID, "tags": {"azd-env-name": "demo"}, "appId": APP_ID, "workspaceId": WORKSPACE_ID}
+    response[field] = value
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_SOURCE_APP=json.dumps(response)))
+    assert proc.returncode == 1
+    deployments = cli_calls(log, "az", ("deployment",))
+    assert len(deployments) == 1 and "source=log-analytics" in deployments[0]
+
+
+def test_postprovision_runs_telemetry_using_new_outputs(fake_bin: Path, log: Path, lifecycle_workspace: Path) -> None:
+    hook = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text())["hooks"]["postprovision"]
+    proc = run_hook(
+        SETUP,
+        fake_bin,
+        log,
+        telemetry_env(),
+        command=hook["run"],
+        cwd=lifecycle_workspace,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "grant-obo-consent" in proc.stdout
+    assert "Deployment complete." in proc.stdout
+    assert len(cli_calls(log, "az", ("deployment",))) == 2
+    assert "SRE_RESULT core=ready telemetry=pending github=disabled" in proc.stdout
+    assert all(c[:3] != ["azd", "env", "refresh"] for c in cli_calls(log))
+
+
+def test_standalone_telemetry_discards_other_environments_monitoring_ids(fake_bin: Path, log: Path) -> None:
+    proc = run_hook(
+        SETUP,
+        fake_bin,
+        log,
+        {
+            "SRE_APP_INSIGHTS_ID": "stale",
+            "SRE_LOG_ANALYTICS_ID": "stale",
+            "FAKE_VALUES": json.dumps(telemetry_env()),
+            "SRE_READY_DELAY_SECONDS": "0",
+        },
+        args=("--environment", "demo"),
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert len(cli_calls(log, "az", ("deployment",))) == 2
+    assert all("stale" not in arg for call in cli_calls(log) for arg in call)

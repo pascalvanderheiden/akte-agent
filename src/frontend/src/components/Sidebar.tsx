@@ -3,34 +3,21 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Conversation, UseCase } from "@/types";
+import { useLocale } from "./LocaleProvider";
+import { localizeUseCase, type TranslationKey } from "@/lib/i18n";
 import { ThemePicker } from "./ThemePicker";
 import { OboSignIn } from "./OboSignIn";
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.max(0, now - then);
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function getDateGroup(dateStr: string): string {
+function getDateGroup(dateStr: string): TranslationKey {
   const now = new Date();
   const date = new Date(dateStr);
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return "This Week";
-  if (diffDays < 30) return "This Month";
-  return "Older";
+  if (diffDays === 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  if (diffDays < 7) return "thisWeek";
+  if (diffDays < 30) return "thisMonth";
+  return "older";
 }
 
 interface Props {
@@ -52,6 +39,7 @@ interface Props {
 }
 
 export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, onOpenSettings, onOpenSkills, onOpenAgenticLoop, useCases, selectedUseCase, onSelectUseCase, onCloseMobile, embedBackHref }: Props) {
+  const { locale, t, formatRelativeTime, formatDate } = useLocale();
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
   const [personaFilter, setPersonaFilter] = useState<"curated" | "all">("curated");
@@ -75,7 +63,15 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
     ? personaConversations.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : personaConversations;
 
-  const grouped: { label: string; convs: Conversation[] }[] = [];
+  const timeAgo = (dateStr: string) => {
+    const seconds = Math.floor(Math.max(0, Date.now() - new Date(dateStr).getTime()) / 1000);
+    if (seconds < 60) return formatRelativeTime(-seconds, "second");
+    if (seconds < 3600) return formatRelativeTime(-Math.floor(seconds / 60), "minute");
+    if (seconds < 86400) return formatRelativeTime(-Math.floor(seconds / 3600), "hour");
+    if (seconds < 604800) return formatRelativeTime(-Math.floor(seconds / 86400), "day");
+    return formatDate(dateStr, { month: "short", day: "numeric" });
+  };
+  const grouped: { label: TranslationKey; convs: Conversation[] }[] = [];
   const seen = new Set<string>();
   for (const conv of filteredConversations) {
     const label = getDateGroup(conv.updatedAt || conv.createdAt);
@@ -94,7 +90,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
   };
 
   return (
-    <aside className="w-[300px] bg-surface-2 flex flex-col h-full border-r border-border" aria-label="Conversation sidebar">
+    <aside className="w-[300px] bg-surface-2 flex flex-col h-full border-r border-border" aria-label={t("sidebar")}>
       {embedBackHref && (
         <a
           href={embedBackHref}
@@ -103,21 +99,21 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
           </svg>
-          Back to Agentic Loop
+          {t("backHost")}
         </a>
       )}
       {deleteTarget && createPortal(
         <div className="fixed inset-0 z-200 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-surface border border-border rounded-2xl p-6 max-w-sm mx-4 shadow-card animate-scale-in">
+          <div role="dialog" aria-modal="true" aria-labelledby="delete-title" className="bg-surface border border-border rounded-2xl p-6 max-w-sm mx-4 shadow-card animate-scale-in">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-danger-500/10 flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-danger-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                 </svg>
               </div>
-              <h3 className="text-base font-semibold text-text-strong">Delete conversation?</h3>
+              <h3 id="delete-title" className="text-base font-semibold text-text-strong">{t("deleteConfirm")}</h3>
             </div>
-            <p className="text-xs text-muted mb-2 leading-relaxed">This will permanently delete:</p>
+            <p className="text-xs text-muted mb-2 leading-relaxed">{t("deleteWarning")}</p>
             <p className="text-sm text-text font-medium wrap-break-word mb-5 px-3 py-2 bg-surface-2 rounded-lg border border-border-soft">
               {deleteTarget.title}
             </p>
@@ -126,13 +122,13 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
                 onClick={() => setDeleteTarget(null)}
                 className="px-4 py-2 text-sm text-muted hover:text-text hover:bg-hover rounded-lg transition-all"
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 onClick={handleConfirmDelete}
                 className="px-4 py-2 text-sm text-accent-fg bg-danger-600 hover:bg-danger-500 rounded-lg transition-all active:scale-95"
               >
-                Delete
+                {t("delete")}
               </button>
             </div>
           </div>
@@ -149,11 +145,12 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           </div>
           <div className="flex-1 min-w-0">
             <span className="font-semibold text-text-strong text-sm tracking-tight">Kratos Agent</span>
-            <p className="text-[11px] text-muted">AI Solution Accelerator</p>
+            <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
           </div>
           {onCloseMobile && (
             <button
               onClick={onCloseMobile}
+              aria-label={t("closeSidebar")}
               className="lg:hidden p-1.5 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -166,11 +163,11 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
 
       {useCases.length > 1 && (
         <div className="px-3 py-2">
-          <label className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5 px-1">Agent Persona</label>
+          <label htmlFor="persona-selector" className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5 px-1">{t("persona")}</label>
 
           <div
             role="tablist"
-            aria-label="Persona filter"
+            aria-label={t("personaFilter")}
             className="flex items-center gap-0.5 mb-2 p-0.5 bg-surface border border-border-soft rounded-lg"
           >
             <button
@@ -178,40 +175,41 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               aria-selected={effectiveFilter === "curated"}
               onClick={() => setPersonaFilter("curated")}
               disabled={curatedUseCases.length === 0}
-              title={curatedUseCases.length === 0 ? "No curated personas available" : "Show only hand-curated, approved personas"}
+              title={t(curatedUseCases.length === 0 ? "noCurated" : "showCurated")}
               className={`flex-1 text-xs font-medium px-2 py-1.5 rounded-md transition-all ${
                 effectiveFilter === "curated"
                   ? "bg-accent-soft text-accent border border-accent/30"
                   : "text-muted hover:text-text hover:bg-hover"
               } disabled:opacity-40 disabled:cursor-not-allowed`}
             >
-              Curated ({curatedUseCases.length})
+              {t("curated", { count: curatedUseCases.length })}
             </button>
             <button
               role="tab"
               aria-selected={effectiveFilter === "all"}
               onClick={() => setPersonaFilter("all")}
-              title="Show all personas including experimental / AI-generated ones"
+              title={t("showAll")}
               className={`flex-1 text-xs font-medium px-2 py-1.5 rounded-md transition-all ${
                 effectiveFilter === "all"
                   ? "bg-accent-soft text-accent border border-accent/30"
                   : "text-muted hover:text-text hover:bg-hover"
               }`}
             >
-              All ({useCases.length})
+              {t("allPersonas", { count: useCases.length })}
             </button>
           </div>
 
           <div className="relative">
             <select
+              id="persona-selector"
               value={selectedUseCase}
               onChange={(e) => onSelectUseCase(e.target.value)}
-              aria-label="Select agent persona"
+              aria-label={t("selectPersona")}
               className="w-full text-sm text-text bg-surface border border-border rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent appearance-none cursor-pointer hover:bg-hover transition-all"
             >
               {visibleUseCases.map((uc) => (
                 <option key={uc.name} value={uc.name} className="bg-surface text-text">
-                  {uc.displayName} ({uc.skillCount} skills)
+                  {localizeUseCase(uc, locale).displayName} ({t("skillCount", { count: uc.skillCount })})
                 </option>
               ))}
             </select>
@@ -232,7 +230,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
           </svg>
-          New conversation
+          {t("newConversation")}
         </button>
       </div>
 
@@ -248,15 +246,15 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search conversations..."
-              aria-label="Search conversations"
+              placeholder={t("searchPlaceholder")}
+              aria-label={t("searchConversations")}
               className="w-full text-xs text-text bg-surface border border-border-soft rounded-lg pl-8 pr-8 py-2 focus:outline-hidden focus:ring-1 focus:ring-accent placeholder:text-muted transition-all"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-muted hover:text-text transition-colors"
-                aria-label="Clear search"
+                aria-label={t("clearSearch")}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -267,7 +265,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
         </div>
       )}
 
-      <nav className="flex-1 overflow-y-auto px-2 py-1" aria-label="Conversations">
+      <nav className="flex-1 overflow-y-auto px-2 py-1" aria-label={t("conversations")}>
         {filteredConversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4">
             <div className="w-10 h-10 rounded-xl bg-surface flex items-center justify-center mb-3 border border-border-soft">
@@ -276,7 +274,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               </svg>
             </div>
             <p className="text-xs text-muted text-center">
-              {searchQuery ? "No matching conversations" : "No conversations yet"}
+              {t(searchQuery ? "noMatches" : "noConversations")}
             </p>
           </div>
         ) : (
@@ -284,7 +282,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             {grouped.map((group) => (
               <div key={group.label}>
                 <div className="px-3 py-1">
-                  <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">{group.label}</span>
+                  <span className="text-[10px] font-semibold text-muted uppercase tracking-wider">{t(group.label)}</span>
                 </div>
                 <ul className="space-y-0.5">
                   {group.convs.map((conv) => (
@@ -310,7 +308,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
                                   ? "bg-accent-soft text-accent"
                                   : "bg-surface text-muted"
                               }`}>
-                                {conv.useCase.replace(/-/g, " ")}
+                                {useCases.find((uc) => uc.name === conv.useCase)?.localizations?.[locale]?.displayName ?? useCases.find((uc) => uc.name === conv.useCase)?.displayName ?? conv.useCase}
                               </span>
                             )}
                             <span className="text-[10px] text-muted tabular-nums">
@@ -321,8 +319,8 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
                         <button
                           onClick={(e) => { e.stopPropagation(); setDeleteTarget(conv); }}
                           className="opacity-0 group-hover:opacity-100 shrink-0 p-1.5 mr-1.5 text-muted hover:text-danger-500 rounded-md transition-all"
-                          title="Delete conversation"
-                          aria-label={`Delete conversation: ${conv.title}`}
+                          title={t("deleteConversation")}
+                          aria-label={t("deleteNamed", { name: conv.title })}
                         >
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -347,7 +345,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.241-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 010-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
-          Agent Manager
+          {t("manager")}
         </button>
         <button
           onClick={onOpenSettings}
@@ -356,7 +354,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
           </svg>
-          BYOK Settings
+          {t("settings")}
         </button>
         <button
           onClick={onOpenAgenticLoop}
@@ -365,7 +363,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
           <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 00-2.455 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
           </svg>
-          How It Works
+          {t("howItWorks")}
         </button>
         <OboSignIn />
         <div className="pt-2 px-3 flex items-center justify-between gap-2">
@@ -380,7 +378,8 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               target="_blank"
               rel="noopener noreferrer"
               className="p-1.5 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
-              title="View on GitHub"
+              title={t("viewGithub")}
+              aria-label={t("viewGithub")}
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>

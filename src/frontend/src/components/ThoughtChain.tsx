@@ -3,18 +3,13 @@
 import { ToolCallInfo, RunStats } from "@/types";
 import { useState } from "react";
 import { SourceBadge } from "./SourceBadge";
+import { useLocale } from "./LocaleProvider";
 
 interface Props {
   thoughts: string[];
   toolCalls: ToolCallInfo[];
   isStreaming?: boolean;
   runStats?: RunStats | null;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 }
 
 /** Extract real skill name from a generic "skill" tool event */
@@ -146,6 +141,7 @@ const KIND_COLORS: Record<ToolKind, { bg: string; text: string; border: string; 
 };
 
 function ToolPill({ tc, count }: { tc: ToolCallInfo; count?: number }) {
+  const { t, formatDuration, formatNumber } = useLocale();
   const isRunning = tc.status === "started";
   const isFailed = tc.status === "failed";
   const kind = classifyTool(tc.skillName);
@@ -158,7 +154,7 @@ function ToolPill({ tc, count }: { tc: ToolCallInfo; count?: number }) {
 
   return (
     <span
-      title={`${kindStyle.label} · ${tc.skillName}${count && count > 1 ? ` × ${count}` : ""}`}
+      title={`${kind === "mcp" ? "MCP" : t(`execution.${kind}`)} · ${tc.skillName}${count && count > 1 ? ` × ${formatNumber(count)}` : ""}`}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border ${colors.bg} ${colors.text} ${colors.border} transition-all duration-200`}
     >
       {isRunning ? (
@@ -171,7 +167,7 @@ function ToolPill({ tc, count }: { tc: ToolCallInfo; count?: number }) {
       )}
       {label}
       {count && count > 1 ? (
-        <span className="opacity-60 font-mono text-[10px]">×{count}</span>
+        <span className="opacity-60 font-mono text-[10px]">×{formatNumber(count)}</span>
       ) : null}
       <SourceBadge source={tc.source} />
       {!isRunning && tc.durationMs !== undefined && tc.durationMs > 0 && (
@@ -243,6 +239,7 @@ const resultMatch = text.match(/^Result\(content=['"]([\s\S]*?)['"],\s*contents=
 }
 
 function ToolDetail({ tc }: { tc: ToolCallInfo }) {
+  const { t, formatDuration } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const hasDetails =
     (tc.input && tc.input !== "None" && tc.input !== "") ||
@@ -276,7 +273,7 @@ function ToolDetail({ tc }: { tc: ToolCallInfo }) {
         <div className="border-t border-border-soft px-3.5 py-2.5 space-y-2.5">
           {formattedInput && (
             <div>
-              <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1">Input</div>
+              <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1">{t("execution.input")}</div>
               <pre className="text-xs bg-surface-2 rounded-lg p-2.5 whitespace-pre-wrap break-all text-text max-h-32 overflow-y-auto font-mono border border-border-soft">
                 {formattedInput}
               </pre>
@@ -284,7 +281,7 @@ function ToolDetail({ tc }: { tc: ToolCallInfo }) {
           )}
           {formattedOutput && (
             <div>
-              <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1">Output</div>
+              <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-1">{t("execution.output")}</div>
               <pre className="text-xs bg-surface-2 rounded-lg p-2.5 whitespace-pre-wrap break-all text-text max-h-32 overflow-y-auto font-mono border border-border-soft">
                 {formattedOutput}
               </pre>
@@ -307,6 +304,7 @@ function TokenBar({
   reasoning: number;
   total: number;
 }) {
+  const { t, formatNumber } = useLocale();
   if (total === 0) return null;
   const promptPct = Math.round((prompt / total) * 100);
   const reasoningPct = Math.round((reasoning / total) * 100);
@@ -316,30 +314,30 @@ function TokenBar({
   return (
     <div className="space-y-2">
       <div className="flex justify-between text-xs text-muted">
-        <span className="font-medium">Token usage</span>
-        <span className="font-mono font-semibold text-text">{total.toLocaleString()}</span>
+        <span className="font-medium">{t("execution.tokens")}</span>
+        <span className="font-mono font-semibold text-text">{formatNumber(total)}</span>
       </div>
       <div className="h-2 bg-surface-2 rounded-full overflow-hidden flex">
-        <div className="bg-accent transition-all duration-500 ease-out" style={{ width: `${promptPct}%` }} title={`Prompt: ${prompt.toLocaleString()}`} />
+        <div className="bg-accent transition-all duration-500 ease-out" style={{ width: `${promptPct}%` }} title={`${t("execution.prompt")}: ${formatNumber(prompt)}`} />
         {reasoning > 0 && (
-          <div className="bg-amber-400 transition-all duration-500 ease-out" style={{ width: `${reasoningPct}%` }} title={`Reasoning: ${reasoning.toLocaleString()}`} />
+          <div className="bg-amber-400 transition-all duration-500 ease-out" style={{ width: `${reasoningPct}%` }} title={`${t("execution.reasoning")}: ${formatNumber(reasoning)}`} />
         )}
-        <div className="bg-emerald-400 transition-all duration-500 ease-out" style={{ width: `${outputPct + remainPct}%` }} title={`Output: ${(completion - reasoning).toLocaleString()}`} />
+        <div className="bg-emerald-400 transition-all duration-500 ease-out" style={{ width: `${outputPct + remainPct}%` }} title={`${t("execution.output")}: ${formatNumber(completion - reasoning)}`} />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted">
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-xs bg-accent inline-block" />
-            Prompt <span className="font-mono text-text font-medium">{prompt.toLocaleString()}</span>
+            {t("execution.prompt")} <span className="font-mono text-text font-medium">{formatNumber(prompt)}</span>
         </span>
         {reasoning > 0 && (
           <span className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-xs bg-amber-400 inline-block" />
-            Reasoning <span className="font-mono text-text font-medium">{reasoning.toLocaleString()}</span>
+            {t("execution.reasoning")} <span className="font-mono text-text font-medium">{formatNumber(reasoning)}</span>
           </span>
         )}
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-xs bg-emerald-400 inline-block" />
-            Output <span className="font-mono text-text font-medium">{(completion - reasoning).toLocaleString()}</span>
+            {t("execution.output")} <span className="font-mono text-text font-medium">{formatNumber(completion - reasoning)}</span>
         </span>
       </div>
     </div>
@@ -352,6 +350,7 @@ export function ThoughtChain({
   isStreaming,
   runStats,
 }: Props) {
+  const { t, formatNumber, formatDuration } = useLocale();
   const [showDetails, setShowDetails] = useState(false);
   const hasContent = thoughts.length > 0 || toolCalls.length > 0 || runStats;
   if (!hasContent) return null;
@@ -396,7 +395,7 @@ export function ThoughtChain({
             <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
           </span>
           <span className="italic truncate">
-            Thinking · {collapseAdjacentDuplicateWords(prettyToolName(latestThought))}…
+            {t("execution.thinking")} · {collapseAdjacentDuplicateWords(prettyToolName(latestThought))}…
           </span>
         </div>
       )}
@@ -412,7 +411,7 @@ export function ThoughtChain({
           ))}
           {totalTools > 0 && !isStreaming && (
             <span className="text-[11px] text-muted ml-1 font-medium">
-              {completedTools}/{totalTools} tools
+              {t("execution.toolCount", { completed: completedTools, total: totalTools })}
             </span>
           )}
         </div>
@@ -424,7 +423,7 @@ export function ThoughtChain({
           {(Array.from(kindsPresent) as ToolKind[]).map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
               <span className={`w-2 h-2 rounded-full ${KIND_COLORS[k].dot}`} />
-              {KIND_COLORS[k].label}
+              {k === "mcp" ? "MCP" : t(`execution.${k}`)}
             </span>
           ))}
         </div>
@@ -445,7 +444,7 @@ export function ThoughtChain({
             >
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
             </svg>
-            <span className="font-medium text-text text-xs">Execution details</span>
+            <span className="font-medium text-text text-xs">{t("execution.details")}</span>
             <svg
               className={`w-3.5 h-3.5 text-slate-400 ml-auto transition-transform duration-200 ${showDetails ? "rotate-90" : ""}`}
               fill="none"
@@ -462,15 +461,15 @@ export function ThoughtChain({
               {runStats && !isStreaming && (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    <MetricCell label="Total time" value={formatDuration(runStats.totalDurationMs)} icon="clock" />
+                    <MetricCell label={t("execution.totalTime")} value={formatDuration(runStats.totalDurationMs)} icon="clock" />
                     {runStats.timeToFirstTokenMs > 0 && (
-                      <MetricCell label="First token" value={formatDuration(runStats.timeToFirstTokenMs)} icon="zap" />
+                      <MetricCell label={t("execution.firstToken")} value={formatDuration(runStats.timeToFirstTokenMs)} icon="zap" />
                     )}
                     {runStats.modelLatencyMs > 0 && (
-                      <MetricCell label="Model latency" value={formatDuration(runStats.modelLatencyMs)} icon="cpu" />
+                      <MetricCell label={t("execution.latency")} value={formatDuration(runStats.modelLatencyMs)} icon="cpu" />
                     )}
                     {runStats.totalToolCalls > 0 && (
-                      <MetricCell label="Tool calls" value={String(runStats.totalToolCalls)} icon="tool" />
+                      <MetricCell label={t("execution.calls")} value={formatNumber(runStats.totalToolCalls)} icon="tool" />
                     )}
                   </div>
 
@@ -488,7 +487,7 @@ export function ThoughtChain({
               {/* Execution flow timeline */}
               {thoughts.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">Execution flow</div>
+                  <div className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-2">{t("execution.flow")}</div>
                   <div className="flex flex-wrap items-center gap-1 text-xs text-muted">
                     {thoughts.map((thought, i) => (
                       <span key={i} className="inline-flex items-center gap-1">
@@ -503,7 +502,7 @@ export function ThoughtChain({
               {/* Tool call I/O details */}
               {uniqueTools.length > 0 && (
                 <div className="space-y-2">
-                  <div className="text-[10px] font-semibold text-muted uppercase tracking-wider">Tool details</div>
+                  <div className="text-[10px] font-semibold text-muted uppercase tracking-wider">{t("execution.tools")}</div>
                   {uniqueTools.map((tc, i) => (
                     <ToolDetail key={i} tc={tc} />
                   ))}
