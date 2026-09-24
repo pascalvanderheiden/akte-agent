@@ -131,9 +131,24 @@ if [ "$CONNECT_TELEMETRY" = "true" ]; then
   fi
 fi
 if [ "$CONNECT_GITHUB" = "true" ]; then
-  echo "GitHub pending: repository attachment is not implemented in this core release (#37)."
+  GITHUB_STATE=failed
+  if sre_require_tools python3 curl; then
+    GITHUB_STATE="$(python3 "${SCRIPT_DIR}/sre-github.py")"
+    GITHUB_EXIT=$?
+  else
+    GITHUB_EXIT=1
+  fi
+  case "$GITHUB_STATE" in
+    ready | pending | unavailable | failed) ;;
+    *) GITHUB_STATE=failed; sre_error "GitHub setup returned an invalid result."; GITHUB_EXIT=1 ;;
+  esac
+  if [ "$GITHUB_EXIT" -ne 0 ] || [ "$GITHUB_STATE" = failed ]; then
+    GITHUB_STATE=failed
+    SETUP_FAILED=1
+  fi
 fi
-if [ "$TELEMETRY_STATE" = pending ] || [ "$GITHUB_STATE" = pending ]; then
+if [ "$TELEMETRY_STATE" = pending ] || [ "$TELEMETRY_STATE" = unavailable ] ||
+  [ "$GITHUB_STATE" = pending ] || [ "$GITHUB_STATE" = unavailable ]; then
   echo "Degraded setup: set SRE_CONNECT_TELEMETRY=false and SRE_CONNECT_GITHUB=false for explicit core-only mode."
 fi
 exit "$SETUP_FAILED"
