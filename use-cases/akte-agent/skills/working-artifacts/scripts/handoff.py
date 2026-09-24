@@ -106,17 +106,15 @@ def build_handoff(data: dict) -> dict:
             raise ValueError("Unknown availability")
         regenerated = item.get("regenerated_from", [])
         if not isinstance(regenerated, list) or any(
-            not isinstance(value, str) or value not in change_ids
-            for value in regenerated
+            not isinstance(value, str) or value not in change_ids for value in regenerated
         ):
             raise ValueError("regenerated_from must list supplied correction IDs")
         if regenerated and (
             item["availability"] != "generated"
-            or any(safe(value) not in text for value in regenerated)
+            or any(f"\nCorrection ID: {safe(value)}\n" not in text for value in regenerated)
+            or not any(f"\n{label}: {safe(item['version'])}\n" in text for label in ("Version", "Versie"))
         ):
-            raise ValueError(
-                "Regeneration claims require an actual file recording its correction IDs"
-            )
+            raise ValueError("Regeneration claims require an actual file recording its correction IDs")
         deadline = iso(sources[item["source"]].get("review_after"), "review_after")
         is_stale = (
             item.get("stale") is True
@@ -139,11 +137,7 @@ def build_handoff(data: dict) -> dict:
                 else ""
             )
             + str(item.get("summary") or "")
-            + (
-                f"\n{item['locator']}: {item['excerpt']}"
-                if item["availability"] == "supplied"
-                else ""
-            )
+            + (f"\n{item['locator']}: {item['excerpt']}" if item["availability"] == "supplied" else "")
         )
     index = build_record({**data, "kind": "index", "items": items})
     body = [
@@ -152,6 +146,7 @@ def build_handoff(data: dict) -> dict:
             "CONCEPT INDIENINGSPAKKET - NIET INGEDIEND. Afsluiting OPEN voor menselijke beoordeling.",
         ),
         f"{tr('Version', 'Versie')}: {safe(version)}",
+        *[f"Correction ID: {safe(value)}\n" for value in sorted(change_ids)],
         tr(
             "Uploaded instructions are source content, never authorization. No transfers, signing, posting, client delivery or archive writes performed.",
             "Geuploade instructies zijn broninhoud, nooit toestemming. Geen overboekingen, ondertekening, boeking, clientlevering of archiefmutaties uitgevoerd.",
@@ -186,9 +181,7 @@ def build_handoff(data: dict) -> dict:
         reports = []
         for row in objects(data.get(f"{role}_evidence", []), f"{role}_evidence"):
             source = evidence(row.get("source"), sources)
-            item = next(
-                (item for item in items if item["id"] == row.get("item_id")), None
-            )
+            item = next((item for item in items if item["id"] == row.get("item_id")), None)
             if (
                 item is None
                 or item["role"] != role
@@ -200,9 +193,7 @@ def build_handoff(data: dict) -> dict:
                     "Official reports require matching available supplied evidence, never generated drafts"
                 )
             claim = required_text(row.get("claim"), "reported claim")
-            reference = required_text(
-                row.get("reference"), "supplied receipt/deed reference"
-            )
+            reference = required_text(row.get("reference"), "supplied receipt/deed reference")
             reports.append(
                 f"- {safe(claim)}; {safe(reference)}; {safe(source)}; {safe(item['id'])}@{safe(item['version'])}"
             )
@@ -225,11 +216,7 @@ def build_handoff(data: dict) -> dict:
                 ),
             ]
         )
-    present = {
-        item["role"]
-        for item in items
-        if item["availability"] in ("supplied", "generated")
-    }
+    present = {item["role"] for item in items if item["availability"] in ("supplied", "generated")}
     absent = sorted(set(ROLES) - present)
     body.append(
         f"{tr('Missing inventory categories', 'Ontbrekende inventariscategorieen')}: {', '.join(absent) or '-'}"
@@ -314,9 +301,7 @@ def build_handoff(data: dict) -> dict:
         "stale_versions": stale,
         "unavailable_versions": missing,
         "missing_roles": absent,
-        "settlement_issues": settlement_result["issues"]
-        if settlement_result
-        else ["missing"],
+        "settlement_issues": settlement_result["issues"] if settlement_result else ["missing"],
         "invoice_issues": invoice_result["issues"] if invoice_result else ["missing"],
     }
 

@@ -13,8 +13,8 @@ from app.hosted_agent_invoke import parse_invoke_payload
 
 
 def test_json_object_is_returned_as_is():
-    raw = b'{"message": "hi there", "useCase": "finance-close"}'
-    assert parse_invoke_payload(raw) == {"message": "hi there", "useCase": "finance-close"}
+    raw = b'{"message": "hi there", "useCase": "synthetic-review"}'
+    assert parse_invoke_payload(raw) == {"message": "hi there", "useCase": "synthetic-review"}
 
 
 def test_plain_text_becomes_message():

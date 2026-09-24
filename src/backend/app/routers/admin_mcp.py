@@ -15,6 +15,9 @@ router = APIRouter(dependencies=[Depends(require_authenticated_user)])
 @router.get("", response_model=MCPConfigResponse)
 async def get_mcp_config(use_case: str, request: Request) -> MCPConfigResponse:
     """Return the current MCP servers config for a use-case."""
+    from app.personas import require_not_retired
+
+    require_not_retired(use_case)
     registries: dict = request.app.state.registries
     registry = registries.get(use_case)
     if registry is None:
@@ -28,6 +31,9 @@ async def get_mcp_config(use_case: str, request: Request) -> MCPConfigResponse:
 @router.put("", response_model=MCPConfigResponse)
 async def update_mcp_config(use_case: str, body: MCPConfigUpdate, request: Request) -> MCPConfigResponse:
     """Update (replace) the MCP servers config for a use-case. Clears active sessions."""
+    from app.personas import require_not_retired
+
+    require_not_retired(use_case)
     registries: dict = request.app.state.registries
     registry = registries.get(use_case)
     if registry is None:

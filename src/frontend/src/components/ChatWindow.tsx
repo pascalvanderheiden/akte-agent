@@ -21,9 +21,10 @@ interface Props {
   initialMessage?: string;
   onOpenSidebar?: () => void;
   personaDisplayName?: string;
+  readOnly?: boolean;
 }
 
-export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar, personaDisplayName }: Props) {
+export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar, personaDisplayName, readOnly = false }: Props) {
   const { locale, t } = useLocale();
   const [error, setError] = useState<ErrorCode | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +110,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
         // A trailing user message means the assistant reply is still being
         // generated on the backend — keep polling until it shows up.
         const last = loaded[loaded.length - 1];
-        const pending = !!last && last.role === "user";
+        const pending = !readOnly && !!last && last.role === "user";
         setAwaitingResponse(pending);
         if (pending && attempts < MAX_ATTEMPTS) {
           attempts += 1;
@@ -128,11 +129,11 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
       cancelled = true;
       if (pollTimer) clearTimeout(pollTimer);
     };
-  }, [conversation.id, historyRetry]);
+  }, [conversation.id, historyRetry, readOnly]);
 
   const handleSend = async (messageOverride?: string) => {
     const trimmed = (messageOverride ?? input).trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed || isStreaming || readOnly) return;
     setError(null);
 
     // Auto-title on the first message of a conversation
@@ -509,7 +510,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                   />
                   <button
                     onClick={() => handleUserInputSubmit(userInputAnswer.trim())}
-                    disabled={!userInputAnswer.trim()}
+                    disabled={readOnly || !userInputAnswer.trim()}
                     className="px-4 py-2 text-sm bg-ask text-accent-fg rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity font-medium"
                   >
                     {t("send")}
@@ -597,7 +598,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             />
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isStreaming}
+              disabled={isStreaming || readOnly}
               title={t("attach")}
               aria-label={t("attach")}
               className="p-2 text-muted hover:text-accent rounded-lg hover:bg-hover transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
@@ -613,7 +614,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
               placeholder={t("ask")}
               aria-label={t("ask")}
               rows={1}
-              disabled={isStreaming}
+              disabled={isStreaming || readOnly}
               className="flex-1 resize-none text-sm text-text placeholder:text-muted bg-transparent border-none focus:outline-hidden focus:ring-0 py-2 px-1 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ minHeight: "36px", maxHeight: "200px" }}
               onInput={(e) => {
@@ -624,7 +625,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             />
             <button
               onClick={() => handleSend()}
-              disabled={isStreaming || !input.trim()}
+              disabled={isStreaming || readOnly || !input.trim()}
               aria-label={t(isStreaming ? "sendingMessage" : "sendMessage")}
               className="p-2.5 bg-accent text-accent-fg rounded-xl transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed shadow-md hover:shadow-lg active:scale-95"
             >

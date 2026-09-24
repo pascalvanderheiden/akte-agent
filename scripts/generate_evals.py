@@ -3,13 +3,13 @@
 
 Usage:
     # Local backend (default http://localhost:8000):
-    python scripts/generate_evals.py --use-case insurance --count 5
+    python scripts/generate_evals.py --use-case akte-agent --count 5
 
     # Deployed backend:
     BACKEND_URL=https://kratos-be.example.com python scripts/generate_evals.py --all
 
     # Save generated scenarios into the repo (not just echo to stdout):
-    python scripts/generate_evals.py --use-case insurance --save
+    python scripts/generate_evals.py --use-case akte-agent --save
 
 Requires the backend's ``EvalService`` to be reachable. Auth: set
 ADMIN_TOKEN (passed as bearer) only if ``ADMIN_AUTH_ENABLED=true`` on the
@@ -31,15 +31,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 USE_CASES_DIR = REPO_ROOT / "use-cases"
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
-
-ALL_USE_CASES = [
-    "generic",
-    "insurance",
-    "retail-banking",
-    "sales-account-review",
-    "wealth-management",
-]
-
 
 def _headers() -> dict[str, str]:
     h = {"content-type": "application/json"}
@@ -73,16 +64,25 @@ def save_scenarios(use_case: str, scenarios: list[dict[str, Any]]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--use-case", help="One of: " + ", ".join(ALL_USE_CASES))
-    group.add_argument("--all", action="store_true", help="Run for every use-case")
+    group.add_argument("--use-case", help="Available persona slug")
+    group.add_argument("--all", action="store_true", help="Run for every curated persona discovered through the API")
     parser.add_argument("--count", type=int, default=5, help="Scenarios per use-case (default 5)")
     parser.add_argument("--instructions", default="", help="Extra LLM hints")
     parser.add_argument("--save", action="store_true", help="Persist into use-cases/<uc>/evals/scenarios/")
     args = parser.parse_args()
 
-    targets = ALL_USE_CASES if args.all else [args.use_case]
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(f"{BACKEND_URL}/api/use-cases", headers=_headers())
+            response.raise_for_status()
+        catalog = response.json()["useCases"]
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        print(f"Could not load persona catalog: {exc}", file=sys.stderr)
+        return 1
+    available = {persona["name"] for persona in catalog}
+    targets = [persona["name"] for persona in catalog if persona.get("curated")] if args.all else [args.use_case]
     for uc in targets:
-        if uc not in ALL_USE_CASES:
+        if uc not in available:
             print(f"Unknown use-case: {uc}", file=sys.stderr)
             return 2
         print(f"→ Generating {args.count} scenarios for '{uc}'…")

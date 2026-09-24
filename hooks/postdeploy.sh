@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/personas.sh"
 
 CONTAINER_NAME="skills"
 STORAGE_ACCOUNT="${AZURE_BLOB_STORAGE_ACCOUNT_NAME:-}"
@@ -31,6 +32,8 @@ USE_CASES=()
 for dir in "$USE_CASES_DIR"/*/; do
   name="$(basename "$dir")"
   [ "$name" = "*" ] && continue
+  persona_is_available "$name" || continue
+  [ -f "$dir/SYSTEM_PROMPT.md" ] || continue
   USE_CASES+=("$name")
 done
 
@@ -110,9 +113,13 @@ else
   for part in "${PARTS[@]}"; do
     part="$(printf '%s' "$part" | tr -d '[:space:]')"
     [ -z "$part" ] && continue
+    if ! persona_is_available "$part"; then
+      echo "Persona unavailable: $part. Stored copies and history will not be changed."
+      exit 1
+    fi
     if [[ "$part" =~ ^[0-9]+$ ]] && [ "$part" -ge 1 ] && [ "$part" -le "${#USE_CASES[@]}" ]; then
       SELECTED+=("${USE_CASES[$((part - 1))]}")
-    elif [ -d "$USE_CASES_DIR/$part" ]; then
+    elif [ -f "$USE_CASES_DIR/$part/SYSTEM_PROMPT.md" ]; then
       SELECTED+=("$part")
     else
       echo "⚠️  Unknown use-case: $part"

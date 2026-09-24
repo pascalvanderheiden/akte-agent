@@ -16,14 +16,6 @@ RUN apt-get update \
 RUN npm install -g @github/copilot@latest faker-mcp-server@latest \
     && rm -rf /root/.npm /tmp/*
 
-# ── Layer 2b: In-repo mock MCP servers (Salesforce, etc.) ──
-COPY mocks/ /opt/mocks/
-RUN cd /opt/mocks \
-    && npm install --workspaces \
-    && npm run build --workspaces --if-present \
-    && npm install -g ./packages/* \
-    && rm -rf /root/.npm /tmp/*
-
 # ── Layer 3: Playwright Chromium + system deps for PDF rendering ──
 RUN npx -y playwright install --with-deps chromium\
     && rm -rf /var/lib/apt/lists/* /tmp/*
@@ -46,12 +38,10 @@ COPY use-cases/ use-cases/
 # (full backend app copied verbatim — the existing COPY src/backend/ .
 # above flattens it to /app/, but the exporter resolves repo_root=/app
 # and walks src/backend/app from there), infra/ (Bicep modules copied
-# verbatim into the export), and mocks/ (workspace for bundling any
-# local stdio MCP servers a use-case depends on).
+# verbatim into the export).
 COPY src/hosted-agent/ src/hosted-agent/
 COPY src/backend/app/ src/backend/app/
 COPY infra/ infra/
-COPY mocks/ mocks/
 
 EXPOSE 8000
 

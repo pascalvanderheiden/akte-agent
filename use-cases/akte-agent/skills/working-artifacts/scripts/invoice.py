@@ -47,6 +47,13 @@ def envelope(data: dict, title: str, body: str) -> dict:
 def calculate(data: dict) -> dict:
     sources = source_map(data)
     version = required_text(data.get("version"), "invoice version")
+    if len(version) > 200:
+        raise ValueError("Invoice version must be at most 200 characters")
+    correction_ids = data.get("correction_ids", [])
+    if not isinstance(correction_ids, list) or any(
+        not isinstance(value, str) or not value.strip() or "\n" in value or "\r" in value for value in correction_ids
+    ):
+        raise ValueError("correction_ids must be nonempty single-line strings")
     if data.get("currency") != "EUR" or data.get("rounding") != ROUND_HALF_UP:
         raise ValueError("Supply EUR and explicit ROUND_HALF_UP")
     time = data.get("time")
@@ -181,6 +188,7 @@ def calculate(data: dict) -> dict:
         "locale": data["locale"],
         "sources": data["sources"],
         "version": version,
+        "correction_ids": correction_ids,
         "time": reviewed,
         "lines": lines,
         "costs": costs,
@@ -230,6 +238,7 @@ def as_artifact(result: dict) -> dict:
             "NIET GEBOEKT / NIET VERZONDEN. Clientgelden zijn geen honorarium of geboekte omzet.",
         ),
         f"{tr('Version', 'Versie')}: {safe(result['version'])}",
+        *[f"Correction ID: {safe(value)}\n" for value in result["correction_ids"]],
         tr(
             "ROUND_HALF_UP: exact hours x supplied rate; round each fee/cost to cents, then sum. Explicit uniform tax rates apply per rounded line, rounded again to cents. No tax/rate/expense inferred.",
             "ROUND_HALF_UP: exacte uren x aangeleverd tarief; rond elke honorarium-/kostenregel op centen af, dan optellen. Expliciete uniforme belasting per afgeronde regel, opnieuw afgerond op centen. Geen belasting/tarief/kosten aangenomen.",

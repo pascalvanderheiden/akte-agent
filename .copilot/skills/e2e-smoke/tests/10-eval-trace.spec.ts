@@ -6,7 +6,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
 import { FRONTEND_URL } from "./helpers";
-import type { EvalRun, EvalScenario, Locale, TraceList, TraceOperation, UseCase } from "../../../../src/frontend/src/types";
+import type { Conversation, EvalRun, EvalScenario, Locale, TraceList, TraceOperation, UseCase } from "../../../../src/frontend/src/types";
 
 const { en, nl }: typeof import("../../../../src/frontend/src/lib/i18n") =
   createRequire(import.meta.url)("../../../../src/frontend/src/lib/i18n.ts");
@@ -61,6 +61,7 @@ async function fixture(page: Page) {
   }];
   const state = {
     catalog, scenarios: [] as EvalScenario[], runs: [] as EvalRun[],
+    conversations: [] as Conversation[],
     traces: { operations: [operation], summary: { total_operations: 1, avg_latency_ms: 1250, total_tokens: 1290, models_used: ["synthetic-model"], error: "" } } satisfies TraceList,
     fail: "", failureStatus: 500, generation: [] as unknown[], starts: [] as unknown[],
     saves: [] as EvalScenario[], traceQueries: [] as URLSearchParams[], detailQueries: [] as URLSearchParams[],
@@ -78,7 +79,8 @@ async function fixture(page: Page) {
     state.paths.push(url.pathname);
     const fail = () => route.fulfill({ status: state.failureStatus, json: { detail: "SENSITIVE_SYNTHETIC_DIAGNOSTIC" } });
     if (path === "/api/use-cases") return route.fulfill({ json: { useCases: state.catalog } });
-    if (path === "/api/conversations") return route.fulfill({ json: { conversations: [] } });
+    if (path === "/api/conversations") return route.fulfill({ json: { conversations: state.conversations } });
+    if (path.endsWith("/messages")) return route.fulfill({ json: [] });
     if (path === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (path === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (path === "/api/admin/system-prompt") return route.fulfill({ json: { content: sourceText, isDefault: false } });
@@ -89,6 +91,9 @@ async function fixture(page: Page) {
       return route.fulfill({ json: { scenarios: state.generatedScenarios, persisted: false } });
     }
     if (path.endsWith("/evals/scenarios")) {
+      if (state.fail === "retired") return route.fulfill({
+        status: 410, json: { detail: { code: "PERSONA_UNAVAILABLE" } },
+      });
       if (state.fail === "load") return fail();
       if (state.fail === "malformed") return route.fulfill({ json: {} });
       return route.fulfill({ json: { scenarios: state.scenarios } });
@@ -144,6 +149,31 @@ async function openPanel(page: Page, locale: Locale, panel = "Evals", embedded =
   await page.getByRole("button", { name: ui[locale].manager, exact: true }).click();
   // Manager navigation belongs to #20; tolerate its translated label after integration.
   await page.getByRole("button", { name: panel === "Evals" ? /^(Evals|Evaluations|Evaluaties)$/ : /^Traces$/, exact: true }).click();
+}
+
+for (const locale of ["en", "nl"] as const) {
+  test(`${locale}: retired scenarios do not hide saved evaluation results`, async ({ page }) => {
+    const state = await fixture(page);
+    state.fail = "retired";
+    state.runs = [{ ...completedRun, use_case: "insurance" }];
+    state.conversations = [{
+      id: "synthetic-retired", title: "Retired evaluation history", useCase: "insurance",
+      status: "active", createdAt: completedRun.created_at, updatedAt: completedRun.updated_at,
+    }];
+    await page.addInitScript((locale) => localStorage.setItem("kratos.locale", locale), locale);
+    await page.goto(`${FRONTEND_URL}/`);
+    await page.getByRole("button", { name: /Retired evaluation history/ }).first().click();
+    await page.getByRole("button", { name: ui[locale].manager, exact: true }).click();
+    await page.getByRole("button", { name: /^(Evals|Evaluations|Evaluaties)$/, exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "PERSONA_UNAVAILABLE" })).toBeVisible();
+    await expect(page.getByText(ui[locale]["eval.latestRun"], { exact: true })).toBeVisible();
+    await expect(page.getByText(ui[locale]["eval.persona"].replace("{name}", "insurance"), { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: ui[locale]["eval.generate"], exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: ui[locale]["eval.runValidation"], exact: true })).toBeDisabled();
+    expect(state.starts).toEqual([]);
+    expect(state.generation).toEqual([]);
+    expect(state.runs[0].results).toEqual(completedRun.results);
+  });
 }
 
 for (const locale of ["en", "nl"] as const) {

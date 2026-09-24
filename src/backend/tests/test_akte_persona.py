@@ -33,7 +33,7 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         app.state.registries[directory.name] = registry
     catalog = TestClient(app).get("/api/use-cases").json()["useCases"]
     curated = {item["name"]: item for item in catalog if item["curated"]}
-    assert {"akte-agent", "generic"} <= curated.keys()
+    assert {item["name"] for item in catalog} == curated.keys() == {"akte-agent", "generic"}
     akte = curated["akte-agent"]
     assert akte["displayName"] == "Akte Agent"
     for locale in ("en", "nl"):

@@ -2,6 +2,7 @@
 
 Both scripts accept common `dossier`, `locale`, classified `sources`, and a
 nonempty `version`. Sources have unique references; retain originals unchanged.
+Invoice versions have a 200-character limit to keep export receipts compact.
 Each decision/rate/cost/tax reference must name a non-assumption source.
 The helpers validate structure and arithmetic, not authenticity or legal meaning.
 
@@ -27,6 +28,9 @@ The helpers validate structure and arithmetic, not authenticity or legal meaning
   `{treatment, source, rate_percent}` with decimal strings and optional
   `decimal_separator`. Rate means explicitly uniform over all included fee/cost
   lines. For differing treatments request a reviewed explicit total tax amount.
+- Optional `correction_ids`: single-line IDs of applied, reviewed corrections,
+  emitted as literal `Correction ID: ...` lines in the new file. They never
+  establish approval or mutate older files.
 
 Calculate exact hours times rate, round each fee and cost line to cents with
 ROUND_HALF_UP (ties away from zero), then exact sum. Uniform tax multiplies each
@@ -75,9 +79,13 @@ full individual evidence is in the file, avoiding tool stdout truncation.
   `client_fact`, `deed_term`, `time`, `settlement`. Preserve both evidence
   versions. Every prior generated inventory item is conservatively stale after
   any change, unless its `regenerated_from` lists all change IDs and its actual
-  new file records those IDs. Explicit `stale: true` stays stale. Supply both
+  new file records matching `Correction ID: ...` lines and a `Version:` / `Versie:`
+  header. Substring matches in old source content do not qualify.
+  Explicit `stale: true` stays stale. Supply both
   old and regenerated items with distinct IDs/versions; never overwrite originals.
   A source deadline or explicit stale flag cannot be bypassed by regeneration.
+  Embedded recalculations/checklists after a correction are explicitly stale
+  until reconciled: recomputing inputs does not prove every changed fact applied.
 
 Result includes common renderable artifact fields, always `review_status:
 pending`, per-role evidence statuses, missing roles/unavailable/stale versions,

@@ -20,6 +20,7 @@ from app.models import (
     Message,
     MessageRole,
 )
+from app.personas import require_available, require_not_retired
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ async def copilot_studio_chat(
     """
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
+    require_available(body.useCase, request.app.state.registries)
+    if body.conversationId:
+        existing = await cosmos.get_conversation(body.conversationId, "copilot-studio")
+        if existing:
+            require_not_retired(existing.useCase)
 
     # Resolve or create conversation
     conversation_id = body.conversationId

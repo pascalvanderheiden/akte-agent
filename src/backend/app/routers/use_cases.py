@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Request
 
 from app.models import UseCaseInfo, UseCaseList
+from app.personas import RETIRED_PERSONAS
 from app.services.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ async def list_use_cases(request: Request) -> UseCaseList:
     registries: dict[str, SkillRegistry] = request.app.state.registries
     use_cases = []
     for name, registry in sorted(registries.items()):
+        if name in RETIRED_PERSONAS:
+            continue
         # Parse display name and description from system prompt frontmatter
         display_name = name.replace("-", " ").title()
         description = ""

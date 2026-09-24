@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.observability import instrument_fastapi_app, setup_telemetry
+from app.personas import RETIRED_PERSONAS
 from app.routers import (
     admin_analysis,
     admin_apm,
@@ -65,7 +66,7 @@ async def _apm_startup_sync(apm_service: ApmService, use_cases_root: str) -> tup
     synced = 0
     total = 0
     for entry in sorted(root.iterdir()):
-        if not entry.is_dir():
+        if not entry.is_dir() or entry.name in RETIRED_PERSONAS:
             continue
         use_case = entry.name
         total += 1
@@ -125,7 +126,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.cosmos_service = cosmos_service
 
     # Initialize Blob Storage service for skills
-    blob_skill_service = BlobSkillService(settings)
+    blob_skill_service = BlobSkillService(settings, local_base_dir=settings.apm_use_cases_root)
     await blob_skill_service.initialize()
     application.state.blob_skill_service = blob_skill_service
 
@@ -142,7 +143,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # Load all use-case registries from blob storage
     registries: dict[str, SkillRegistry] = {}
     if not blob_skill_service.is_available:
-        logger.error("Blob storage is not configured — no skills will be available")
+        logger.warning("Blob storage is not configured — loading local personas")
     else:
         try:
             # In local/dev mode Azurite starts empty — seed use-case folders
@@ -152,11 +153,28 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("Seeded %d use-case(s) into blob: %s", len(seeded), seeded)
             use_case_names = await blob_skill_service.list_use_cases()
             for uc_name in use_case_names:
+                if uc_name in RETIRED_PERSONAS:
+                    continue
                 registry = SkillRegistry()
                 await registry.load(uc_name, blob_skill_service, apm_service=apm_service)
-                registries[uc_name] = registry
+                if registry.system_prompt:
+                    registries[uc_name] = registry
+                else:
+                    logger.warning("Ignoring blob prefix '%s' without a persona definition", uc_name)
         except Exception:
             logger.exception("Failed to load use-cases from blob storage")
+
+    # Keep bundled/local personas available when storage is absent or incomplete.
+    local_root = Path(settings.apm_use_cases_root)
+    if local_root.is_dir():
+        for entry in sorted(local_root.iterdir()):
+            if entry.name in RETIRED_PERSONAS or entry.name in registries:
+                continue
+            if not (entry / "SYSTEM_PROMPT.md").is_file():
+                continue
+            registry = SkillRegistry()
+            await registry.load(entry.name, apm_service=apm_service, local_root=str(local_root))
+            registries[entry.name] = registry
 
     application.state.registries = registries
     # Keep backward compat: skill_registry points to "generic"

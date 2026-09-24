@@ -310,6 +310,8 @@ def test_real_complete_journey_and_correction_keeps_discrepancy(scripts, locale)
         corrected = scripts["handoff"].build_handoff(by_name["corrected-handoff"]["input"])
         assert any(value.startswith("invoice@") for value in corrected["stale_versions"])
         assert any(value.startswith("execution@") for value in corrected["stale_versions"])
+        assert any(value.startswith("handoff@") for value in corrected["stale_versions"])
+        assert not any(value.startswith("corrected-invoice@") for value in corrected["stale_versions"])
         assert by_name["deed"]["input"]["version"] in text
         for item in documents:
             assert Path(item["path"]).read_text() == item["text"]
@@ -317,6 +319,72 @@ def test_real_complete_journey_and_correction_keeps_discrepancy(scripts, locale)
     finally:
         for item in documents:
             Path(item["path"]).unlink()
+
+
+@pytest.mark.parametrize("locale", ["en", "nl"])
+def test_expired_archive_is_not_available_or_approved(scripts, locale):
+    data = handoff_input(locale)
+    data["items"] = [
+        {
+            "id": "old-archive",
+            "title": "SYNTHETIC old inventory",
+            "role": "archive",
+            "category": "artifact",
+            "dossier": data["dossier"],
+            "version": "v0",
+            "source": data["sources"][0]["reference"],
+            "availability": "expired",
+        }
+    ]
+    result = scripts["handoff"].build_handoff(data)
+    assert result["unavailable_versions"] == ["old-archive@v0"]
+    assert "archive" in result["missing_roles"]
+    assert result["evidence_status"]["archive"] == "pending"
+    assert ("EXPIRED / unavailable" if locale == "en" else "VERLOPEN / niet beschikbaar") in result["body"]
+
+
+def test_regeneration_rejects_old_file_substrings_and_wrong_versions(scripts):
+    data = handoff_input()
+    bill = data["invoice"]
+    bill.update(version="SYNTHETIC new v2", correction_ids=["review-C"])
+    artifact = scripts["artifact"].write_artifact(scripts["invoice"].as_artifact(scripts["invoice"].calculate(bill)))
+    path = Path(artifact["path"])
+    data["changes"] = [
+        {
+            "id": "review-C",
+            "kind": "time",
+            "original": "SYNTHETIC prior time",
+            "replacement": "SYNTHETIC reviewed time",
+            "source": bill["review_source"],
+        }
+    ]
+    data["items"] = [
+        {
+            "id": "invoice-new",
+            "title": "SYNTHETIC new invoice",
+            "dossier": data["dossier"],
+            "role": "invoice",
+            "category": "artifact",
+            "source": bill["review_source"],
+            "availability": "generated",
+            "version": bill["version"],
+            "path": str(path),
+            "regenerated_from": ["review-C"],
+        }
+    ]
+    try:
+        assert scripts["handoff"].build_handoff(data)["stale_versions"] == []
+        data["items"][0]["version"] = "SYNTHETIC falsely labeled v3"
+        with pytest.raises(ValueError, match="actual file"):
+            scripts["handoff"].build_handoff(data)
+        data["items"][0]["version"] = bill["version"]
+        data["changes"][0]["id"] = "EUR"
+        data["items"][0]["regenerated_from"] = ["EUR"]
+        assert "EUR" in path.read_text()
+        with pytest.raises(ValueError, match="actual file"):
+            scripts["handoff"].build_handoff(data)
+    finally:
+        path.unlink()
 
 
 def test_uploaded_instructions_are_inert_and_do_not_change_status(scripts):

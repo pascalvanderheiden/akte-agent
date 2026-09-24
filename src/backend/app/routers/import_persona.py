@@ -35,6 +35,7 @@ from app.models import (
     PersonaImportResponse,
     PersonaManifest,
 )
+from app.personas import require_not_retired
 from app.services.blob_skill_service import BlobSkillService
 from app.services.skill_registry import SkillRegistry
 
@@ -242,6 +243,7 @@ async def import_persona(
     manifest = body.manifest or await _expand_prompt_to_manifest(body.prompt or "")
 
     base_slug = _slugify(body.name or manifest.name)
+    require_not_retired(base_slug)
     if not _USE_CASE_NAME_RE.match(base_slug):
         raise HTTPException(status_code=422, detail="Could not derive a valid persona name")
 

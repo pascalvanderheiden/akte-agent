@@ -120,7 +120,7 @@ def create_complete_journey(persona: Path, locale: str, *, correction=False, out
             "settlement": settlement,
             "invoice": invoice,
         }
-        export("handoff", "handoff.py", data)
+        previous_handoff = export("handoff", "handoff.py", data)
         if correction:
             corrected = copy.deepcopy(data)
             correction_source = {"reference": "SYNTHETIC correction C", "kind": "user_observation"}
@@ -142,8 +142,9 @@ def create_complete_journey(persona: Path, locale: str, *, correction=False, out
             )
             bill["rates"]["replacement"] = bill["rates"][original["id"]]
             bill["version"] = "SYNTHETIC corrected invoice v2 C"
+            bill["correction_ids"] = ["C"]
             bill["locale"] = output_locale or locale
-            export("corrected-invoice", "invoice.py", bill)
+            replacement = export("corrected-invoice", "invoice.py", bill)
             corrected.update(
                 version="SYNTHETIC handoff v2",
                 locale=output_locale or locale,
@@ -157,6 +158,26 @@ def create_complete_journey(persona: Path, locale: str, *, correction=False, out
                     }
                 ],
             )
+            for document, role, corrections in (
+                (previous_handoff, "archive", []),
+                (replacement, "invoice", ["C"]),
+            ):
+                reference = f"SYNTHETIC generated {document['name']} source"
+                corrected["sources"].append({"reference": reference, "kind": "synthetic"})
+                corrected["items"].append(
+                    {
+                        "id": document["name"],
+                        "title": f"SYNTHETIC {document['name']}",
+                        "category": "artifact",
+                        "role": role,
+                        "dossier": corrected["dossier"],
+                        "source": reference,
+                        "version": document["input"]["version"],
+                        "availability": "generated",
+                        "path": document["path"],
+                        "regenerated_from": corrections,
+                    }
+                )
             export("corrected-handoff", "handoff.py", corrected)
         return documents
     except Exception:
