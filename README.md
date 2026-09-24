@@ -247,6 +247,11 @@ This single command:
 7. Configures all Managed Identity role assignments
 8. Outputs the public URL
 
+The Foundry project endpoint is read from the project's `AI Foundry API`
+endpoint, not assembled from the account's Cognitive Services endpoint.
+Provisioning exports it as both `AZURE_AI_PROJECT_ENDPOINT` and
+`FOUNDRY_PROJECT_ENDPOINT` for the hosted-agent CLI and backend.
+
 ### Running Multiple Environments
 
 `azd` supports any number of side-by-side environments, so a throwaway experiment never has to share infrastructure with a live deployment. Each one lives in its own directory under `.azure/` (gitignored, so environments stay local and are never committed).
