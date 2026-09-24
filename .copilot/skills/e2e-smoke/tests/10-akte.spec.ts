@@ -60,6 +60,7 @@ async function routeFixture(page: Page, fixture: ReturnType<typeof makeFixture>)
     if (pathname === "/config.json") return route.fulfill({ json: { apiUrl: `${origin}${mount}` } });
     if (!pathname.startsWith("/api/")) return route.continue();
     if (pathname === "/api/use-cases") return route.fulfill({ json: { useCases: fixture.catalog } });
+    if (pathname === "/api/models") return route.fulfill({ json: { models: [] } });
     if (pathname === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (pathname === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (pathname === "/api/conversations") {

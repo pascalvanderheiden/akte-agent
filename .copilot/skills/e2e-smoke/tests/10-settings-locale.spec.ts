@@ -259,7 +259,7 @@ for (const locale of ["en", "nl"] as const) {
     expect(state.servers["synthetic-mcp"]).toMatchObject({ type: "local", command: "synthetic-command", env: { SYNTHETIC: "value" } });
     await page.getByRole("button", { name: ui[other]["skills.edit"], exact: true }).click();
     await page.getByRole("combobox", { name: ui[other]["mcp.type"] }).selectOption("http");
-    await page.getByRole("textbox", { name: ui[other]["mcp.command"] }).fill("https://synthetic.example.test/mcp");
+    await page.getByRole("textbox", { name: ui[other]["mcp.url"] }).fill("https://synthetic.example.test/mcp");
     await page.getByRole("spinbutton", { name: ui[other]["mcp.timeout"] }).fill("-1");
     await page.getByRole("button", { name: ui[other]["settings.save"], exact: true }).click();
     await expect(alert(page)).toHaveText(ui[other]["error.MCP_TIMEOUT_INVALID"]);

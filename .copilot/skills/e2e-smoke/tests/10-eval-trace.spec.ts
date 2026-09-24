@@ -79,6 +79,7 @@ async function fixture(page: Page) {
     state.paths.push(url.pathname);
     const fail = () => route.fulfill({ status: state.failureStatus, json: { detail: "SENSITIVE_SYNTHETIC_DIAGNOSTIC" } });
     if (path === "/api/use-cases") return route.fulfill({ json: { useCases: state.catalog } });
+    if (path === "/api/models") return route.fulfill({ json: { models: [] } });
     if (path === "/api/conversations") return route.fulfill({ json: { conversations: state.conversations } });
     if (path.endsWith("/messages")) return route.fulfill({ json: [] });
     if (path === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });

@@ -53,6 +53,7 @@ async function fixture(page: Page) {
       if (state.fail === "catalog") return fail("CATALOG_ERROR");
       return route.fulfill({ json: { useCases: state.catalog } });
     }
+    if (path === "/api/models") return route.fulfill({ json: { models: [] } });
     if (path === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (path === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (path === "/api/admin/system-prompt") {
