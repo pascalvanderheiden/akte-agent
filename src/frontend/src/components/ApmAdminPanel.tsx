@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getApmStatus, installApmMcpServer, installApmPackage, syncApm, uninstallApmMcpServer, uninstallApmPackage, updateApm } from "@/lib/api";
 import type { ApmCommandResponse, ApmDependency, ApmMcpServer } from "@/types";
+import type { TranslationKey } from "@/lib/i18n";
+import { useLocale } from "./LocaleProvider";
+import { ApplicationError, errorCode, type ErrorCode } from "@/lib/errors";
 
 interface Props {
   useCase: string;
@@ -14,7 +17,7 @@ interface SuggestedPackage {
   name: string;
   pkg: string;
   ref?: string;
-  description: string;
+  description: TranslationKey;
   homepage: string;
 }
 
@@ -26,28 +29,28 @@ const SUGGESTED_PACKAGES: SuggestedPackage[] = [
     name: "APM sample package",
     pkg: "microsoft/apm-sample-package",
     ref: "v1.0.0",
-    description: "Reference APM package from the APM team — design instructions and prompts. Good smoke test.",
+    description: "apm.suggestion1",
     homepage: "https://github.com/microsoft/apm-sample-package",
   },
   {
     id: "anthropics/skills/skills/frontend-design",
     name: "Frontend design (Anthropic Skills)",
     pkg: "anthropics/skills/skills/frontend-design",
-    description: "Claude Skill for reviewing and generating frontend/UI code. Virtual subdirectory install.",
+    description: "apm.suggestion2",
     homepage: "https://github.com/anthropics/skills/tree/main/skills/frontend-design",
   },
   {
     id: "github/awesome-copilot/plugins/context-engineering",
     name: "Context engineering (awesome-copilot)",
     pkg: "github/awesome-copilot/plugins/context-engineering",
-    description: "Copilot plugin focused on context-engineering patterns, curated by GitHub.",
+    description: "apm.suggestion3",
     homepage: "https://github.com/github/awesome-copilot",
   },
   {
     id: "microsoft/GitHub-Copilot-for-Azure/plugin/skills/azure-compliance",
     name: "Azure compliance skill",
     pkg: "microsoft/GitHub-Copilot-for-Azure/plugin/skills/azure-compliance",
-    description: "Azure compliance skill from the official GitHub Copilot for Azure plugin.",
+    description: "apm.suggestion4",
     homepage: "https://github.com/microsoft/GitHub-Copilot-for-Azure",
   },
 ];
@@ -59,7 +62,7 @@ interface SuggestedMcpServer {
   command?: string;
   args?: string[];
   url?: string;
-  description: string;
+  description: TranslationKey;
   homepage: string;
 }
 
@@ -72,7 +75,7 @@ const SUGGESTED_MCP_SERVERS: SuggestedMcpServer[] = [
     transport: "stdio",
     command: "uvx",
     args: ["markitdown-mcp"],
-    description: "Microsoft MarkItDown — convert PDF, Word, Excel, images, audio to Markdown.",
+    description: "apm.suggestion5",
     homepage: "https://github.com/microsoft/markitdown",
   },
   {
@@ -81,7 +84,7 @@ const SUGGESTED_MCP_SERVERS: SuggestedMcpServer[] = [
     transport: "stdio",
     command: "npx",
     args: ["-y", "@playwright/mcp@latest"],
-    description: "Microsoft Playwright MCP — drive a headless browser via accessibility trees for web automation & scraping.",
+    description: "apm.suggestion6",
     homepage: "https://github.com/microsoft/playwright-mcp",
   },
   {
@@ -90,7 +93,7 @@ const SUGGESTED_MCP_SERVERS: SuggestedMcpServer[] = [
     transport: "stdio",
     command: "npx",
     args: ["-y", "@upstash/context7-mcp@latest"],
-    description: "Upstash Context7 — up-to-date library & framework documentation for any prompt.",
+    description: "apm.suggestion7",
     homepage: "https://github.com/upstash/context7",
   },
   {
@@ -98,7 +101,7 @@ const SUGGESTED_MCP_SERVERS: SuggestedMcpServer[] = [
     name: "github",
     transport: "http",
     url: "https://api.githubcopilot.com/mcp/",
-    description: "GitHub MCP server (remote). Manage repos, issues, PRs, and workflows via the hosted endpoint.",
+    description: "apm.suggestion8",
     homepage: "https://github.com/github/github-mcp-server",
   },
   {
@@ -106,18 +109,19 @@ const SUGGESTED_MCP_SERVERS: SuggestedMcpServer[] = [
     name: "microsoft-learn",
     transport: "http",
     url: "https://learn.microsoft.com/api/mcp",
-    description: "Microsoft Learn MCP — grounded, first-party Microsoft documentation (Azure, .NET, M365…). Free, no auth.",
+    description: "apm.suggestion9",
     homepage: "https://github.com/MicrosoftDocs/mcp",
   },
 ];
 
 export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
+  const { t, formatDuration, formatNumber } = useLocale();
   const [dependencies, setDependencies] = useState<ApmDependency[]>([]);
   const [mcpServers, setMcpServers] = useState<ApmMcpServer[]>([]);
   const [version, setVersion] = useState<string>("");
   const [materialisedDirs, setMaterialisedDirs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<ErrorCode | null>(null);
   const [disabled, setDisabled] = useState(false); // 503 → APM disabled
   const [busy, setBusy] = useState<string | null>(null); // tag of in-flight op
 
@@ -140,7 +144,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
-    setError("");
+    setError(null);
     try {
       const data = await getApmStatus(useCase);
       setDependencies(data.dependencies);
@@ -149,11 +153,10 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       setMaterialisedDirs(data.materialised_skill_dirs);
       setDisabled(false);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load APM status";
-      if (msg.includes("503") || msg.toLowerCase().includes("not configured")) {
+      if (err instanceof ApplicationError && err.status === 503) {
         setDisabled(true);
       } else {
-        setError(msg);
+        setError(errorCode(err, "APM_ERROR"));
       }
     } finally {
       setLoading(false);
@@ -172,14 +175,23 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
 
   const runOp = async (tag: string, op: () => Promise<ApmCommandResponse>) => {
     setBusy(tag);
-    setError("");
+    setLastResult(null);
+    setError(null);
     try {
       const result = await op();
+      if (!result.success) {
+        setLastResult(result);
+        setOutputOpen(false);
+        setError("APM_ERROR");
+        return false;
+      }
       applyResult(result);
       // Refresh full status (version + materialised dirs may change)
       await loadStatus();
+      return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Operation failed (${tag})`);
+      setError(errorCode(err, "APM_ERROR"));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -188,21 +200,22 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
   const handleInstall = async (e: React.FormEvent) => {
     e.preventDefault();
     const pkg = pkgInput.trim();
-    if (!pkg) return;
-    await runOp("install", () =>
+    if (!pkg) { setError("INVALID_REQUEST"); return; }
+    const succeeded = await runOp("install", () =>
       installApmPackage(useCase, {
         package: pkg,
         ref: refInput.trim() || undefined,
         dev: devInput || undefined,
       })
     );
+    if (!succeeded) return;
     setPkgInput("");
     setRefInput("");
     setDevInput(false);
   };
 
   const handleUninstall = async (pkg: string) => {
-    if (!confirm(`Uninstall "${pkg}"? This removes the materialised skill folder.`)) return;
+    if (!confirm(t("apm.uninstallConfirm", { name: pkg }))) return;
     await runOp(`uninstall:${pkg}`, () => uninstallApmPackage(useCase, pkg));
   };
 
@@ -243,13 +256,26 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
   const handleInstallMcp = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = mcpName.trim();
-    if (!name) return;
+    if (!name) { setError("MCP_NAME_REQUIRED"); return; }
+    if (mcpTransport === "stdio" && !mcpCommand.trim()) { setError("MCP_COMMAND_REQUIRED"); return; }
+    if (mcpTransport !== "stdio") {
+      try {
+        if (!["http:", "https:"].includes(new URL(mcpUrl).protocol)) throw new Error("protocol");
+      } catch {
+        setError("MCP_URL_REQUIRED");
+        return;
+      }
+    }
+    if (mcpEnvInput.split("\n").some((line) => line.trim() && !line.trim().startsWith("#") && line.indexOf("=") <= 0)) {
+      setError("MCP_LINES_INVALID");
+      return;
+    }
     const args = mcpArgsInput
       .split(/\s+/)
       .map((a) => a.trim())
       .filter(Boolean);
     const env = parseEnvLines(mcpEnvInput);
-    await runOp(`install-mcp:${name}`, () =>
+    const succeeded = await runOp(`install-mcp:${name}`, () =>
       installApmMcpServer(useCase, {
         name,
         transport: mcpTransport,
@@ -259,6 +285,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
         env: Object.keys(env).length ? env : undefined,
       })
     );
+    if (!succeeded) return;
     onMcpChange?.();
     setMcpName("");
     setMcpCommand("");
@@ -268,7 +295,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
   };
 
   const handleInstallSuggestedMcp = async (s: SuggestedMcpServer) => {
-    await runOp(`install-suggested-mcp:${s.id}`, () =>
+    const succeeded = await runOp(`install-suggested-mcp:${s.id}`, () =>
       installApmMcpServer(useCase, {
         name: s.name,
         transport: s.transport,
@@ -277,13 +304,13 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
         url: s.url,
       })
     );
-    onMcpChange?.();
+    if (succeeded) onMcpChange?.();
   };
 
   const handleUninstallMcp = async (name: string) => {
-    if (!confirm(`Uninstall MCP server "${name}"? It will be removed from apm.yml.`)) return;
-    await runOp(`uninstall-mcp:${name}`, () => uninstallApmMcpServer(useCase, name));
-    onMcpChange?.();
+    if (!confirm(t("apm.mcpConfirm", { name }))) return;
+    const succeeded = await runOp(`uninstall-mcp:${name}`, () => uninstallApmMcpServer(useCase, name));
+    if (succeeded) onMcpChange?.();
   };
 
   if (disabled) {
@@ -295,16 +322,16 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
             </svg>
           </div>
-          <h3 className="text-sm font-semibold text-text">APM is disabled</h3>
+          <h3 className="text-sm font-semibold text-text">{t("apm.disabled")}</h3>
           <p className="mt-1 text-xs text-muted">
-            Set <code className="px-1 py-0.5 rounded-sm bg-surface-2 font-mono text-[11px]">APM_ENABLED=true</code> in the backend environment to manage packages from the UI.
+            {t("apm.disabledHelp")}
           </p>
         </div>
       </div>
     );
   }
 
-  const anyBusy = busy !== null;
+  const anyBusy = busy !== null || loading;
   const spin = (
     <span className="inline-block align-middle w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
   );
@@ -314,7 +341,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       {/* Header block */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h3 className="text-base font-semibold text-text">APM Packages</h3>
+          <h3 className="text-base font-semibold text-text">{t("apm.title")}</h3>
           <p className="text-xs text-muted mt-0.5 font-mono">
             apm CLI: {version || "…"}
           </p>
@@ -330,7 +357,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
               </svg>
             )}
-            Sync
+            {t("apm.sync")}
           </button>
           <button
             onClick={handleUpdateAll}
@@ -342,16 +369,16 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12a7.5 7.5 0 0 0 13 5.196M19.5 12a7.5 7.5 0 0 0-13-5.196M15 5h4.5V.5M9 19H4.5V23.5" />
               </svg>
             )}
-            Update all
+            {t("apm.update")}
           </button>
         </div>
       </div>
 
       {/* Error banner */}
       {error && (
-        <div className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-start justify-between gap-3">
-          <pre className="whitespace-pre-wrap font-mono text-xs flex-1">{error}</pre>
-          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600 transition-colors shrink-0">
+        <div role="alert" className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-start justify-between gap-3">
+          <p className="text-xs flex-1">{t(`error.${error}`)}</p>
+          <button aria-label={t("dismiss")} onClick={() => setError(null)} className="text-red-400 hover:text-red-600 transition-colors shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -359,26 +386,27 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
         </div>
       )}
 
+      {busy && <p role="status">{t("auth.working")}</p>}
+      {lastResult?.success && <p role="status">{t("apm.success")}</p>}
+
       {/* Dependency table */}
       <div className="bg-surface border border-border-soft rounded-2xl overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-12">
+          <div role="status" aria-label={t("loading")} className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent" />
           </div>
-        ) : dependencies.length === 0 ? (
-          <div className="px-6 py-10 text-center text-sm text-muted">
-            No APM packages installed for this use-case yet.
-          </div>
+        ) : dependencies.length === 0 && !error ? (
+          <div className="px-6 py-10 text-center text-sm text-muted">{t("apm.empty")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-2 text-[11px] uppercase tracking-wider text-muted">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-semibold">Name</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">Ref</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">Resolved</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">Source</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("skills.name")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.ref")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.resolved")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.source")}</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">{t("apm.actions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/80 dark:divide-white/6">
@@ -403,7 +431,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                               <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
                             </svg>
                           )}
-                          Delete
+                          {t("delete")}
                         </button>
                       </td>
                     </tr>
@@ -418,27 +446,23 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       {/* MCP servers provided by APM */}
       <div className="bg-surface border border-border-soft rounded-2xl p-5">
         <div className="mb-4">
-          <h4 className="text-sm font-semibold text-text">MCP servers from APM</h4>
+          <h4 className="text-sm font-semibold text-text">{t("apm.mcpTitle")}</h4>
           <p className="text-xs text-muted mt-0.5">
-            Declared under <span className="font-mono">dependencies.mcp</span> in{" "}
-            <span className="font-mono">apm.yml</span>. Installed servers are merged into the use-case&apos;s MCP
-            registry automatically — local/blob entries win on name collisions.
+            {t("apm.mcpHelp")}
           </p>
         </div>
-        {mcpServers.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-muted">
-            No APM-managed MCP servers yet. Install one from the suggestions below or add your own.
-          </div>
+        {mcpServers.length === 0 && !error ? (
+          <div className="px-4 py-6 text-center text-sm text-muted">{t("apm.noMcp")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-2 text-[11px] uppercase tracking-wider text-muted">
                 <tr>
-                  <th className="px-4 py-2.5 text-left font-semibold">Name</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">Transport</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">Command / URL</th>
-                  <th className="px-4 py-2.5 text-left font-semibold">State</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("skills.name")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.transport")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.commandUrl")}</th>
+                  <th className="px-4 py-2.5 text-left font-semibold">{t("apm.state")}</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">{t("apm.actions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200/80 dark:divide-white/6">
@@ -466,9 +490,9 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                       </td>
                       <td className="px-4 py-2.5">
                         {pending ? (
-                          <span className="text-[11px] text-amber-600 dark:text-amber-400">Pending sync</span>
+                          <span className="text-[11px] text-amber-600 dark:text-amber-400">{t("apm.pending")}</span>
                         ) : (
-                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Active</span>
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{t("apm.active")}</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right">
@@ -477,7 +501,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                           disabled={anyBusy}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 rounded-lg hover:bg-red-100 dark:hover:bg-red-500/20 transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {busy === tag ? spin : "Delete"}
+                          {busy === tag ? spin : t("delete")}
                         </button>
                       </td>
                     </tr>
@@ -492,10 +516,9 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       {/* Suggested MCP servers */}
       <div className="bg-surface border border-border-soft rounded-2xl p-5">
         <div className="mb-4">
-          <h4 className="text-sm font-semibold text-text">Suggested MCP servers</h4>
+          <h4 className="text-sm font-semibold text-text">{t("apm.suggestedMcp")}</h4>
           <p className="text-xs text-muted mt-0.5">
-            Curated MCP servers known to resolve via <span className="font-mono">apm mcp install</span>. One click
-            adds them to this use-case&apos;s <span className="font-mono">apm.yml</span>.
+            {t("apm.suggestedMcpHelp")}
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -531,13 +554,11 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                     </a>
                   </div>
                   {installed && (
-                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                      Installed
-                    </span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{t("apm.installed")}</span>
                   )}
                 </div>
                 <p className="text-xs text-text leading-relaxed">
-                  {s.description}
+                  {t(s.description)}
                 </p>
                 <div className="flex justify-end mt-1">
                   <button
@@ -550,7 +571,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
                     )}
-                    {installed ? "Installed" : "Install"}
+                    {installed ? t("apm.installed") : t("apm.install")}
                   </button>
                 </div>
               </div>
@@ -560,22 +581,20 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       </div>
 
       {/* Custom MCP install form */}
-      <form onSubmit={handleInstallMcp} className="bg-surface border border-border-soft rounded-2xl p-5 space-y-4">
+      <form noValidate onSubmit={handleInstallMcp} className="bg-surface border border-border-soft rounded-2xl p-5 space-y-4">
         <div>
-          <h4 className="text-sm font-semibold text-text">Install MCP server</h4>
+          <h4 className="text-sm font-semibold text-text">{t("apm.installMcp")}</h4>
           <p className="text-xs text-muted mt-0.5">
-            Declare any MCP server. <span className="font-mono">stdio</span> runs a local command;{" "}
-            <span className="font-mono">http</span> / <span className="font-mono">sse</span> talks to a remote endpoint.
+            {t("apm.installMcpHelp")}
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs font-medium text-text mb-1.5">
-              Name <span className="text-red-500">*</span>
+            <label className="block text-xs font-medium text-text mb-1.5">{t("skills.name")}<span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              value={mcpName}
+              aria-label={t("mcp.name")} value={mcpName}
               onChange={(e) => setMcpName(e.target.value)}
               placeholder="markitdown"
               required
@@ -583,9 +602,9 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text mb-1.5">Transport</label>
+            <label className="block text-xs font-medium text-text mb-1.5">{t("apm.transport")}</label>
             <select
-              value={mcpTransport}
+              aria-label={t("apm.transport")} value={mcpTransport}
               onChange={(e) => setMcpTransport(e.target.value as "stdio" | "http" | "sse")}
               className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             >
@@ -596,12 +615,11 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
           </div>
           {mcpTransport === "stdio" ? (
             <div>
-              <label className="block text-xs font-medium text-text mb-1.5">
-                Command <span className="text-red-500">*</span>
+              <label className="block text-xs font-medium text-text mb-1.5">{t("mcp.command")}<span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
-                value={mcpCommand}
+                aria-label={t("mcp.command")} value={mcpCommand}
                 onChange={(e) => setMcpCommand(e.target.value)}
                 placeholder="uvx"
                 required
@@ -615,7 +633,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               </label>
               <input
                 type="url"
-                value={mcpUrl}
+                aria-label={t("apm.commandUrl")} value={mcpUrl}
                 onChange={(e) => setMcpUrl(e.target.value)}
                 placeholder="https://example.com/mcp"
                 required
@@ -626,12 +644,11 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
         </div>
         {mcpTransport === "stdio" && (
           <div>
-            <label className="block text-xs font-medium text-text mb-1.5">
-              Args <span className="text-muted font-normal">(space-separated)</span>
+            <label className="block text-xs font-medium text-text mb-1.5">{t("apm.args")}<span className="text-muted font-normal">{t("apm.spaces")}</span>
             </label>
             <input
               type="text"
-              value={mcpArgsInput}
+              aria-label={t("apm.args")} value={mcpArgsInput}
               onChange={(e) => setMcpArgsInput(e.target.value)}
               placeholder="markitdown-mcp"
               className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
@@ -639,11 +656,10 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
           </div>
         )}
         <div>
-          <label className="block text-xs font-medium text-text mb-1.5">
-            Env <span className="text-muted font-normal">(KEY=VALUE per line, optional)</span>
+          <label className="block text-xs font-medium text-text mb-1.5">{t("apm.env")}<span className="text-muted font-normal">{t("apm.envHint")}</span>
           </label>
           <textarea
-            value={mcpEnvInput}
+            aria-label={t("mcp.env")} value={mcpEnvInput}
             onChange={(e) => setMcpEnvInput(e.target.value)}
             placeholder="GITHUB_TOKEN=ghp_...&#10;DEBUG=true"
             rows={2}
@@ -661,7 +677,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
             )}
-            Install MCP server
+            {t("apm.installMcp")}
           </button>
         </div>
       </form>
@@ -670,10 +686,9 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       <div className="bg-surface border border-border-soft rounded-2xl p-5">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h4 className="text-sm font-semibold text-text">Suggested packages</h4>
+            <h4 className="text-sm font-semibold text-text">{t("apm.suggested")}</h4>
             <p className="text-xs text-muted mt-0.5">
-              Curated, public APM packages that resolve out-of-the-box. One click installs into{" "}
-              <span className="font-mono">{useCase}</span>.
+              {t("apm.suggestedHelp", { name: useCase })}
             </p>
           </div>
         </div>
@@ -702,13 +717,11 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                     </a>
                   </div>
                   {installed && (
-                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
-                      Installed
-                    </span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{t("apm.installed")}</span>
                   )}
                 </div>
                 <p className="text-xs text-text leading-relaxed">
-                  {pkg.description}
+                  {t(pkg.description)}
                 </p>
                 <div className="flex justify-end mt-1">
                   <button
@@ -721,7 +734,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
                     )}
-                    {installed ? "Installed" : "Install"}
+                    {installed ? t("apm.installed") : t("apm.install")}
                   </button>
                 </div>
               </div>
@@ -731,34 +744,30 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       </div>
 
       {/* Install form */}
-      <form onSubmit={handleInstall} className="bg-surface border border-border-soft rounded-2xl p-5 space-y-4">
+      <form noValidate onSubmit={handleInstall} className="bg-surface border border-border-soft rounded-2xl p-5 space-y-4">
         <div>
-          <h4 className="text-sm font-semibold text-text">Install package</h4>
-          <p className="text-xs text-muted mt-0.5">
-            Add a GitHub-hosted APM package to this use-case.
-          </p>
+          <h4 className="text-sm font-semibold text-text">{t("apm.installPackage")}</h4>
+          <p className="text-xs text-muted mt-0.5">{t("apm.installHelp")}</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="sm:col-span-2">
-            <label className="block text-xs font-medium text-text mb-1.5">
-              Package <span className="text-red-500">*</span>
+            <label className="block text-xs font-medium text-text mb-1.5">{t("apm.package")}<span className="text-red-500">*</span>
             </label>
             <input
               type="text"
-              value={pkgInput}
+              aria-label={t("apm.package")} value={pkgInput}
               onChange={(e) => setPkgInput(e.target.value)}
-              placeholder="owner/repo or owner/repo/subdir"
+              placeholder={t("apm.packageHint")}
               required
               className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text mb-1.5">
-              Ref <span className="text-muted font-normal">(optional)</span>
+            <label className="block text-xs font-medium text-text mb-1.5">{t("apm.ref")}<span className="text-muted font-normal">{t("apm.optional")}</span>
             </label>
             <input
               type="text"
-              value={refInput}
+              aria-label={t("apm.ref")} value={refInput}
               onChange={(e) => setRefInput(e.target.value)}
               placeholder="main / v1.2.3 / sha"
               className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
@@ -773,7 +782,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               onChange={(e) => setDevInput(e.target.checked)}
               className="rounded-sm border-border-soft text-accent focus:ring-accent"
             />
-            <span>Dev dependency</span>
+            <span>{t("apm.dev")}</span>
           </label>
           <button
             type="submit"
@@ -785,7 +794,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
             )}
-            Install
+            {t("apm.install")}
           </button>
         </div>
       </form>
@@ -793,7 +802,7 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
       {/* Materialised skill dirs */}
       {materialisedDirs.length > 0 && (
         <div className="bg-surface border border-border-soft rounded-2xl p-5">
-          <h4 className="text-sm font-semibold text-text mb-2">Materialised skill directories</h4>
+          <h4 className="text-sm font-semibold text-text mb-2">{t("apm.directories")}</h4>
           <ul className="space-y-1 text-xs font-mono text-text">
             {materialisedDirs.map((d) => <li key={d}>{d}</li>)}
           </ul>
@@ -808,16 +817,16 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
             className="w-full flex items-center justify-between px-5 py-3 text-sm font-medium text-text hover:bg-hover transition-colors"
           >
             <div className="flex items-center gap-3">
-              <span>Last command output</span>
+              <span>{t("apm.output")}</span>
               <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono ${
                 lastResult.success
                   ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
                   : "bg-red-500/15 text-red-600 dark:text-red-400"
               }`}>
-                rc={lastResult.returncode}
+                rc={formatNumber(lastResult.returncode)}
               </span>
               <span className="text-[11px] text-muted font-mono">
-                {Math.round(lastResult.duration_ms)} ms
+                {formatDuration(lastResult.duration_ms)}
               </span>
             </div>
             <svg className={`w-4 h-4 text-slate-400 transition-transform ${outputOpen ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -829,13 +838,13 @@ export function ApmAdminPanel({ useCase, onMcpChange }: Props) {
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted mt-3 mb-1.5">stdout</div>
                 <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto bg-surface-2 dark:bg-black/30 border border-border-soft rounded-lg p-3 text-text">
-                  {lastResult.stdout || "(empty)"}
+                  {lastResult.stdout || t("apm.emptyOutput")}
                 </pre>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted mb-1.5">stderr</div>
                 <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-auto bg-surface-2 dark:bg-black/30 border border-border-soft rounded-lg p-3 text-text">
-                  {lastResult.stderr || "(empty)"}
+                  {lastResult.stderr || t("apm.emptyOutput")}
                 </pre>
               </div>
             </div>

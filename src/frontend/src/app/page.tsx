@@ -329,7 +329,7 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
                 </svg>
               </button>
-              <span className="ml-2 text-sm font-semibold text-text">Kratos Agent</span>
+              <span className="ml-2 text-sm font-semibold text-text">Akte Agent</span>
             </div>
 
             {/* Landing page */}
@@ -349,7 +349,7 @@ export default function Home() {
 
                   <h1 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
                     <span className="gradient-text">
-                      {activeUseCase?.displayName || "Kratos Agent"}
+                      {activeUseCase?.displayName || "Akte Agent"}
                     </span>
                   </h1>
                   <p className="text-muted text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
