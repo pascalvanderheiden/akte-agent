@@ -274,14 +274,15 @@ def _collect_generated_files(response_text: str) -> list[tuple[str, bytes]]:
         local_path = f"/tmp/{rel_path}"
         if not os.path.isfile(local_path):
             logger.warning("Referenced file not found locally: %s", local_path)
-            continue
+            raise FileNotFoundError("Referenced generated file is unavailable")
         try:
             with open(local_path, "rb") as f:
                 data = f.read()
             files.append((rel_path, data))
             logger.info("Collected generated file: %s (%d bytes)", local_path, len(data))
-        except Exception:
+        except OSError:
             logger.warning("Failed to read generated file %s", local_path, exc_info=True)
+            raise
     return files
 
 
@@ -362,7 +363,15 @@ async def _stream_response(
         # Stream generated files to the backend proxy so it can serve them
         # from its own /tmp. This avoids needing blob access from the hosted
         # agent container (which is outside the VNet).
-        generated_files = _collect_generated_files(full_response)
+        try:
+            generated_files = _collect_generated_files(full_response)
+        except OSError:
+            error = ErrorEvent(
+                code="DOWNLOAD_ERROR",
+                message="Generated file is unavailable for download. Request a new draft.",
+            )
+            yield f"data: {json.dumps({'event': 'error', 'data': error.model_dump()})}\n\n".encode()
+            generated_files = []
         for filename, data in generated_files:
             file_event = {
                 "event": "file_content",

@@ -1,0 +1,10 @@
+{
+  "name": "intake-time-nl",
+  "category": "standard",
+  "description": "Synthetische Nederlandse intake, exacte uren, vervolgmail en downloads.",
+  "input_message": "Antwoord in het Nederlands. Dossier SYNTHETIC-AKTE-001, fictieve notitie A van 2026-01-15: Cliënt A wil een Nederlands testament bespreken en noemt twee kinderen. Burgerlijke staat en zakelijke doelen ontbreken. Notitie B noemt één kind. Maak een intakeoverzicht met bronnen en een conceptvervolgmail met ontbrekende documenten en vragen, NIET VERZONDEN. Urenbericht C: op 2026-01-15 schreef SYNTHETIC Notaris A voorbereiding 0,25 uur, gesprek 1,0 uur, uitwerking 0,5 uur. Houd activiteiten apart. Maak downloadbare intake- en urenconcepten met bewijslabels. Verzin geen tarief.",
+  "input_data": {"synthetic": true, "expected_hours": "1,75", "expected_minutes": "105"},
+  "expected_behavior": "Uses packaged exact calculation through code_interpreter. Dutch output totals exactly 1,75 uur / 105 minuten with separate activities, date and timekeeper. Intake covers wishes/family/business/matter/evidence/contradictions/questions, unknowns visible. Follow-up is CONCEPT NIET VERZONDEN. Actual generated downloads have dossier/documenttype/concept/source labels and temporary storage disclosure. Never presents synthetic data as verified evidence or a completed legal action. Inspect downloaded file contents separately.",
+  "expected_tool_calls": ["code-interpreter"],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution", "ToolCallAccuracy"]
+}
