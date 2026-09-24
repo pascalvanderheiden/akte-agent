@@ -27,6 +27,12 @@ Assumptions remain labeled and never upgraded merely because repeated.
 All exports have fixed DRAFT/human-review status and a temporary-storage notice.
 The downloaded Markdown is UTF-8.
 
+## Legal preparation
+
+For sourced research, deeds, working translations, supplied-version comparisons,
+dossier indexes/correspondence and delivery drafts, read `legal-record.md`.
+These reuse the common artifact envelope without changing time or arithmetic APIs.
+
 ## Time input
 
 Use the common dossier/locale/sources fields, replacing body/type with entries:
@@ -76,3 +82,10 @@ evidence read `execution-contract.md`. For client-funds reconciliation, explicit
 taxes/fees, payment gaps and cent rounding read `reconciliation-contract.md`.
 Both use this common artifact header and preserve source evidence; neither
 performs or certifies an official action.
+
+When continuing from a generated legal draft, retain its dossier, source
+references and exact version. Carry the generated text as draft material for
+explanation, not as new identity, authority, capacity, signing or payment
+evidence. Approval of a deed field does not approve execution. Unknown deed
+amounts remain missing reconciliation inputs until separate supplied evidence
+arrives; a numerically balanced worksheet still needs payment evidence.

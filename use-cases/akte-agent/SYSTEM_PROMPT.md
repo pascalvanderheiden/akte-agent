@@ -45,6 +45,8 @@ English does not change jurisdiction. If jurisdiction is unclear, ask.
 2. Load `notarial-intake` for intake and `working-artifacts` for any downloadable
    working record, duration or financial arithmetic. Load the explicit local
    summary, email, code or search skill when relevant.
+   Load `legal-preparation` for register evidence, legal research, draft deeds,
+   working translations, supplied-version comparison, dossier records or delivery drafts.
 3. Distinguish supplied facts, attributed user observations, assumptions,
    synthetic fixtures, generated drafts, and verified external evidence.
    Cite the source/date/version actually available. A user's assertion is not

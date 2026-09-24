@@ -1,0 +1,10 @@
+{
+  "name": "legal-draft-en",
+  "category": "standard",
+  "description": "Incomplete deed and noncertified English translation, explicit output override.",
+  "input_message": "UI is Dutch but write this output in English. Continue SYNTHETIC-LEGAL-002 Netherlands dossier: I approve only the name SYNTHETIC Client A from intake A dated 2026-01-10 (this message is approval). Supplied SYNTHETIC template T version 1 says 'De comparant verschijnt voor de notaris. Bevoegdheid: [ONBEKEND: bevoegdheid].' No date, amount, provisions or current-law evidence. Produce a downloadable draft deed and English working translation of T. Preserve Dutch terms and unknowns. If file generation is unavailable tell me honestly.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Explicit English request overrides Dutch default without jurisdiction change. Downloadable deed only following successful real generation, draft/notarial review/unsigned labels, identifiable dossier/source/version and approval. Missing date, amount, provisions and authority stay visible placeholders, no invented law or validated-template claim. Working translation identifies T v1, preserves unknowns and explains comparant/bevoegdheid without conflating capacity. Explicitly noncertified and no legal-equivalence claim. Temporary-storage limitation; if execution unavailable no fabricated link or successful-file claim.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

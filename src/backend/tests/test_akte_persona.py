@@ -51,6 +51,9 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         "email_draft",
         "working_artifacts",
         "notarial_intake",
+        "legal_preparation",
+        "execution_preparation",
+        "reconciliation",
     } <= names
 
 
@@ -63,7 +66,19 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
     assert [path.name for path in (destination / "use-cases").iterdir()] == ["akte-agent"]
     registry = SkillRegistry()
     await registry.load("akte-agent", local_root=str(destination / "use-cases"))
-    assert {"working_artifacts", "notarial_intake"} <= registry.get_enabled_tool_names()
+    assert {
+        "code-interpreter",
+        "document-summary",
+        "email-draft",
+        "file-sharing",
+        "notarial-intake",
+        "rag-search",
+        "web-search",
+        "working-artifacts",
+        "legal-preparation",
+        "execution-preparation",
+        "reconciliation",
+    } <= registry.skills.keys()
     assert registry.mcp_servers == {}
     script = destination / "use-cases/akte-agent/skills/working-artifacts/scripts/time_record.py"
     input_path = tmp_path / "input.json"

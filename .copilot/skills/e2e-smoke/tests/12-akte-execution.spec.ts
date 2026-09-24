@@ -3,16 +3,13 @@
  * model/transport fixtures, NOT live model or external integration proof.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { FRONTEND_URL } from "./helpers";
+import { loadCatalog, runPython } from "./akte-fixtures";
 import type { Locale, UseCase } from "../../../../src/frontend/src/types";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
-const python = process.env.AKTE_TEST_PYTHON || path.join(root, "src/backend/.venv/bin/python");
 const { en, nl }: typeof import("../../../../src/frontend/src/lib/i18n") =
   createRequire(import.meta.url)("../../../../src/frontend/src/lib/i18n.ts");
 const ui = { en, nl };
@@ -23,29 +20,17 @@ type Draft = { path: string; text: string };
 type Fixture = { catalog: UseCase[]; drafts: Draft[] };
 
 function makeFixture(locale: Locale): Fixture {
-  const result: Fixture = JSON.parse(execFileSync(python, ["-c", `
-import asyncio, copy, json, sys
+  const drafts: Draft[] = runPython(`
+import copy, json, sys
 from pathlib import Path
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from app.routers.use_cases import router
-from app.services.skill_registry import SkillRegistry
 root = Path("../../use-cases").resolve()
 sys.path.insert(0, str(root / "akte-agent/skills/working-artifacts/scripts"))
 from artifact import write_artifact
 from execution_record import prepare
 from reconciliation import calculate, as_artifact
-data = json.loads((root / "akte-agent/skills/execution-preparation/references/synthetic-preparation.json").read_text())[sys.argv[1]]
-async def main():
-    app = FastAPI()
-    app.include_router(router, prefix="/api/use-cases")
-    app.state.registries = {}
-    for directory in sorted(root.iterdir()):
-        if (directory / "SYSTEM_PROMPT.md").is_file():
-            registry = SkillRegistry()
-            await registry.load(directory.name, local_root=str(root))
-            app.state.registries[directory.name] = registry
-    catalog = TestClient(app).get("/api/use-cases").json()["useCases"]
+locale = json.load(sys.stdin)
+data = json.loads((root / "akte-agent/skills/execution-preparation/references/synthetic-preparation.json").read_text())[locale]
+def main():
     corrected = copy.deepcopy(data["reconciliation"])
     source = "SYNTHETIC correction D"
     corrected["sources"].append({"reference": source, "kind": "user_observation"})
@@ -53,16 +38,17 @@ async def main():
     corrected["entries"].append({
         **corrected["entries"][1], "id": "replacement", "correction_of": "fee",
         "decision": "count", "source": source,
-        "amount": "350.005" if sys.argv[1] == "en" else "350,005",
-        "decimal_separator": "." if sys.argv[1] == "en" else ",",
+        "amount": "350.005" if locale == "en" else "350,005",
+        "decimal_separator": "." if locale == "en" else ",",
     })
     drafts = []
     for document in (prepare(data["execution"]), as_artifact(calculate(data["reconciliation"])), as_artifact(calculate(corrected))):
         artifact = write_artifact(document)
         drafts.append({"path": artifact["path"], "text": Path(artifact["path"]).read_text()})
-    print(json.dumps({"catalog": catalog, "drafts": drafts}))
-asyncio.run(main())
-`, locale], { cwd: path.join(root, "src/backend"), encoding: "utf8" }));
+    print(json.dumps(drafts))
+main()
+`, locale);
+  const result = { catalog: loadCatalog(), drafts };
   generated.push(...result.drafts.map((draft) => draft.path));
   return result;
 }
@@ -123,6 +109,58 @@ async function routeFixture(page: Page, fixture: Fixture) {
 }
 
 for (const locale of ["en", "nl"] as const) {
+  test(`${locale}: continuous stages 1-5 preserve generated-deed provenance and unresolved money`, async ({ page }) => {
+    const drafts: (Draft & { name: string })[] = runPython(`
+import json, sys
+from pathlib import Path
+from tests.akte_combined_fixture import create_journey
+documents = create_journey(Path("../../use-cases/akte-agent").resolve(), json.load(sys.stdin))
+print(json.dumps([{"name": item["name"], "path": item["path"], "text": item["text"]} for item in documents]))
+`, locale);
+    generated.push(...drafts.map((draft) => draft.path));
+    const state = await routeFixture(page, { catalog: loadCatalog(), drafts });
+    await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
+    await page.goto(`${FRONTEND_URL}/`);
+    await page.getByRole("combobox", { name: ui[locale].selectPersona }).selectOption("akte-agent");
+    for (const draft of drafts) {
+      await page.getByRole("textbox", { name: ui[locale].ask }).fill(`SYNTHETIC-AKTE-LEGAL: ${draft.name}`);
+      await page.getByRole("button", { name: ui[locale].sendMessage, exact: true }).click();
+      const link = page.getByRole("link", { name: new RegExp(path.basename(draft.path)) }).last();
+      await expect(link).toBeVisible();
+      const pending = page.waitForEvent("download");
+      await link.click();
+      const download = await pending;
+      const chunks: Buffer[] = [];
+      for await (const chunk of (await download.createReadStream())!) chunks.push(Buffer.from(chunk));
+      const bytes = Buffer.concat(chunks);
+      expect(bytes).toEqual(readFileSync(draft.path));
+      const text = bytes.toString("utf8");
+      expect(text).toContain("SYNTHETIC-AKTE-LEGAL");
+      expect(text).toContain(locale === "en" ? "Status: DRAFT" : "Status: CONCEPT");
+      if (draft.name === "time") expect(text).toContain(locale === "en" ? "105 minutes" : "105 minuten");
+      if (draft.name === "execution") {
+        expect(text).toContain("SYNTHETIC generated legal deed");
+        expect(text).toContain(locale === "en" ? "[UNKNOWN: amount]" : "[ONBEKEND: bedrag]");
+        expect(text).toContain(locale === "en" ? "status unknown" : "status onbekend");
+        expect(text).toContain(locale === "en" ? "UNRESOLVED" : "ONOPGELOST");
+        expect(text).toContain(locale === "en" ? "STALE FOR REVIEW" : "VEROUDERD VOOR BEOORDELING");
+      }
+      if (draft.name === "missing-amount") expect(text).toContain(locale === "en" ? "No totals" : "Geen totalen");
+      if (draft.name === "supplied-funds") {
+        expect(text).toContain(locale === "en" ? "EUR 0.00" : "EUR 0,00");
+        expect(text).toContain(locale === "en" ? "Missing supplied payment confirmation" : "Aangeleverde betaalbevestiging ontbreekt");
+      }
+      if (draft.name === "index") {
+        for (const earlier of drafts.filter((item) => item.name !== "index")) {
+          expect(text).toContain(path.basename(earlier.path).replaceAll("_", "\\_"));
+        }
+        expect(text).toContain(locale === "en" ? "no office system updated" : "geen kantoorsysteem bijgewerkt");
+      }
+    }
+    expect(new Set(state.calls.map((call) => call.conversationId)).size).toBe(1);
+    expect(state.calls.every((call) => call.locale === locale && call.useCase === "akte-agent")).toBe(true);
+  });
+
   test(`${locale}: stage 4 direct entry, stage 5 continuation and corrected downloaded bytes`, async ({ page }) => {
     const fixture = makeFixture(locale);
     const state = await routeFixture(page, fixture);

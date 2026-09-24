@@ -1,0 +1,100 @@
+{
+  "en": {
+    "dossier": "SYNTHETIC-AKTE-LEGAL",
+    "locale": "en",
+    "jurisdiction": "Netherlands",
+    "matter": "SYNTHETIC estate with a possible company interest",
+    "as_of": "2026-01-15",
+    "sources": [
+      {"reference": "SYNTHETIC intake A", "kind": "synthetic", "date": "2026-01-10", "version": "1", "locator": "paragraph 1"},
+      {"reference": "SYNTHETIC BRP extract", "kind": "synthetic", "date": "2024-01-01", "review_after": "2025-12-01", "locator": "civil status"},
+      {"reference": "SYNTHETIC template A", "kind": "synthetic", "version": "A"},
+      {"reference": "SYNTHETIC draft B", "kind": "synthetic", "date": "2026-01-12", "version": "B"},
+      {"reference": "SYNTHETIC email A", "kind": "synthetic", "date": "2026-01-11", "version": "1"},
+      {"reference": "SYNTHETIC letter B", "kind": "synthetic", "date": "2026-01-13", "version": "1"}
+    ],
+    "issues": ["Family status differs between intake and old extract; ask the notary.", "Current law and CTR evidence unavailable; no clearance."],
+    "kind": "research",
+    "checks": [
+      {"register": "BRP", "relevance": "Resolve civil-status contradiction for the estate.", "required_evidence": "Authorized dated extract with scope and subject match.", "source": "SYNTHETIC BRP extract", "action": "Obtain current evidence through the authorized office channel."},
+      {"register": "Handelsregister", "relevance": "Possible company interest; entity involvement not yet established.", "required_evidence": "Dated entity extract and representation documents if applicable.", "action": "Clarify entity and authority question with notary."},
+      {"register": "CTR", "relevance": "Testamentary evidence may affect estate preparation.", "required_evidence": "Authorized CTR evidence and separately relevant testamentary documents.", "action": "Request authorized check; contents and effect remain unresolved."}
+    ],
+    "findings": [
+      {"topic": "feasibility", "text": "Intake requests estate preparation; legal feasibility is not established.", "source": "SYNTHETIC intake A", "locator": "paragraph 1"},
+      {"topic": "conflicts", "text": "Old extract and intake disagree on civil status.", "source": "SYNTHETIC BRP extract"}
+    ],
+    "version": "SYNTHETIC draft 1",
+    "template_source": "SYNTHETIC template A",
+    "fields": {
+      "parties": {"text": "SYNTHETIC Client A", "source": "SYNTHETIC intake A", "approval": "SYNTHETIC user message approving the name only"},
+      "provisions": {"text": "Unapproved proposal: authority remains disputed.", "source": "SYNTHETIC template A"}
+    },
+    "items": [
+      {"id": "letter-b", "title": "SYNTHETIC missing-information letter", "source": "SYNTHETIC letter B", "category": "letter", "date": "2026-01-13", "version": "1", "availability": "supplied", "summary": "Requests missing testamentary evidence."},
+      {"id": "email-a", "title": "SYNTHETIC client email", "source": "SYNTHETIC email A", "category": "email", "date": "2026-01-11", "version": "1", "availability": "supplied", "sender": "SYNTHETIC Client A", "recipient": "SYNTHETIC Notary A", "summary": "Disputes the older civil-status extract."},
+      {"id": "ctr", "title": "CTR evidence", "source": "SYNTHETIC intake A", "category": "artifact", "availability": "missing"},
+      {"id": "draft-b", "title": "SYNTHETIC revision B", "source": "SYNTHETIC draft B", "category": "revision", "version": "B", "availability": "supplied"}
+    ],
+    "versions": [
+      {"id": "SYNTHETIC A", "source": "SYNTHETIC template A", "text": "Amount: EUR 100\nAuthority: unresolved"},
+      {"id": "SYNTHETIC B", "source": "SYNTHETIC draft B", "text": "Amount: EUR 120\nAuthority: conflicting instructions"}
+    ],
+    "changes": [{"text": "Amount differs EUR 100 / EUR 120; no approved amount. Authority terms conflict; human decision required.", "source": "SYNTHETIC draft B"}],
+    "source": "SYNTHETIC template A",
+    "source_version": "A",
+    "original": "De comparant heeft [UNKNOWN: bevoegdheid].",
+    "text": "The comparant (person appearing before the notary) has [UNKNOWN: bevoegdheid].",
+    "subject": "SYNTHETIC drafts for review",
+    "message": "Dear [Client], please review the listed drafts and clarify the open questions. CTR evidence is missing. [Notary]"
+  },
+  "nl": {
+    "dossier": "SYNTHETIC-AKTE-LEGAL",
+    "locale": "nl",
+    "jurisdiction": "Nederland",
+    "matter": "SYNTHETIC nalatenschap met mogelijk ondernemingsbelang",
+    "as_of": "2026-01-15",
+    "sources": [
+      {"reference": "SYNTHETIC intake A", "kind": "synthetic", "date": "2026-01-10", "version": "1", "locator": "paragraaf 1"},
+      {"reference": "SYNTHETIC BRP extract", "kind": "synthetic", "date": "2024-01-01", "review_after": "2025-12-01", "locator": "burgerlijke staat"},
+      {"reference": "SYNTHETIC template A", "kind": "synthetic", "version": "A"},
+      {"reference": "SYNTHETIC draft B", "kind": "synthetic", "date": "2026-01-12", "version": "B"},
+      {"reference": "SYNTHETIC email A", "kind": "synthetic", "date": "2026-01-11", "version": "1"},
+      {"reference": "SYNTHETIC letter B", "kind": "synthetic", "date": "2026-01-13", "version": "1"}
+    ],
+    "issues": ["Burgerlijke staat verschilt tussen intake en oud uittreksel; vraag de notaris.", "Actueel recht en CTR-bewijs niet beschikbaar; geen goedkeuring."],
+    "kind": "research",
+    "checks": [
+      {"register": "BRP", "relevance": "Tegenstrijdige burgerlijke staat oplossen voor de nalatenschap.", "required_evidence": "Bevoegd verkregen gedateerd uittreksel met reikwijdte en juiste persoon.", "source": "SYNTHETIC BRP extract", "action": "Vraag actueel bewijs via het bevoegde kantoorkanaal."},
+      {"register": "Handelsregister", "relevance": "Mogelijk ondernemingsbelang; betrokkenheid entiteit nog onbekend.", "required_evidence": "Gedateerd uittreksel en vertegenwoordigingsstukken indien relevant.", "action": "Verduidelijk entiteit en bevoegdheidsvraag met de notaris."},
+      {"register": "CTR", "relevance": "Testamentair bewijs kan de voorbereiding beïnvloeden.", "required_evidence": "Bevoegd verkregen CTR-bewijs en afzonderlijk relevante testamentaire stukken.", "action": "Vraag bevoegde controle; inhoud en werking blijven open."}
+    ],
+    "findings": [
+      {"topic": "feasibility", "text": "Intake vraagt voorbereiding nalatenschap; juridische haalbaarheid niet vastgesteld.", "source": "SYNTHETIC intake A", "locator": "paragraaf 1"},
+      {"topic": "conflicts", "text": "Oud uittreksel en intake verschillen over burgerlijke staat.", "source": "SYNTHETIC BRP extract"}
+    ],
+    "version": "SYNTHETIC concept 1",
+    "template_source": "SYNTHETIC template A",
+    "fields": {
+      "parties": {"text": "SYNTHETIC Cliënt A", "source": "SYNTHETIC intake A", "approval": "SYNTHETIC gebruikersbericht met alleen naamgoedkeuring"},
+      "provisions": {"text": "Niet-goedgekeurd voorstel: bevoegdheid blijft betwist.", "source": "SYNTHETIC template A"}
+    },
+    "items": [
+      {"id": "letter-b", "title": "SYNTHETIC brief ontbrekende informatie", "source": "SYNTHETIC letter B", "category": "letter", "date": "2026-01-13", "version": "1", "availability": "supplied", "summary": "Vraagt ontbrekend testamentair bewijs."},
+      {"id": "email-a", "title": "SYNTHETIC cliëntmail", "source": "SYNTHETIC email A", "category": "email", "date": "2026-01-11", "version": "1", "availability": "supplied", "sender": "SYNTHETIC Cliënt A", "recipient": "SYNTHETIC Notaris A", "summary": "Betwist het oudere uittreksel burgerlijke staat."},
+      {"id": "ctr", "title": "CTR-bewijs", "source": "SYNTHETIC intake A", "category": "artifact", "availability": "missing"},
+      {"id": "draft-b", "title": "SYNTHETIC revisie B", "source": "SYNTHETIC draft B", "category": "revision", "version": "B", "availability": "supplied"}
+    ],
+    "versions": [
+      {"id": "SYNTHETIC A", "source": "SYNTHETIC template A", "text": "Bedrag: EUR 100\nBevoegdheid: onbeslist"},
+      {"id": "SYNTHETIC B", "source": "SYNTHETIC draft B", "text": "Bedrag: EUR 120\nBevoegdheid: tegenstrijdige instructies"}
+    ],
+    "changes": [{"text": "Bedrag verschilt EUR 100 / EUR 120; geen goedgekeurd bedrag. Bevoegdheidsbepalingen botsen; menselijke beslissing nodig.", "source": "SYNTHETIC draft B"}],
+    "source": "SYNTHETIC template A",
+    "source_version": "A",
+    "original": "De comparant heeft [ONBEKEND: bevoegdheid].",
+    "text": "De comparant heeft [ONBEKEND: bevoegdheid].",
+    "subject": "SYNTHETIC concepten ter beoordeling",
+    "message": "Beste [Cliënt], beoordeel de genoemde concepten en verduidelijk de open vragen. CTR-bewijs ontbreekt. [Notaris]"
+  }
+}

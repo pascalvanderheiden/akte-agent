@@ -47,6 +47,27 @@ arithmetic inputs resolve, `entries` with original evidence/review decisions,
 and independent `issues` for missing payments/imbalance. Do not treat
 `review_status: balanced` as billing approval or registration evidence.
 
+## Legal-to-execution handoff
+
+The packaged `legal-preparation` skill covers stages 2/3: source-grounded
+register plans/research, review-only deeds, noncertified working translations,
+supplied-version comparisons, dossier indexes and unsent delivery drafts.
+`legal_record.py` uses the same artifact envelope and compact export receipt.
+All original eight skills remain packaged alongside legal preparation,
+execution preparation and reconciliation.
+
+Carry the exact legal draft version, dossier and source references into
+execution clauses. A generated deed is draft material to explain, not evidence
+of identity, authority, capacity, signing or execution approval. A name approval
+does not approve a signing appointment. Preserve original source classifications,
+stale/unknown facts and separate appointment observations.
+
+An unknown deed amount cannot become zero or payment evidence in reconciliation.
+Request separate supplied figures; missing values block totals. Even when those
+figures later balance, absent payment confirmations keep review pending.
+`legal_record.py` indexes the resulting working files with source/version and
+actual availability, without claiming the office dossier was updated.
+
 ## Verification boundaries
 
 `test_akte_execution.py` covers actual helper behavior, code-tool execution,
@@ -54,6 +75,17 @@ standalone exports and downloaded bytes. `12-akte-execution.spec.ts` extends the
 existing browser harness for both stages/languages, continued dossier corrections,
 and missing-generation/download paths. Browser model responses are deterministic
 synthetic fixtures, **not live model proof**.
+
+`test_akte_combined.py` runs EN/NL time, research, deed, execution, missing-amount
+and supplied-funds worksheets, then the dossier index. It passes actual generated
+deed content into execution and checks downloaded bytes and unresolved evidence.
+The same CLIs run from repository assets, assembled standalone projects and
+authenticated export ZIPs. `12-akte-execution.spec.ts` also exercises this
+continuous cross-stage fixture through the browser, preserving one conversation.
+Run alongside `09-locale`, `10-akte`, `10-settings-locale`, `10-eval-trace` and
+`11-akte-legal`, both at root and against a build using `NEXT_PUBLIC_BASE_PATH`.
+`KRATOS_FRONTEND_URL` must include that mount; these fixtures intercept all API
+and model responses and need no deployment or live service.
 
 Eight additional bilingual scenarios load through the existing evaluation
 harness for normal preparation, coercion/uncertainty/contradiction, document

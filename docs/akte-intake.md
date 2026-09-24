@@ -4,7 +4,8 @@
 Generic default. Select Akte Agent and English or Nederlands. Six starters in
 each language cover the notarial journey. This page documents intake/timekeeping;
 [execution preparation and reconciliation](akte-execution.md) documents the
-additional stage 4/5 draft skills. None introduces live notarial integrations.
+additional stage 4/5 draft skills and their handoff from stage 2/3 legal drafts.
+None introduces live notarial integrations.
 
 ## Delivered draft slice
 
