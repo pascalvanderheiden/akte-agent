@@ -137,8 +137,37 @@ precedence, do not change jurisdiction, and follow-up generation is instructed
 to follow the response language (UI locale is only a fallback).
 
 The foundation covers landing, chat, sidebar, files, persona import, prompt
-editing and export. Settings/help, skill/package management and evaluation/trace
-panels have separate localization tickets.
+editing and export. Akte Agent is the application-facing identity; Generic
+Assistant keeps its own persona identity. Runtime/service names, telemetry,
+environment variables, `kratos.locale` and embedding contracts remain unchanged.
+
+### Configuration localization inventory
+
+| Surface | English/Dutch coverage |
+|---------|------------------------|
+| AI service settings | Labels, status, loading, save/error guidance, cancellation and accessible dialog/field names |
+| Application-owned OBO controls | Optional sign-in/out, busy state, account name and safe failure guidance; external identity-provider pages are unchanged |
+| Themes | Picker, descriptions, mode controls and accessible names; theme names stay identifiers |
+| How it works | All eleven steps, illustrations, navigation, keyboard hints and accessible names; examples are explanatory, not live checks |
+| Agent Manager | Navigation, persona selection, counts, system-prompt and deployment controls; evaluations/traces have separate localization work |
+| Skills and files | Create/edit/toggle/delete, instructions, text-file editing/upload/delete, confirmations, loading/empty/error/success states and accessible controls |
+| MCP | Local/HTTP/SSE configuration, fields, validation, save/delete confirmations and safe errors |
+| APM | Discovery, install/update/sync/removal, MCP packages, confirmations, status, errors, duration formatting and output controls |
+| Consistency | Controls, category/severity labels, progress, summary counts/durations and safe fix failures; generated analysis text remains source content |
+
+These surfaces use the same typed catalogs and provider. Locale changes do not
+remount editors, reset forms or trigger API mutations. User instructions,
+prompt metadata, file contents, technical package/tool identifiers, third-party
+names and raw command output are not translated. Locally authored package
+recommendation descriptions are translated; failed command output is kept
+separate from localized guidance and initially collapsed.
+
+The backend currently exposes **GET-only `/api/settings`**. The existing UI
+save request is retained for compatible backends; this backend returns 405 and
+the UI explains that deployment configuration is read-only, without claiming
+anything was saved. This localization does not introduce configuration
+persistence or change authorization. Settings changes on this backend remain
+an administrator's environment-configuration task.
 
 Deterministic browser coverage lives in the existing
 `.copilot/skills/e2e-smoke/tests/09-locale.spec.ts` harness. Serve a local static
@@ -150,6 +179,14 @@ synthetic fixtures; these tests do **not** establish live-model language quality
 Backend transport and metadata checks are in `test_locale_contracts.py`,
 `test_import_persona.py`, and `test_project_exporter.py`. No deployment or
 credentials are required for these checks.
+
+Configuration browser acceptance is in `10-settings-locale.spec.ts`, in the
+same harness. Run it alongside `09-locale.spec.ts` for both language journeys,
+unsaved-state preservation, file CRUD, MCP/package operations, cancellations,
+optional OBO failure guidance and help/theme coverage. Both files support root
+and base-path exports. API responses, including settings-save success, package
+installation and analysis, are controlled synthetic fixtures: they do **not**
+establish live persistence, package installation or successful Entra sign-in.
 
 ## Tech Stack
 

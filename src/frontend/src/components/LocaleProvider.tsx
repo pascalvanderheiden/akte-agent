@@ -62,7 +62,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 export function LanguageSelector() {
   const { locale, setLocale, t } = useLocale();
   return (
-    <label className="fixed top-2 right-3 z-[250] text-sm text-text">
+    <label data-locale-selector className="fixed top-2 right-3 z-[250] text-sm text-text">
       <span className="sr-only">{t("language")}</span>
       <select
         className="rounded border border-border bg-surface px-2 py-1"
