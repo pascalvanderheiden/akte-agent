@@ -152,7 +152,7 @@ environment variables, `kratos.locale` and embedding contracts remain unchanged.
 | Application-owned OBO controls | Optional sign-in/out, busy state, account name and safe failure guidance; external identity-provider pages are unchanged |
 | Themes | Picker, descriptions, mode controls and accessible names; theme names stay identifiers |
 | How it works | All eleven steps, illustrations, navigation, keyboard hints and accessible names; examples are explanatory, not live checks |
-| Agent Manager | Navigation, persona selection, counts, system-prompt and deployment controls; evaluations/traces have separate localization work |
+| Agent Manager | Navigation, persona selection, counts, system-prompt and deployment controls; [evaluation and trace journeys](#evals--tracing) |
 | Skills and files | Create/edit/toggle/delete, instructions, text-file editing/upload/delete, confirmations, loading/empty/error/success states and accessible controls |
 | MCP | Local/HTTP/SSE configuration, fields, validation, save/delete confirmations and safe errors |
 | APM | Discovery, install/update/sync/removal, MCP packages, confirmations, status, errors, duration formatting and output controls |
@@ -750,6 +750,28 @@ The UI shows real-time execution details per message:
 ## Evals & Tracing
 
 Per-use-case evaluation harness and an App-Insights waterfall trace inspector — both surfaced as admin tabs in the UI and exposed via CLI for CI.
+
+Evaluation controls, scenario generation/review, results and trace inspection use
+the shared English/Dutch selector. Switching language keeps drafts, selected
+results, trace filters and ongoing requests intact. Persona labels come from the
+dynamic catalog; imported personas without translations keep their original label.
+Dates, durations, counts and scores use locale formatting. Scenario content,
+evaluator identifiers, model/tool output and raw logs are not translated.
+
+Failures show safe translated guidance and stable error codes. Evaluation
+diagnostics remain available in explicitly labeled, untranslated detail sections;
+failed trace-detail requests never substitute summary data as a successful result.
+Generation reviews validate required fields, preserve unsaved drafts on failure,
+and retain successfully saved scenarios if a later save fails.
+
+Deterministic coverage is in
+`.copilot/skills/e2e-smoke/tests/10-eval-trace.spec.ts`, separate from persona
+stage-evaluation fixtures. Serve a local frontend export, point
+`KRATOS_FRONTEND_URL` and `KRATOS_BACKEND_URL` at that local origin, then run
+`npx playwright test tests/10-eval-trace.spec.ts --project=browser` from the smoke
+harness. The same suite supports a `NEXT_PUBLIC_BASE_PATH` build and matching
+mounted URL. These synthetic API fixtures prove UI behavior, **not live model
+quality or cloud connectivity**.
 
 ### Per-Use-Case Eval Scenarios
 
