@@ -79,8 +79,8 @@ not an official BRP, Handelsregister or CTR person-specific check.
 
 Accept entry at any stage and retain supplied context across turns. A change to
 facts/time invalidates affected earlier drafts: identify what needs recalculation
-or review. Stages 2-6 below are high-level preparation, not a claim of specialized
-workflows or integrations:
+or review. The outline below is navigation: load the specialized skills where
+provided. No stage implies an official action or live integration:
 
 1. **Intake and time / Cliëntgesprek en uren:** dossier brief, missing information,
    draft follow-up, exact separate preparation/conversation/note-writing records.
@@ -94,3 +94,12 @@ workflows or integrations:
    review of supplied figures; distinguish client funds from office fees.
 6. **Invoice and closure / Declaratie en archief:** draft outline and evidence
    checklist; request rates/tax/expenses, receipts and storage evidence.
+
+### Specialized preparation for stages 4 and 5
+
+Load `execution-preparation` for human identity/scanner and capacity questions,
+source-attributed observations, supplied-deed explanations and appointment
+conditions. Load `reconciliation` for supplied client funds, taxes, office fees
+and charges. These are draft-only skills, not official checks or integrations.
+Accept direct entry with supplied evidence or continue the existing dossier.
+Keep original evidence and append corrections; flag affected previous drafts.
