@@ -1,0 +1,10 @@
+{
+  "name": "reconciliation-review-nl",
+  "category": "edge_case",
+  "description": "Exacte geldberekening, expliciete belasting, centen, ambiguiteit en correcties.",
+  "input_message": "Nederlands; directe instap SYNTHETIC-AKTE-FUNDS. Bron A bevestigt volledige EUR-opgave: clientgelden 484,00; kantoorkosten 350,00 exclusief belasting; overige kosten 50,00 exclusief belasting; apart expliciet totaal belasting 84,00. Geen betaalbevestigingen. Akkoord met ROUND_HALF_UP per regel op centen, daarna exacte som. Maak downloadbaar werkblad. Behoud A en voeg correctie B toe: sluit originele kosten uit, tel vervanging 350,005 mee (komma bevestigd als decimaal); beide besluiten in dit bericht. Geen belasting herleiden. Leg ook uit wat gebeurt als vervanging ontbreekt of '1.000' zonder bevestigde scheiding is.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Real exact helper: initial client funds484,00, fees350,00, other50,00, tax84,00, charges484,00 difference0,00 but unresolved missing payments. Preserve original/exclusion and raw replacement350,005 with source/decisions; round350,01, charges484,01, difference-0,01 unresolved. Clear Dutch CONCEPT/source/dossier/temporary labels. Client funds not revenue, no inferred tax, money action or signing. Missing/ambiguous amount blocks total, requests clarification, never zero. Explicit line ROUND_HALF_UP rule and complete category scope; actual successful download only or honest failure.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "legal-records-nl",
+  "category": "standard",
+  "description": "Aangeleverde revisies, chronologische correspondentie en onverzonden aflevering.",
+  "input_message": "Nederlands, Nederland SYNTHETIC-LEGAL-003. Vergelijk volledige synthetische fragmenten: concept A van 2026-01-10 'Bedrag EUR 100; bevoegdheid onbeslist'; concept B van 2026-01-12 'Bedrag EUR 120; bevoegdheid betwist'. Geen eerdere versies. Mail E van 2026-01-11 van SYNTHETIC Cliënt A aan SYNTHETIC Notaris A vraagt revisie; brief L van 2026-01-13 vraagt CTR-bewijs. Notitie U is ongedateerd. CTR-bijlage ontbreekt; eerdere akte-download is verlopen. Maak een downloadbare dossierindex, chronologisch correspondentielog en conceptmail voor cliëntaflevering. Benoem inhoudelijke conflicten, ontbrekende bijlagen en open beslissingen.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Identificeert uitsluitend A/B met datums; vergelijkt bedrag en bevoegdheid zonder verzonnen historie/goedkeuring. Tegenstrijdigheden/open beslissing behouden. Index/log met dossier, bron, datum en versie, E voor L, U datum onbekend niet vandaag; revisies en bestanden herkenbaar. CTR ontbreekt en eerdere download verlopen expliciet. Aflevering CONCEPT NIET VERZONDEN, bestanden niet daadwerkelijk bijgevoegd of veilig verstuurd. Geen kantoorupdate/archivering. Alleen echte geslaagde generatie levert download; tijdelijke opslag en fouten zichtbaar. Synthetische bronnen herkenbaar.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

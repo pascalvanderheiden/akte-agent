@@ -27,6 +27,10 @@ enabled: true
    files to the approved office system. Errors mean generation failed: provide
    draft text inline if useful, without claiming a downloadable file exists.
 
+For research, deeds, translation, comparison, dossier records and delivery,
+read `references/legal-record.md` and use `scripts/legal_record.py`. Load
+`legal-preparation` for the evidence and human-review process first.
+
 ## Later financial drafts
 
 `scripts/exact.py` provides `parse_decimal`, `exact_sum`, `exact_product`,
@@ -38,3 +42,8 @@ costs and tax rules. `currency` requires an explicit rounding argument;
 obtain agreement when needed. It is a calculation convention, not tax advice.
 Keep unrounded values for intermediate arithmetic and client funds separate
 from office fees. This helper does not implement invoice posting or banking.
+
+For stage 4/5 drafts, load `execution-preparation` or `reconciliation` and read
+`references/execution-contract.md` or `references/reconciliation-contract.md`
+respectively. Run the matching packaged script; reconciliation explicitly
+rounds each line before summing payable cents, retaining original precision.

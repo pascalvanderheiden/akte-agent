@@ -2,9 +2,10 @@
 
 `akte-agent` is a curated, dynamically discovered persona alongside the unchanged
 Generic default. Select Akte Agent and English or Nederlands. Six starters in
-each language cover the notarial journey; only the intake/timekeeping draft slice
-is delivered here. Stages 2-6 provide high-level preparation, not specialized
-workflows or live notarial integrations.
+each language cover the notarial journey. This page documents intake/timekeeping;
+[execution preparation and reconciliation](akte-execution.md) documents the
+additional stage 4/5 draft skills and their handoff from stage 2/3 legal drafts.
+None introduces live notarial integrations.
 
 ## Delivered draft slice
 
@@ -41,7 +42,7 @@ engine is introduced. Optional integrations keep their authorization boundaries.
 
 ## Reusable seams for subsequent stages
 
-All eight skills are explicitly packaged under `use-cases/akte-agent/skills`;
+Skills are explicitly packaged under `use-cases/akte-agent/skills`;
 there is no inheritance from Generic or an industry persona. Backend and hosted
 runtime use the existing registry. Standalone export carries the persona,
 localized metadata, templates, helpers and shared locale runtime without another
