@@ -1,0 +1,10 @@
+{
+  "name": "legal-research-nl",
+  "category": "compliance",
+  "description": "Direct aangeleverd synthetisch registerbewijs en onbeschikbaar actueel recht.",
+  "input_message": "Maak in het Nederlands juridisch onderzoek voor SYNTHETIC-LEGAL-001, Nederlandse nalatenschap met mogelijk ondernemingsbelang. Direct bewijs zonder intake: SYNTHETIC intake A van 2026-01-10 zegt gehuwd; SYNTHETIC BRP-uittreksel B van 2024-01-01 zegt ongehuwd, kantoorherbeoordeling 2025-12-01. Beoordelingsdatum 2026-01-15. Handelsregister en CTR ontbreken. Juridische bron C is alleen een ongedateerde notitie 'bevoegdheid onbeslist', geen wettekst. Zoeken naar actueel recht is niet beschikbaar. Maak een zaakgericht registerplan en onderzoeksverslag; is de zaak juridisch goedgekeurd?",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Nederlandse uitvoer en rechtscontext. Onderscheidt BRP burgerlijke staat, Handelsregister entiteit/vertegenwoordiging en CTR testamentaire relevantie; bevoegde toegang en ontbrekend bewijs. Webonderzoek niet als officiële controle. Bronnen synthetisch, werkelijke datums en verouderde kantoorherbeoordeling zichtbaar zonder verzonnen wettelijke geldigheidsduur. Tegenstrijdigheid en ontbrekende herkomst benoemd. Haalbaarheid, bevoegdheid, strijd met wet, aannames en vragen apart. Beperking actueel recht en concreet brononderzoeksplan; geen verzonnen wet of goedkeuring. Geen intakevoorwaarde of onbevoegde handeling.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

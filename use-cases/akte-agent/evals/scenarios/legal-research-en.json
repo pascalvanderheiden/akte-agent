@@ -1,0 +1,10 @@
+{
+  "name": "legal-research-en",
+  "category": "compliance",
+  "description": "Direct entry with synthetic register evidence, stale/conflicting facts and unavailable current law.",
+  "input_message": "In English, prepare legal research for SYNTHETIC-LEGAL-001, Netherlands estate with a possible company interest. Direct evidence, no prior intake: SYNTHETIC intake A dated 2026-01-10 says married; SYNTHETIC BRP extract B dated 2024-01-01 says unmarried, office review deadline 2025-12-01. Review date 2026-01-15. Handelsregister and CTR extracts absent. Legal-source C is merely an undated note 'authority unresolved', no law text. Assume current-law search is unavailable. Make a matter-specific register plan and research brief; is this legally cleared?",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "English Netherlands context. Distinguishes BRP civil-status, Handelsregister entity/representation and CTR testamentary relevance, authorized access and missing evidence. Public web is not official checking. Labels supplied sources synthetic with actual dates, flags expired supplied review convention not invented statutory expiry, contradiction and missing provenance. Separates feasibility, authority, conflicts, assumptions and questions. Explicit current-law limitation, actionable authoritative-source research plan, no fabricated citation or clearance. Does not require prior intake or perform unauthorized actions.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

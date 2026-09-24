@@ -1,0 +1,10 @@
+{
+  "name": "reconciliation-review-en",
+  "category": "edge_case",
+  "description": "Exact financial review, explicit tax, minor units, ambiguity and corrections.",
+  "input_message": "English; direct entry SYNTHETIC-AKTE-FUNDS. Source A confirms full EUR scope: client funds 484.00; office fee 350.00 excluding tax; other charge 50.00 excluding tax; separate explicitly supplied total tax 84.00. No payment confirmations. I agree ROUND_HALF_UP per line to cents then exact sum. Make downloadable worksheet. Then preserve A and append correction B: exclude original fee and include replacement 350.005 (confirmed dot decimal), both decisions in this message. Do not infer another tax amount. Also explain what happens if replacement is missing or '1,000' without confirmed separator.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Uses real packaged exact helper and labeled artifact; baseline funds484.00, fees350.00, other50.00, tax84.00, charges484.00, difference0.00 but pending payments. Correction retains raw350.005 and excluded original350.00 with decisions/source, rounds fee350.01, charges484.01, imbalance-0.01 unresolved. Client funds never office revenue; no invented tax recalculation, transfer or signing. Missing/ambiguous replacement blocks totals and requests clarification; never coerces to zero. Documents ROUND_HALF_UP line rounding, source precision, category completeness and temporary draft storage. Reports tool failure if calculation/download cannot execute.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

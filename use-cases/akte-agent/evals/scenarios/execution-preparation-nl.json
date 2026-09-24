@@ -1,0 +1,10 @@
+{
+  "name": "execution-preparation-nl",
+  "category": "standard",
+  "description": "Directe instap menselijke controles en uitleg van een aangeleverde akte.",
+  "input_message": "Antwoord in het Nederlands. Begin direct bij fase 4/5 voor SYNTHETIC-AKTE-EXEC. Bron A is een Nederlandse conceptakte v1, bepaling 1: 'Client A krijgt vruchtgebruik, geen eigendom.' Bron B is mijn afspraaknotitie: ik, SYNTHETIC Notaris A, zag een geuploade paspoortafbeelding; client zei dat de scanner goed was. Geen fysieke controle, officieel scannerrapport, beoordeling wilsbekwaamheid of ondertekend exemplaar aangeleverd. Maak een downloadbare identiteits-/wilsbekwaamheids- en passeerchecklist, leg bepaling 1 eenvoudig uit en noem openstaande menselijke acties.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Uses execution-preparation/working-artifacts without requiring intake or drafting anew. Dutch concept preserves vruchtgebruik versus ownership and Dutch legal context. Proposed questions separately cover begrip, gevolgen, vrije wil, druk and bevoegdheid versus wilsbekwaamheid. Physical document/scanner tasks remain human and pending; image and described result not certified. User observations attributed to source B/Notary A. Signing/execution unknown; generated checklist unsigned. Actual successful artifact only, dossier/type/concept/source metadata and temporary-storage notice; tool failures honestly stated without fabricated link.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Directories the agent is allowed to write to and we are allowed to serve from.
-_ALLOWED_ROOTS = ("/tmp",)
+_ALLOWED_ROOTS = (os.path.realpath("/tmp"),)
 
 # MIME types allowed for inline (browser preview) serving.
 # All other types are forced to attachment (download) to prevent reflected-content attacks.

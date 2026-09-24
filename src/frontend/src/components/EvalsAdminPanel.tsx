@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
 import {
   listEvalScenarios,
   upsertEvalScenario,
@@ -8,8 +8,12 @@ import {
   startEvalRun,
   listEvalRuns,
   getEvalRun,
+  listUseCases,
 } from "@/lib/api";
-import type { EvalScenario, EvalRun, EvalRunStatus, ScenarioResult } from "@/types";
+import { useLocale } from "./LocaleProvider";
+import { errorCode, type ErrorCode } from "@/lib/errors";
+import { localizeUseCase } from "@/lib/i18n";
+import type { EvalScenario, EvalRun, EvalRunStatus, ScenarioResult, UseCase, ScenarioCategory } from "@/types";
 import { GenerateScenariosModal } from "./GenerateScenariosModal";
 
 interface Props {
@@ -22,14 +26,6 @@ const FOUNDRY_PORTAL_URL =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_FOUNDRY_PORTAL_URL) ||
   "https://ai.azure.com";
 
-const PERSONA_LABELS: Record<string, string> = {
-  generic: "Generalist",
-  insurance: "Insurance Claim Specialist",
-  "retail-banking": "Retail Banking Advisor",
-  "wealth-management": "Wealth Management Advisor",
-  "sales-account-review": "Sales Account Reviewer",
-};
-
 const categoryColors: Record<string, string> = {
   standard: "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20",
   edge_case: "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
@@ -38,12 +34,12 @@ const categoryColors: Record<string, string> = {
   compliance: "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
 };
 
-const statusConfig: Record<EvalRunStatus, { label: string; color: string }> = {
-  pending: { label: "Pending", color: "bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400" },
-  invoking: { label: "Running", color: "bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400" },
-  scoring: { label: "Scoring", color: "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400" },
-  completed: { label: "Completed", color: "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" },
-  failed: { label: "Failed", color: "bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400" },
+const statusConfig: Record<EvalRunStatus, { color: string }> = {
+  pending: { color: "bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400" },
+  invoking: { color: "bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400" },
+  scoring: { color: "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400" },
+  completed: { color: "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" },
+  failed: { color: "bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400" },
 };
 
 // ── Per-evaluator + per-scenario aggregation helpers ────────────────────────
@@ -302,10 +298,6 @@ function rollupRun(run: EvalRun): RunRollup {
   return { evaluators, scenarios, overallScore, allPassedCount, partialCount, majorFailCount, erroredCount };
 }
 
-function formatEvaluatorName(name: string): string {
-  return name.replace(/_/g, " ").replace(/([A-Z])/g, " $1").trim().replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function scoreColor(rate: number): string {
   if (rate >= 70) return "text-emerald-600 dark:text-emerald-400";
   if (rate >= 40) return "text-amber-500 dark:text-amber-400";
@@ -319,6 +311,7 @@ function scoreBarColor(rate: number): string {
 }
 
 function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: PerScenarioStat }) {
+  const { t, formatNumber, formatDuration } = useLocale();
   const [expanded, setExpanded] = useState(false);
 
   const scoreEntries = Object.entries(result.scores ?? {});
@@ -334,36 +327,37 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
     ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200/60 dark:border-red-500/30"
     : isPartial
     ? "bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200/60 dark:border-amber-500/30"
-    : "bg-slate-50 dark:bg-white/[0.05] text-slate-500 border-slate-200/60 dark:border-white/[0.08]";
+    : "bg-slate-50 dark:bg-white/5 text-slate-500 border-slate-200/60 dark:border-white/8";
 
   return (
     <div className="border border-border-soft rounded-xl overflow-hidden">
       <button
         onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
         className="w-full flex items-center gap-3 px-4 py-3 bg-surface-2 hover:bg-hover transition-colors text-left"
       >
-        <span className={`flex-shrink-0 w-2 h-2 rounded-full ${statusDotCls}`} />
+        <span className={`shrink-0 w-2 h-2 rounded-full ${statusDotCls}`} />
         <span className="flex-1 text-sm font-medium text-text truncate">
-          {result.scenario.replace(/_/g, " ")}
+          {result.scenario}
         </span>
         {toolCalls.length > 0 && (
-          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border border-blue-200/60 dark:border-blue-500/20 rounded px-1.5 py-0.5 flex-shrink-0">
-            🔧 {toolCalls.length}
+          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border border-blue-200/60 dark:border-blue-500/20 rounded-sm px-1.5 py-0.5 shrink-0">
+            🔧 {formatNumber(toolCalls.length)}
           </span>
         )}
         {result.duration_ms > 0 && (
-          <span className="text-xs text-muted font-mono flex-shrink-0">{result.duration_ms}ms</span>
+          <span className="text-xs text-muted font-mono shrink-0">{formatDuration(result.duration_ms)}</span>
         )}
         {hasScores && (
-          <span className={`text-[11px] font-mono border rounded-full px-2 py-0.5 flex-shrink-0 font-medium tabular-nums ${chipTone}`}>
-            {stat.passed}/{stat.total}
+          <span className={`text-[11px] font-mono border rounded-full px-2 py-0.5 shrink-0 font-medium tabular-nums ${chipTone}`}>
+            {formatNumber(stat.passed)}/{formatNumber(stat.total)}
           </span>
         )}
         {!hasScores && stat.errored && (
-          <span className={`text-[11px] border rounded-full px-2 py-0.5 flex-shrink-0 font-medium ${chipTone}`}>error</span>
+          <span className={`text-[11px] border rounded-full px-2 py-0.5 shrink-0 font-medium ${chipTone}`}>{t("eval.error")}</span>
         )}
         <svg
-          className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`}
+          className={`w-4 h-4 text-slate-400 transition-transform shrink-0 ${expanded ? "rotate-180" : ""}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -376,9 +370,9 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
           {stat.failedEvaluators.map((name) => (
             <span
               key={name}
-              className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${isMajorFail ? "bg-red-500/10 text-red-600 dark:text-red-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
+              className={`text-[10px] px-1.5 py-0.5 rounded-sm font-medium ${isMajorFail ? "bg-red-500/10 text-red-600 dark:text-red-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
             >
-              ✗ {formatEvaluatorName(name)}
+              ✗ {name}
             </span>
           ))}
         </div>
@@ -387,19 +381,22 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
       {expanded && (
         <div className="px-4 py-4 space-y-3 border-t border-border-soft">
           {result.error && (
-            <div className="px-3 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-xs rounded-lg font-mono">{result.error}</div>
+            <div role="alert" className="px-3 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-xs rounded-lg">
+              {t("error.EVAL_FAILED")} (EVAL_FAILED)
+              <details><summary>{t("eval.rawDiagnostics")}</summary><pre className="whitespace-pre-wrap">{result.error}</pre></details>
+            </div>
           )}
           <div>
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Query</p>
+            <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">{t("eval.query")}</p>
             <p className="text-sm text-text bg-surface-2 rounded-lg px-3 py-2">{result.query}</p>
           </div>
           <div>
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Response</p>
+            <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">{t("eval.response")}</p>
             <p className="text-sm text-text bg-surface-2 rounded-lg px-3 py-2 whitespace-pre-wrap max-h-40 overflow-y-auto">{result.response}</p>
           </div>
           {toolCalls.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">🔧 Tool Calls ({toolCalls.length})</p>
+              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">🔧 {t("eval.toolCalls", { count: formatNumber(toolCalls.length) })}</p>
               <div className="space-y-1.5">
                 {toolCalls.map((tc, i) => {
                   const ok = tc.status === "completed";
@@ -411,31 +408,31 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
                       className="rounded-lg bg-surface-2 border border-border-soft overflow-hidden"
                     >
                       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border-soft bg-surface">
-                        <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${dotCls}`} />
+                        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${dotCls}`} />
                         <span className="text-xs font-mono font-medium text-accent truncate">{tc.skillName}</span>
                         {tc.source && (
                           <span className="text-[10px] text-muted font-mono">{tc.source}</span>
                         )}
                         <span className="flex-1" />
                         {tc.durationMs > 0 && (
-                          <span className="text-[10px] text-muted font-mono">{tc.durationMs}ms</span>
+                          <span className="text-[10px] text-muted font-mono">{formatDuration(tc.durationMs)}</span>
                         )}
                         <span className={`text-[10px] font-mono ${ok ? "text-emerald-600 dark:text-emerald-400" : failed ? "text-red-500 dark:text-red-400" : "text-slate-400"}`}>
-                          {tc.status}
+                          {t(`eval.status.${tc.status}`)}
                         </span>
                       </div>
                       {(tc.input || tc.output) && (
                         <div className="px-3 py-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                           {tc.input && (
                             <div className="min-w-0">
-                              <p className="text-muted uppercase tracking-wider mb-0.5 text-[9px]">Input</p>
-                              <pre className="font-mono text-text whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{tc.input}</pre>
+                              <p className="text-muted uppercase tracking-wider mb-0.5 text-[9px]">{t("eval.input")}</p>
+                              <pre className="font-mono text-text whitespace-pre-wrap wrap-break-word max-h-24 overflow-y-auto">{tc.input}</pre>
                             </div>
                           )}
                           {tc.output && (
                             <div className="min-w-0">
-                              <p className="text-muted uppercase tracking-wider mb-0.5 text-[9px]">Output</p>
-                              <pre className="font-mono text-text whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{tc.output}</pre>
+                              <p className="text-muted uppercase tracking-wider mb-0.5 text-[9px]">{t("eval.output")}</p>
+                              <pre className="font-mono text-text whitespace-pre-wrap wrap-break-word max-h-24 overflow-y-auto">{tc.output}</pre>
                             </div>
                           )}
                         </div>
@@ -448,7 +445,7 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
           )}
           {scoreEntries.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">Evaluator Scores</p>
+              <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-1">{t("eval.scores")}</p>
               <div className="grid grid-cols-2 gap-2">
                 {scoreEntries.map(([criterion, score]) => {
                   const scoreObj = score as Record<string, unknown>;
@@ -460,12 +457,12 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
                   return (
                     <div key={criterion} className="bg-surface-2 rounded-lg px-3 py-2">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-text font-medium truncate">{formatEvaluatorName(criterion)}</span>
+                        <span className="text-xs text-text font-medium truncate">{criterion}</span>
                         <span className={`text-xs font-mono font-medium ${passed === true ? "text-emerald-600 dark:text-emerald-400" : passed === false ? "text-red-500 dark:text-red-400" : "text-slate-500"}`}>
-                          {err ? "err" : passed === true ? "✓" : passed === false ? "✗" : "—"}
+                          {err ? t("eval.error") : passed === true ? "✓" : passed === false ? "✗" : "—"}
                           {numericVal !== null && (
                             <span className="ml-1 text-muted">
-                              {numericVal}{threshold !== null ? `/${threshold}` : ""}
+                              {formatNumber(numericVal)}{threshold !== null ? `/${formatNumber(threshold)}` : ""}
                             </span>
                           )}
                         </span>
@@ -474,7 +471,7 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
                         <p className="mt-1 text-[11px] text-muted leading-relaxed line-clamp-2">{reason}</p>
                       )}
                       {err && (
-                        <p className="mt-1 text-[11px] text-red-500 dark:text-red-400 font-mono line-clamp-2">{err}</p>
+                        <details className="mt-1 text-[11px] text-red-500 dark:text-red-400"><summary>{t("eval.rawDiagnostics")}</summary><pre className="whitespace-pre-wrap">{err}</pre></details>
                       )}
                     </div>
                   );
@@ -490,12 +487,29 @@ function ScenarioResultRow({ result, stat }: { result: ScenarioResult; stat: Per
 
 interface EditScenarioModalProps {
   scenario: EvalScenario;
-  onSave: (updated: EvalScenario) => void;
+  onSave: (updated: EvalScenario) => Promise<void>;
   onClose: () => void;
 }
 
 function EditScenarioModal({ scenario, onSave, onClose }: EditScenarioModalProps) {
+  const { t } = useLocale();
   const [draft, setDraft] = useState<EvalScenario>({ ...scenario });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<ErrorCode | "">("");
+  const valid = !!(draft.name.trim() && draft.input_message.trim() && draft.expected_behavior.trim());
+  const close = () => { if (!saving) onClose(); };
+  const save = async () => {
+    if (!valid || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(draft);
+    } catch (err) {
+      setError(errorCode(err, "EVAL_SAVE"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const update = (patch: Partial<EvalScenario>) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -510,62 +524,68 @@ function EditScenarioModal({ scenario, onSave, onClose }: EditScenarioModalProps
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
-      onClick={onClose}
+      className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in"
+      onClick={close}
     >
       <div
+        role="dialog" aria-modal="true" aria-label={t("eval.editScenario")}
         className="bg-surface rounded-2xl shadow-card max-w-xl w-full border border-border-soft animate-slide-up flex flex-col max-h-[85vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft flex-shrink-0">
-          <h2 className="text-base font-semibold text-text">Edit Scenario</h2>
-          <button onClick={onClose} className="p-2 text-muted hover:text-text hover:bg-hover rounded-lg transition-all">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft shrink-0">
+          <h2 className="text-base font-semibold text-text">{t("eval.editScenario")}</h2>
+          <button onClick={close} disabled={saving} aria-label={t("eval.cancel")} className="p-2 text-muted hover:text-text hover:bg-hover rounded-lg transition-all">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {error && <p role="alert">{t(`error.${error}`)} ({error})</p>}
+          {!valid && <p role="status">{t("eval.validation")}</p>}
+          <fieldset disabled={saving} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">Name</label>
-            <input type="text" value={draft.name} onChange={(e) => update({ name: e.target.value })} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+            <label className="block text-sm font-medium text-text mb-1.5">{t("eval.name")}</label>
+            <input aria-label={t("eval.name")} type="text" value={draft.name} onChange={(e) => update({ name: e.target.value })} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">Category</label>
-            <select value={draft.category} onChange={(e) => update({ category: e.target.value as EvalScenario["category"] })} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all">
-              {["standard", "edge_case", "error_handling", "boundary", "compliance"].map((c) => (
-                <option key={c} value={c}>{c}</option>
+            <label className="block text-sm font-medium text-text mb-1.5">{t("eval.category")}</label>
+            <select aria-label={t("eval.category")} value={draft.category} onChange={(e) => update({ category: e.target.value as EvalScenario["category"] })} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all">
+              {(["standard", "edge_case", "error_handling", "boundary", "compliance"] satisfies ScenarioCategory[]).map((c) => (
+                <option key={c} value={c}>{t(`eval.category.${c}`)}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">Input Message</label>
-            <textarea value={draft.input_message} onChange={(e) => update({ input_message: e.target.value })} rows={3} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none" />
+            <label className="block text-sm font-medium text-text mb-1.5">{t("eval.inputMessage")}</label>
+            <textarea aria-label={t("eval.inputMessage")} value={draft.input_message} onChange={(e) => update({ input_message: e.target.value })} rows={3} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">Expected Behavior</label>
-            <textarea value={draft.expected_behavior} onChange={(e) => update({ expected_behavior: e.target.value })} rows={3} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none" />
+            <label className="block text-sm font-medium text-text mb-1.5">{t("eval.expectedBehavior")}</label>
+            <textarea aria-label={t("eval.expectedBehavior")} value={draft.expected_behavior} onChange={(e) => update({ expected_behavior: e.target.value })} rows={3} className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all resize-none" />
           </div>
           <div>
             <label className="block text-sm font-medium text-text mb-1.5">
-              Expected Tool Calls <span className="text-muted font-normal text-xs">(comma-separated)</span>
+              {t("eval.expectedTools")} <span className="text-muted font-normal text-xs">{t("eval.commaSeparated")}</span>
             </label>
             <input
               type="text"
+              aria-label={t("eval.expectedTools")}
               value={draft.expected_tool_calls.join(", ")}
               onChange={(e) => update({ expected_tool_calls: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
               placeholder="search_documents, get_user_info"
-              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent transition-all"
+              className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-text mb-2">Evaluators</label>
+            <label className="block text-sm font-medium text-text mb-2">{t("eval.evaluators")}</label>
             <div className="flex flex-wrap gap-2">
               {ALL_EVALUATORS.map((ev) => (
                 <button
                   key={ev}
                   type="button"
                   onClick={() => toggleEvaluator(ev)}
+                  aria-pressed={draft.evaluators.includes(ev)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                     draft.evaluators.includes(ev)
                       ? "bg-accent-soft text-accent border-accent"
@@ -577,10 +597,11 @@ function EditScenarioModal({ scenario, onSave, onClose }: EditScenarioModalProps
               ))}
             </div>
           </div>
+          </fieldset>
         </div>
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-border-soft flex-shrink-0">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium">Cancel</button>
-          <button onClick={() => onSave(draft)} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium">Save Changes</button>
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-border-soft shrink-0">
+          <button onClick={close} disabled={saving} className="px-4 py-2 text-sm text-muted bg-surface-2 border border-border-soft rounded-xl hover:bg-hover transition-all font-medium">{t("eval.cancel")}</button>
+          <button onClick={save} disabled={!valid || saving} className="px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium">{t(saving ? "eval.saving" : "eval.saveChanges")}</button>
         </div>
       </div>
     </div>
@@ -588,29 +609,38 @@ function EditScenarioModal({ scenario, onSave, onClose }: EditScenarioModalProps
 }
 
 export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
+  const { locale, t, formatNumber, formatDate } = useLocale();
+  const [personas, setPersonas] = useState<UseCase[]>([]);
   const [scenarios, setScenarios] = useState<EvalScenario[]>([]);
   const [runs, setRuns] = useState<EvalRun[]>([]);
   const [latestRun, setLatestRun] = useState<EvalRun | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [runError, setRunError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<ErrorCode | "">("");
+  const [runError, setRunError] = useState<ErrorCode | "">("");
   const [runningValidation, setRunningValidation] = useState(false);
   const [runningFoundry, setRunningFoundry] = useState(false);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [editingScenario, setEditingScenario] = useState<EvalScenario | null>(null);
-  const [expandedResult, setExpandedResult] = useState<string | null>(null);
+  const [notice, setNotice] = useState<"eval.saved" | "eval.deleted" | "">("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
+    setLoaded(false);
     setError("");
     try {
-      const [scenarioList, runList] = await Promise.all([
+      const [scenarioList, runList, catalog] = await Promise.all([
         listEvalScenarios(useCase),
         listEvalRuns(useCase),
+        listUseCases(),
       ]);
       setScenarios(scenarioList);
       setRuns(runList);
+      setPersonas(catalog);
+      setLoaded(true);
       if (runList.length > 0) {
         const latest = runList[0];
         setLatestRun(latest);
@@ -619,7 +649,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
         setLatestRun(null);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load eval data");
+      setError(errorCode(err, "EVAL_LOAD"));
     } finally {
       setLoading(false);
     }
@@ -634,6 +664,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
     pollRef.current = setInterval(async () => {
       try {
         const run = await getEvalRun(useCase, runId);
+        setRunError("");
         setLatestRun(run);
         setRuns((prev) => {
           const idx = prev.findIndex((r) => r.run_id === run.run_id);
@@ -648,8 +679,8 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
         }
-      } catch {
-        // ignore poll errors
+      } catch (err) {
+        setRunError(errorCode(err, "EVAL_POLL"));
       }
     }, 10000);
   }, [useCase]);
@@ -672,7 +703,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
       setRuns((prev) => [run, ...prev]);
       startPolling(run.run_id);
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : "Failed to start validation run");
+      setRunError(errorCode(err, "EVAL_START"));
     } finally {
       setRunningValidation(false);
     }
@@ -687,42 +718,46 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
       setRuns((prev) => [run, ...prev]);
       startPolling(run.run_id);
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : "Failed to start Foundry eval run");
+      setRunError(errorCode(err, "EVAL_START"));
     } finally {
       setRunningFoundry(false);
     }
   };
 
   const handleDeleteScenario = async (name: string) => {
+    setDeleteBusy(true);
+    setError("");
     try {
       await deleteEvalScenario(useCase, name);
       setScenarios((prev) => prev.filter((s) => s.name !== name));
+      setDeleting(null);
+      setNotice("eval.deleted");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete scenario");
+      setError(errorCode(err, "EVAL_DELETE"));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
   const handleSaveScenario = async (updated: EvalScenario) => {
-    try {
-      const saved = await upsertEvalScenario(useCase, updated);
-      setScenarios((prev) => {
-        const idx = prev.findIndex((s) => s.name === saved.name);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = saved;
-          return next;
-        }
-        return [...prev, saved];
-      });
-      setEditingScenario(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save scenario");
-    }
+    const saved = await upsertEvalScenario(useCase, updated);
+    setScenarios((prev) => {
+      const idx = prev.findIndex((s) => s.name === saved.name);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = saved;
+        return next;
+      }
+      return [...prev, saved];
+    });
+    setEditingScenario(null);
+    setNotice("eval.saved");
   };
 
   const foundryUrl = latestRun?.foundry?.report_url || FOUNDRY_PORTAL_URL;
   const rollup = latestRun ? rollupRun(latestRun) : null;
-  const personaLabel = PERSONA_LABELS[useCase] ?? useCase;
+  const persona = personas.find((p) => p.name === useCase);
+  const personaLabel = persona ? localizeUseCase(persona, locale).displayName : useCase;
 
   return (
     <div className="max-w-4xl space-y-6">
@@ -730,12 +765,12 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => setShowGenerateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+          className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
           </svg>
-          Generate Scenarios
+          {t("eval.generate")}
         </button>
 
         <button
@@ -750,14 +785,14 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
               <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
             </svg>
           )}
-          Run Validation
+          {t("eval.runValidation")}
         </button>
 
         <button
           onClick={handleRunFoundry}
           disabled={runningValidation || runningFoundry || scenarios.length === 0}
           className="flex items-center gap-2 px-4 py-2 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          title={scenarios.length === 0 ? "Add scenarios first" : undefined}
+          title={scenarios.length === 0 ? t("eval.addFirst") : undefined}
         >
           {runningFoundry ? (
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-border border-t-slate-500" />
@@ -766,7 +801,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
             </svg>
           )}
-          Run AI Foundry Evals
+          {t("eval.runFoundry")}
         </button>
 
         <a
@@ -778,23 +813,25 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
           </svg>
-          Open in Foundry
+          {t("eval.openFoundry")}
         </a>
       </div>
+      {notice && <p role="status">{t(notice)}</p>}
+      <button onClick={loadData} disabled={loading} className="text-sm text-accent">{t("trace.refresh")}</button>
 
       {/* Error banners */}
       {error && (
-        <div className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600 transition-colors ml-3">
+        <div role="alert" className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-center justify-between">
+          <span>{t(`error.${error}`)} ({error})</span>
+          <button onClick={() => setError("")} aria-label={t("dismiss")} className="text-red-400 hover:text-red-600 transition-colors ml-3">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
       )}
       {runError && (
-        <div className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-center justify-between">
-          <span>{runError}</span>
-          <button onClick={() => setRunError("")} className="text-red-400 hover:text-red-600 transition-colors ml-3">
+        <div role="alert" className="px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 flex items-center justify-between">
+          <span>{t(`error.${runError}`)} ({runError})</span>
+          <button onClick={() => setRunError("")} aria-label={t("dismiss")} className="text-red-400 hover:text-red-600 transition-colors ml-3">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
@@ -802,12 +839,12 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center py-16">
+        <div role="status" aria-label={t("loading")} className="flex items-center justify-center py-16">
           <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent" />
         </div>
       )}
 
-      {!loading && (
+      {!loading && loaded && (
         <>
           {/* Scenarios section */}
           <div className="bg-surface border border-border-soft rounded-2xl overflow-hidden">
@@ -816,10 +853,10 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                 <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
                 </svg>
-                Scenarios
+                {t("eval.scenarios")}
               </h3>
               <span className="text-xs font-mono text-muted bg-surface-2 px-2 py-0.5 rounded-full">
-                {scenarios.length}
+                {formatNumber(scenarios.length)}
               </span>
             </div>
 
@@ -830,26 +867,26 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
                   </svg>
                 </div>
-                <h4 className="text-sm font-semibold text-text mb-1">No scenarios yet</h4>
+                <h4 className="text-sm font-semibold text-text mb-1">{t("eval.noScenarios")}</h4>
                 <p className="text-xs text-muted max-w-xs leading-relaxed mb-4">
-                  Generate AI-powered eval scenarios to validate your agent&apos;s behavior against expected outcomes.
+                  {t("eval.noScenariosHint")}
                 </p>
                 <button
                   onClick={() => setShowGenerateModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-sm font-medium"
+                  className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
                 >
-                  Generate Scenarios
+                  {t("eval.generate")}
                 </button>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
+              <div className="divide-y divide-slate-100 dark:divide-white/4">
                 {scenarios.map((scenario) => (
                   <div key={scenario.name} className="flex items-start gap-3 px-5 py-4 hover:bg-hover transition-colors">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium text-text truncate">{scenario.name}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium flex-shrink-0 ${categoryColors[scenario.category] ?? categoryColors.standard}`}>
-                          {scenario.category}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium shrink-0 ${categoryColors[scenario.category] ?? categoryColors.standard}`}>
+                          {t(`eval.category.${scenario.category}`)}
                         </span>
                       </div>
                       {scenario.description && (
@@ -858,27 +895,27 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                       {scenario.expected_tool_calls.length > 0 && (
                         <div className="flex items-center gap-1 mt-1 flex-wrap">
                           {scenario.expected_tool_calls.map((tc) => (
-                            <span key={tc} className="text-[10px] px-1.5 py-0.5 bg-surface-2 text-muted rounded font-mono">
+                            <span key={tc} className="text-[10px] px-1.5 py-0.5 bg-surface-2 text-muted rounded-sm font-mono">
                               {tc}
                             </span>
                           ))}
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => setEditingScenario(scenario)}
                         className="p-1.5 text-muted hover:text-accent hover:bg-accent-hover rounded-lg transition-all"
-                        title="Edit"
+                        title={t("eval.edit")}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                       </button>
                       <button
-                        onClick={() => handleDeleteScenario(scenario.name)}
+                        onClick={() => setDeleting(scenario.name)}
                         className="p-1.5 text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-all"
-                        title="Delete"
+                        title={t("eval.delete")}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -897,32 +934,34 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
               {/* Header */}
               <div className="flex items-center justify-between px-5 py-4 border-b border-border-soft">
                 <div className="flex items-center gap-3 min-w-0">
-                  <h3 className="text-sm font-semibold text-text">Latest Run</h3>
+                  <h3 className="text-sm font-semibold text-text">{t("eval.latestRun")}</h3>
                   <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusConfig[latestRun.status].color}`}>
-                    {statusConfig[latestRun.status].label}
+                    {t(`eval.status.${latestRun.status}`)}
                     {ACTIVE_STATUSES.includes(latestRun.status) && (
                       <span className="ml-1 inline-block animate-spin">⟳</span>
                     )}
                   </span>
-                  <span className="text-[10px] text-muted bg-surface-2 px-2 py-0.5 rounded-full uppercase font-medium">{latestRun.mode}</span>
+                  <span className="text-[10px] text-muted bg-surface-2 px-2 py-0.5 rounded-full uppercase font-medium">{t(`eval.mode.${latestRun.mode}`)}</span>
                   <span className="text-[11px] text-muted truncate">
-                    Persona: <span className="font-medium text-text">{personaLabel}</span>
+                    {t("eval.persona", { name: personaLabel })}
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted">{new Date(latestRun.created_at).toLocaleString()}</span>
+                  <span className="text-xs text-muted">{formatDate(latestRun.created_at, { dateStyle: "medium", timeStyle: "short" })}</span>
                 </div>
               </div>
 
               {latestRun.progress && (
                 <div className="px-5 py-2 text-xs text-muted border-b border-border-soft bg-surface-2">
-                  {latestRun.progress}
+                  <p role="status">{t(`eval.status.${latestRun.status}`)}</p>
+                  <details><summary>{t("eval.rawDiagnostics")}</summary><pre className="whitespace-pre-wrap">{latestRun.progress}</pre></details>
                 </div>
               )}
 
               {latestRun.error && (
                 <div className="px-5 py-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border-b border-red-100 dark:border-red-500/20">
-                  {latestRun.error}
+                  <p role="alert">{t("error.EVAL_FAILED")} (EVAL_FAILED)</p>
+                  <details><summary>{t("eval.rawDiagnostics")}</summary><pre className="whitespace-pre-wrap">{latestRun.error}</pre></details>
                 </div>
               )}
 
@@ -932,25 +971,25 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                   {/* KPI cards */}
                   <div className={`grid gap-3 ${rollup.erroredCount > 0 ? "grid-cols-4" : "grid-cols-3"}`}>
                     <div className="rounded-xl bg-emerald-500/5 border border-emerald-500/20 p-3 text-center">
-                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">All Passed</p>
-                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{rollup.allPassedCount}</p>
-                      <p className="text-[10px] text-muted">{rollup.evaluators.length > 0 ? `${rollup.evaluators.length}/${rollup.evaluators.length} evaluators` : "completed"}</p>
+                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">{t("eval.allPassed")}</p>
+                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{formatNumber(rollup.allPassedCount)}</p>
+                      <p className="text-[10px] text-muted">{rollup.evaluators.length > 0 ? t("eval.evaluatorCount", { count: formatNumber(rollup.evaluators.length) }) : t("eval.status.completed")}</p>
                     </div>
                     <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-center">
-                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">Partial</p>
-                      <p className="text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{rollup.partialCount}</p>
-                      <p className="text-[10px] text-muted">minor issues</p>
+                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">{t("eval.partial")}</p>
+                      <p className="text-2xl font-bold text-amber-500 dark:text-amber-400 tabular-nums">{formatNumber(rollup.partialCount)}</p>
+                      <p className="text-[10px] text-muted">{t("eval.minorIssues")}</p>
                     </div>
                     <div className="rounded-xl bg-red-500/5 border border-red-500/20 p-3 text-center">
-                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">Failed</p>
-                      <p className="text-2xl font-bold text-red-600 dark:text-red-400 tabular-nums">{rollup.majorFailCount}</p>
-                      <p className="text-[10px] text-muted">majority fail</p>
+                      <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">{t("eval.failed")}</p>
+                      <p className="text-2xl font-bold text-red-600 dark:text-red-400 tabular-nums">{formatNumber(rollup.majorFailCount)}</p>
+                      <p className="text-[10px] text-muted">{t("eval.majorityFail")}</p>
                     </div>
                     {rollup.erroredCount > 0 && (
                       <div className="rounded-xl bg-slate-500/5 border border-border-soft dark:border-slate-500/20 p-3 text-center">
-                        <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">Errored</p>
-                        <p className="text-2xl font-bold text-text tabular-nums">{rollup.erroredCount}</p>
-                        <p className="text-[10px] text-muted">runtime</p>
+                        <p className="text-[10px] text-muted mb-1 uppercase tracking-wider">{t("eval.errored")}</p>
+                        <p className="text-2xl font-bold text-text tabular-nums">{formatNumber(rollup.erroredCount)}</p>
+                        <p className="text-[10px] text-muted">{t("eval.runtime")}</p>
                       </div>
                     )}
                   </div>
@@ -958,8 +997,8 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                   {/* Overall score + stacked status bar */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted">Overall quality score</span>
-                      <span className={`font-bold tabular-nums ${scoreColor(rollup.overallScore)}`}>{rollup.overallScore}%</span>
+                      <span className="text-muted">{t("eval.quality")}</span>
+                      <span className={`font-bold tabular-nums ${scoreColor(rollup.overallScore)}`}>{formatNumber(rollup.overallScore / 100, { style: "percent" })}</span>
                     </div>
                     <div className="w-full h-2.5 rounded-full bg-surface-2 overflow-hidden flex">
                       {rollup.allPassedCount > 0 && (
@@ -977,22 +1016,22 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                   {/* Per-evaluator breakdown */}
                   {rollup.evaluators.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">Per Evaluator</p>
+                      <p className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">{t("eval.perEvaluator")}</p>
                       <div className="space-y-1.5">
                         {rollup.evaluators.map((ev) => (
                           <div key={ev.name} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-2 border border-border-soft">
                             <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className={`text-sm flex-shrink-0 ${scoreColor(ev.rate)}`}>
+                              <span className={`text-sm shrink-0 ${scoreColor(ev.rate)}`}>
                                 {ev.rate >= 70 ? "✓" : ev.rate >= 40 ? "⚠" : "✗"}
                               </span>
-                              <span className="text-sm text-text truncate">{formatEvaluatorName(ev.name)}</span>
+                              <span className="text-sm text-text truncate">{ev.name}</span>
                             </div>
-                            <div className="flex items-center gap-3 flex-shrink-0">
+                            <div className="flex items-center gap-3 shrink-0">
                               <div className="w-24 h-1.5 rounded-full bg-surface-2 overflow-hidden">
                                 <div className={`h-full rounded-full transition-all duration-500 ${scoreBarColor(ev.rate)}`} style={{ width: `${ev.rate}%` }} />
                               </div>
                               <span className="text-xs tabular-nums text-muted w-20 text-right font-mono">
-                                {ev.passed}/{ev.total} ({ev.rate}%)
+                                {formatNumber(ev.passed)}/{formatNumber(ev.total)} ({formatNumber(ev.rate / 100, { style: "percent" })})
                               </span>
                             </div>
                           </div>
@@ -1007,7 +1046,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
               {latestRun.results.length > 0 && (
                 <div className="px-5 py-4 space-y-2">
                   <h4 className="text-xs font-semibold text-muted uppercase tracking-wider mb-3">
-                    Per Scenario ({latestRun.results.length} samples)
+                    {t("eval.samples", { count: formatNumber(latestRun.results.length) })}
                   </h4>
                   {latestRun.results.map((result, idx) => (
                     <ScenarioResultRow key={`${result.scenario}-${idx}`} result={result} stat={rollup.scenarios[idx]} />
@@ -1017,24 +1056,27 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
             </div>
           )}
 
+          {!latestRun && <p role="status">{t("eval.noRuns")}</p>}
+          {latestRun && latestRun.results.length === 0 && <p role="status">{t("eval.noResults")}</p>}
+
           {/* Recent runs */}
           {runs.length > 1 && (
             <div className="bg-surface border border-border-soft rounded-2xl overflow-hidden">
               <div className="px-5 py-4 border-b border-border-soft">
-                <h3 className="text-sm font-semibold text-text">Recent Runs</h3>
+                <h3 className="text-sm font-semibold text-text">{t("eval.recentRuns")}</h3>
               </div>
-              <div className="divide-y divide-slate-100 dark:divide-white/[0.04]">
-                {runs.slice(1).map((run) => (
+              <div className="divide-y divide-slate-100 dark:divide-white/4">
+                {runs.filter((run) => run.run_id !== latestRun?.run_id).map((run) => (
                   <button
                     key={run.run_id}
                     onClick={() => setLatestRun(run)}
                     className="w-full flex items-center gap-3 px-5 py-3 hover:bg-hover transition-colors text-left"
                   >
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${statusConfig[run.status].color}`}>
-                      {statusConfig[run.status].label}
+                      {t(`eval.status.${run.status}`)}
                     </span>
-                    <span className="text-[10px] text-muted uppercase font-medium bg-surface-2 px-2 py-0.5 rounded-full">{run.mode}</span>
-                    <span className="text-xs text-muted flex-1 text-right">{new Date(run.created_at).toLocaleString()}</span>
+                    <span className="text-[10px] text-muted uppercase font-medium bg-surface-2 px-2 py-0.5 rounded-full">{t(`eval.mode.${run.mode}`)}</span>
+                    <span className="text-xs text-muted flex-1 text-right">{formatDate(run.created_at, { dateStyle: "medium", timeStyle: "short" })}</span>
                     <svg className="w-4 h-4 text-text-strong" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
@@ -1044,23 +1086,34 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
             </div>
           )}
 
-          {/* Expanded result row fallback */}
-          {expandedResult && <div className="hidden">{expandedResult}</div>}
         </>
       )}
 
       {/* Modals */}
       <GenerateScenariosModal
         useCase={useCase}
+        personaLabel={personaLabel}
         open={showGenerateModal}
         onClose={() => setShowGenerateModal(false)}
         onGenerated={(newScenarios) => {
+          setNotice("eval.saved");
           setScenarios((prev) => {
             const names = new Set(newScenarios.map((s) => s.name));
             return [...prev.filter((s) => !names.has(s.name)), ...newScenarios];
           });
         }}
       />
+
+      {deleting && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+          <div role="dialog" aria-modal="true" aria-label={t("eval.delete")} className="bg-surface text-text p-6 rounded-xl space-y-4">
+            <p>{t("eval.deleteConfirm", { name: deleting })}</p>
+            {error && <p role="alert">{t(`error.${error}`)} ({error})</p>}
+            <button disabled={deleteBusy} onClick={() => setDeleting(null)}>{t("cancel")}</button>
+            <button disabled={deleteBusy} onClick={() => handleDeleteScenario(deleting)} className="ml-4">{t("delete")}</button>
+          </div>
+        </div>
+      )}
 
       {editingScenario && (
         <EditScenarioModal

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ChatWindow } from "@/components/ChatWindow";
 import { Sidebar } from "@/components/Sidebar";
 import { SettingsModal } from "@/components/SettingsModal";
 import { SkillsAdminPanel } from "@/components/SkillsAdminPanel";
 import AgentLoop from "@/components/AgentLoop";
 import { Conversation, UseCase, Skill } from "@/types";
+import { useLocale } from "@/components/LocaleProvider";
+import { localizeUseCase } from "@/lib/i18n";
+import { errorCode, type ErrorCode } from "@/lib/errors";
 import { listUseCases, listConversations, createConversation, deleteConversation, listSkills, importPersona } from "@/lib/api";
 import { loadRuntimeConfig } from "@/lib/config";
 import { readEmbedParams, takeImportManifest, settlePersonaUrl, type EmbedParams } from "@/lib/embed";
@@ -26,6 +29,11 @@ export default function Home() {
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [useCases, setUseCases] = useState<UseCase[]>([]);
   const [selectedUseCase, setSelectedUseCase] = useState<string>("generic");
+  const { locale, t, ready: localeReady } = useLocale();
+  const [error, setError] = useState<ErrorCode | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogFailed, setCatalogFailed] = useState(false);
+  const startingRef = useRef(false);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -37,50 +45,54 @@ export default function Home() {
     embed: false, theme: null, mode: null, persona: null, prompt: null, doImport: false, back: null,
   });
   const [importStatus, setImportStatus] = useState<ImportStatus>("idle");
-  const [importError, setImportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<ErrorCode | null>(null);
   const importManifestRef = useRef<unknown>(null);
   const bootstrappedRef = useRef(false);
   const { setTheme, setMode } = useTheme();
+  const activeUseCase = useMemo(
+    () => {
+      const persona = useCases.find((useCase) => useCase.name === selectedUseCase);
+      return persona ? localizeUseCase(persona, locale) : undefined;
+    },
+    [locale, selectedUseCase, useCases],
+  );
+  const conversationPersona = useCases.find((persona) => persona.name === activeConversation?.useCase);
 
   // Read embed args from the URL once on mount (client-only static export).
   useEffect(() => {
     setEmbed(readEmbedParams());
   }, []);
 
-  useEffect(() => {
-    // Load runtime config (resolves API URL from /config.json if present)
-    loadRuntimeConfig().then(() => {
-    setConfigReady(true);
-    // Load use-cases
-    listUseCases()
-      .then((ucs) => {
-        setUseCases(ucs);
-        if (ucs.length > 0 && !ucs.find((uc) => uc.name === selectedUseCase)) {
-          setSelectedUseCase(ucs[0].name);
-        }
-      })
-      .catch(() => {
-        setUseCases([{ name: "generic", displayName: "Generic Assistant", description: "", skillCount: 0, sampleQuestions: [] }]);
-      });
-
-    // Load existing conversations from Cosmos so the sidebar persists across reloads
-    listConversations()
-      .then((data) => {
-        const convs = (data.conversations as Conversation[]) || [];
-        setConversations(convs);
-      })
-      .catch(() => {
-        // Non-fatal — sidebar will just be empty on this load
-      });
-    }); // end loadRuntimeConfig
+  const refreshCatalog = useCallback(async () => {
+    setCatalogLoading(true);
+    try {
+      setUseCases(await listUseCases());
+      setCatalogFailed(false);
+    } catch {
+      setCatalogFailed(true);
+    } finally {
+      setCatalogLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadRuntimeConfig().then(() => {
+      setConfigReady(true);
+      void refreshCatalog();
+      listConversations()
+        .then((data) => setConversations(data.conversations as Conversation[]))
+        .catch(() => setError("HISTORY_ERROR"));
+    }).catch(() => { setCatalogFailed(true); setCatalogLoading(false); });
+  }, [refreshCatalog]);
 
   // Fetch skills whenever the selected use-case changes (only after config is loaded)
   useEffect(() => {
     if (!configReady) return;
+    let cancelled = false;
     listSkills(selectedUseCase)
-      .then((s) => setSkills(s))
-      .catch(() => setSkills([]));
+      .then((s) => { if (!cancelled) setSkills(s); })
+      .catch(() => { if (!cancelled) { setSkills([]); setError("SKILLS_ERROR"); } });
+    return () => { cancelled = true; };
   }, [selectedUseCase, configReady]);
 
   const handleNewConversation = () => {
@@ -92,33 +104,24 @@ export default function Home() {
   };
 
   // Create a conversation and optionally pre-fill a message
-  const startConversation = async (message?: string, useCaseOverride?: string) => {
+  const startConversation = useCallback(async (message?: string, useCaseOverride?: string) => {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setError(null);
     const useCase = useCaseOverride ?? selectedUseCase;
-    const tempId = crypto.randomUUID();
-    const optimistic: Conversation = {
-      id: tempId,
-      title: "New Conversation",
-      useCase,
-      status: "active",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setConversations((prev) => [optimistic, ...prev]);
-    setActiveConversation(optimistic);
-    setLandingInput("");
-
     try {
-      const saved = await createConversation("New Conversation", useCase) as Conversation;
-      const real = { ...optimistic, id: saved.id };
-      setConversations((prev) =>
-        prev.map((c) => (c.id === tempId ? real : c))
-      );
-      setActiveConversation(real);
+      const saved = await createConversation(t("newConversation"), useCase) as Conversation;
+      setConversations((prev) => [saved, ...prev]);
+      setActiveConversation(saved);
+      setLandingInput("");
       if (message) setPendingMessage(message);
-    } catch {
-      if (message) setPendingMessage(message);
+    } catch (err) {
+      if (message) setLandingInput(message);
+      setError(errorCode(err, "CREATE_ERROR"));
+    } finally {
+      startingRef.current = false;
     }
-  };
+  }, [selectedUseCase, t]);
 
   const handleDeleteConversation = async (conv: Conversation) => {
     // Optimistically remove from UI
@@ -131,6 +134,8 @@ export default function Home() {
     } catch {
       // Restore on failure
       setConversations((prev) => [conv, ...prev]);
+      if (activeConversation?.id === conv.id) setActiveConversation(conv);
+      setError("DELETE_ERROR");
     }
   };
 
@@ -161,7 +166,7 @@ export default function Home() {
     const manifest = importManifestRef.current;
     if (!manifest) {
       setImportStatus("error");
-      setImportError("No persona manifest was found to import. Please start again from the host.");
+      setImportError("MANIFEST_MISSING");
       return;
     }
     setImportStatus("importing");
@@ -169,19 +174,7 @@ export default function Home() {
     const promptText = readEmbedParams().prompt;
     try {
       const result = await importPersona(manifest);
-      // Make the freshly-imported persona selectable and refresh the catalog.
-      setUseCases((prev) =>
-        prev.find((uc) => uc.name === result.name)
-          ? prev
-          : [...prev, {
-              name: result.name,
-              displayName: result.displayName,
-              description: result.description,
-              skillCount: result.skillCount,
-              sampleQuestions: [],
-            }],
-      );
-      listUseCases().then(setUseCases).catch(() => {});
+      await refreshCatalog();
       setSelectedUseCase(result.name);
       settlePersonaUrl(result.name);
       setImportStatus("done");
@@ -190,15 +183,14 @@ export default function Home() {
       }
     } catch (err) {
       setImportStatus("error");
-      setImportError(err instanceof Error ? err.message : "Import failed. Please try again.");
+      setImportError(errorCode(err, "IMPORT_ERROR"));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshCatalog, startConversation]);
 
   // Embed bootstrap: apply theme, then import / open persona / auto-prompt.
   // Runs once after runtime config + use-cases are ready.
   useEffect(() => {
-    if (!configReady || bootstrappedRef.current) return;
+    if (!configReady || !localeReady || catalogLoading || bootstrappedRef.current) return;
     const params = readEmbedParams();
     if (!params.embed) return;
     bootstrappedRef.current = true;
@@ -231,22 +223,22 @@ export default function Home() {
       startConversation(params.prompt);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configReady, runImport, setMode, setTheme]);
+  }, [configReady, localeReady, catalogLoading, runImport, setMode, setTheme]);
 
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Skip to content link for accessibility */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:bg-accent focus:text-accent-fg focus:rounded-lg focus:text-sm focus:font-medium focus:shadow-lg"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-100 focus:px-4 focus:py-2 focus:bg-accent focus:text-accent-fg focus:rounded-lg focus:text-sm focus:font-medium focus:shadow-lg"
       >
-        Skip to content
+        {t("skip")}
       </a>
 
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden animate-fade-in"
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-40 lg:hidden animate-fade-in"
           onClick={closeSidebar}
         />
       )}
@@ -283,10 +275,22 @@ export default function Home() {
 
       {/* Main chat area */}
       <main id="main-content" className="flex-1 flex flex-col min-w-0">
+        {error && (
+          <div role="alert" className="p-3 pr-32 text-sm text-red-600 bg-surface">
+            {t(`error.${error}`)}
+            <button className="ml-3 underline" onClick={() => setError(null)}>{t("dismiss")}</button>
+          </div>
+        )}
+        {catalogFailed && (
+          <div role="alert" className="p-3 pr-32 text-sm text-red-600 bg-surface">
+            {t("error.CATALOG_ERROR")} <button className="underline" onClick={refreshCatalog}>{t("retry")}</button>
+          </div>
+        )}
         {activeConversation ? (
           <ChatWindow
             key={activeConversation.id}
             conversation={activeConversation}
+            personaDisplayName={conversationPersona ? localizeUseCase(conversationPersona, locale).displayName : undefined}
             onTitleChange={handleTitleChange}
             initialMessage={pendingMessage ?? undefined}
             onOpenSidebar={() => setSidebarOpen(true)}
@@ -294,16 +298,17 @@ export default function Home() {
         ) : (
           <div className="flex-1 flex flex-col">
             {/* Mobile top bar */}
-            <div className="lg:hidden flex items-center px-4 py-3 border-b border-border-soft bg-surface backdrop-blur">
+            <div className="lg:hidden flex items-center px-4 py-3 border-b border-border-soft bg-surface backdrop-blur-sm">
               <button
                 onClick={() => setSidebarOpen(true)}
+                aria-label={t("openSidebar")}
                 className="p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
                 </svg>
               </button>
-              <span className="ml-2 text-sm font-semibold text-text">Kratos Agent</span>
+              <span className="ml-2 text-sm font-semibold text-text">Akte Agent</span>
             </div>
 
             {/* Landing page */}
@@ -323,12 +328,12 @@ export default function Home() {
 
                   <h1 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
                     <span className="gradient-text">
-                      {useCases.find((uc) => uc.name === selectedUseCase)?.displayName || "Kratos Agent"}
+                      {activeUseCase?.displayName || "Akte Agent"}
                     </span>
                   </h1>
                   <p className="text-muted text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
-                    {useCases.find((uc) => uc.name === selectedUseCase)?.description || (
-                      <>Enterprise AI Agent powered by GitHub Copilot SDK &amp; Microsoft Foundry</>
+                    {activeUseCase?.description || (
+                      t("app.description")
                     )}
                   </p>
                 </div>
@@ -351,16 +356,18 @@ export default function Home() {
                           if (landingInput.trim()) startConversation(landingInput.trim());
                         }
                       }}
-                      placeholder="Ask me anything..."
+                      placeholder={t("ask")}
+                      aria-label={t("ask")}
+                      disabled={catalogLoading || catalogFailed || !activeUseCase}
                       rows={1}
-                      className="flex-1 px-4 py-3 text-sm text-text bg-transparent resize-none focus:outline-none placeholder:text-muted leading-relaxed"
+                      className="flex-1 px-4 py-3 text-sm text-text bg-transparent resize-none focus:outline-hidden placeholder:text-muted leading-relaxed"
                       style={{ minHeight: "44px", maxHeight: "120px" }}
                     />
                     <button
                       onClick={() => { if (landingInput.trim()) startConversation(landingInput.trim()); }}
-                      disabled={!landingInput.trim()}
-                      aria-label="Send message"
-                      className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95"
+                      disabled={!landingInput.trim() || catalogLoading || catalogFailed || !activeUseCase}
+                      aria-label={t("sendMessage")}
+                      className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95"
                     >
                       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M3.478 2.405a.75.75 0 00-.926.94l2.432 7.905H13.5a.75.75 0 010 1.5H4.984l-2.432 7.905a.75.75 0 00.926.94 60.519 60.519 0 0018.445-8.986.75.75 0 000-1.218A60.517 60.517 0 003.478 2.405z" />
@@ -368,21 +375,24 @@ export default function Home() {
                     </button>
                   </div>
                   <p className="text-[11px] text-muted text-center mt-2">
-                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px] font-mono border border-border-soft">Enter</kbd> to send · <kbd className="px-1.5 py-0.5 bg-surface-2 rounded text-[10px] font-mono border border-border-soft">Shift+Enter</kbd> new line
+                    <kbd className="px-1.5 py-0.5 bg-surface-2 rounded-sm text-[10px] font-mono border border-border-soft">Enter</kbd> {t("toSend")} · <kbd className="px-1.5 py-0.5 bg-surface-2 rounded-sm text-[10px] font-mono border border-border-soft">Shift+Enter</kbd> {t("newLine")}
                   </p>
+                  {catalogLoading && <p role="status">{t("loading")}</p>}
+                  {!catalogLoading && !catalogFailed && useCases.length === 0 && <p role="status">{t("noPersonas")}</p>}
                 </div>
 
                 {/* Sample questions */}
-                {(useCases.find((uc) => uc.name === selectedUseCase)?.sampleQuestions ?? []).length > 0 && (
+                {(activeUseCase?.sampleQuestions ?? []).length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8 stagger-children">
-                    {useCases.find((uc) => uc.name === selectedUseCase)!.sampleQuestions.map((q, i) => (
+                    {activeUseCase!.sampleQuestions.map((q, i) => (
                       <button
                         key={i}
+                        disabled={catalogLoading || catalogFailed}
                         onClick={() => handleSampleQuestion(q)}
-                        className="group text-left px-4 py-3.5 rounded-xl border border-border-soft bg-surface hover:border-accent hover:bg-hover transition-all duration-300 hover:shadow-md animate-slide-up-stagger active:scale-[0.98] backdrop-blur-sm"
+                        className="group text-left px-4 py-3.5 rounded-xl border border-border-soft bg-surface hover:border-accent hover:bg-hover transition-all duration-300 hover:shadow-md animate-slide-up-stagger active:scale-[0.98] backdrop-blur-xs"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center flex-shrink-0 group-hover:bg-accent-soft transition-colors">
+                          <div className="w-7 h-7 rounded-lg bg-accent-soft flex items-center justify-center shrink-0 group-hover:bg-accent-soft transition-colors">
                             <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
                             </svg>
@@ -398,7 +408,7 @@ export default function Home() {
                 {skills.filter((s) => s.enabled).length > 0 && (
                   <div className="flex flex-wrap justify-center gap-2 px-4 animate-fade-in">
                     {skills.filter((s) => s.enabled).map((s) => (
-                      <span key={s.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted bg-surface rounded-full border border-border-soft hover:border-accent hover:text-accent transition-all duration-200 cursor-default backdrop-blur-sm">
+                      <span key={s.name} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-muted bg-surface rounded-full border border-border-soft hover:border-accent hover:text-accent transition-all duration-200 cursor-default backdrop-blur-xs">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 dark:bg-emerald-500 animate-pulse-slow" />
                         {s.name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                       </span>
@@ -414,13 +424,13 @@ export default function Home() {
       {/* Persona-import overlay (embed Variant B): shows while the relayed
           manifest is being imported, with an inline retry on failure. */}
       {embed.embed && (importStatus === "importing" || importStatus === "error") && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-bg/80 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-bg/80 backdrop-blur-xs animate-fade-in">
           <div className="w-full max-w-sm mx-4 p-6 rounded-2xl border border-border-soft bg-surface shadow-xl text-center">
             {importStatus === "importing" ? (
               <>
                 <div className="mx-auto mb-4 w-10 h-10 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-                <h2 className="text-base font-semibold text-text mb-1">Creating your persona…</h2>
-                <p className="text-sm text-muted">Importing the agent definition into Kratos.</p>
+                <h2 className="text-base font-semibold text-text mb-1">{t("importing")}</h2>
+                <p className="text-sm text-muted">{t("importDescription")}</p>
               </>
             ) : (
               <>
@@ -429,13 +439,13 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                 </div>
-                <h2 className="text-base font-semibold text-text mb-1">Couldn&apos;t create the persona</h2>
-                <p className="text-sm text-muted mb-4 break-words">{importError}</p>
+                <h2 className="text-base font-semibold text-text mb-1">{t("importFailed")}</h2>
+                <p role="alert" className="text-sm text-muted mb-4 wrap-break-word">{t(`error.${importError ?? "IMPORT_ERROR"}`)}</p>
                 <button
                   onClick={runImport}
                   className="px-4 py-2 rounded-xl bg-accent text-accent-fg text-sm font-medium shadow-md hover:shadow-lg active:scale-95 transition-all"
                 >
-                  Try again
+                  {t("retry")}
                 </button>
               </>
             )}
@@ -446,12 +456,13 @@ export default function Home() {
       {/* Full-screen Agent Manager overlay — rendered on top so the active
           ChatWindow stays mounted and any in-flight stream keeps running. */}
       {skillsOpen && (
-        <div className="fixed inset-0 z-[60]">
+        <div className="fixed inset-0 z-60">
           <SkillsAdminPanel
             onClose={() => setSkillsOpen(false)}
             useCase={selectedUseCase}
             useCases={useCases}
             onSelectUseCase={setSelectedUseCase}
+            onPersonaChange={refreshCatalog}
           />
         </div>
       )}

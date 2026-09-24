@@ -5,11 +5,11 @@
 **Production-ready reference architecture for building extensible AI agents on Azure**
 
 [![Azure](https://img.shields.io/badge/Azure-Deployable-0078D4?logo=microsoftazure&logoColor=white)](https://portal.azure.com)
-[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.8-000?logo=github)](https://github.com/features/copilot)
+[![GitHub Copilot SDK](https://img.shields.io/badge/Copilot_SDK-1.0.14-000?logo=github)](https://github.com/features/copilot)
 [![Microsoft Foundry](https://img.shields.io/badge/Microsoft_Foundry-Hosted_Agent-6B2FA0?logo=microsoft)](https://ai.azure.com)
 [![MCP](https://img.shields.io/badge/MCP-Skills_Protocol-FF6B35)](https://modelcontextprotocol.io)
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Next.js](https://img.shields.io/badge/Next.js-15-000?logo=nextdotjs)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000?logo=nextdotjs)](https://nextjs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 One-command deploy (`azd up`) provisions Azure services, builds containers, deploys a hosted agent to Microsoft Foundry, and serves a production frontend — all wired with Managed Identity, VNet isolation, and OpenTelemetry tracing. The agent calls Foundry models **directly** (no API Management gateway) and ships an **Entra On-Behalf-Of** MCP server that calls Microsoft Graph as the signed-in user.
@@ -87,13 +87,109 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Pillar | Technology | Role |
 |--------|------------|------|
-| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.8` | Agentic loop — Plan → Act → Observe → Iterate |
+| **Engine** | [GitHub Copilot SDK](https://github.com/features/copilot) `1.0.14` | Agentic loop — Plan → Act → Observe → Iterate |
 | **Platform** | [Microsoft Foundry](https://ai.azure.com) | Hosted agent lifecycle, model hosting, evaluation, guardrails |
 | **Extensibility** | [MCP Skills Protocol](https://modelcontextprotocol.io) | Portable, standard tool interface for agent capabilities |
 | **Persistence** | [Azure Cosmos DB](https://learn.microsoft.com/azure/cosmos-db/) | Conversations, messages, settings, session mappings |
 | **Observability** | [OpenTelemetry](https://opentelemetry.io) + Foundry Traces | End-to-end tracing with GenAI semantic conventions |
 
 ---
+
+## Bilingual chat foundation
+
+The curated **Akte Agent** persona adds bilingual notarial intake, draft follow-up
+and exact downloadable time records alongside the unchanged Generic default.
+See [Akte intake and timekeeping](docs/akte-intake.md) for the delivered draft-only
+slice, evidence boundaries, reusable helpers and temporary-download limitations.
+Stage 4/5 [execution preparation and reconciliation](docs/akte-execution.md)
+adds human-check questions, attributed observations, supplied-deed explanations
+and exact client-funds worksheets; official actions remain human/external.
+
+The language selector supports English and Nederlands. A valid saved
+`kratos.locale` preference wins over the first supported browser language;
+otherwise English is used. Storage is optional. Changing language keeps the
+persona, conversation, history, draft and attachments; it does not translate
+source material or historical messages.
+
+For additional localized screens, use `useLocale()` from
+`src/frontend/src/components/LocaleProvider.tsx`, already mounted in the root
+layout. It exposes `locale`, `setLocale`, `ready`, typed `t(key, params)`,
+`formatDate`, `formatNumber` (including Intl currency options),
+`formatRelativeTime`, and `formatDuration`. Add matching keys and interpolation
+parameters to both catalogs in `src/frontend/src/lib/i18n.ts`; do not introduce
+another locale store or selector. `ready` indicates client preference resolution,
+not completion of API loading. Keep state keyed by conversation/persona, not
+language. `lib/errors.ts` provides stable application error codes; render
+`t(\`error.${code}\`)` instead of exposing raw service diagnostics.
+
+`localizeUseCase(persona, locale)` overlays optional `localizations.en` / `.nl`
+presentation fields on the existing scalar fields. Missing fields retain the
+original value; explicit empty values are retained. Discovery stays dynamic and
+the chat selector defaults to curated personas. Generic includes both complete
+translations. Authenticated import, prompt editing and ZIP export preserve
+metadata; body-only prompt edits retain frontmatter, while full-frontmatter
+edits can intentionally replace the localization map.
+
+`POST /api/agent/chat` and `POST /api/copilot-studio/chat` accept optional
+`locale: "en" | "nl"`. Omission leaves the old language behavior unchanged;
+unsupported values return validation errors. The UI sends locale every turn.
+The proxy carries locale and conversation identity in gateway-compatible input
+context as well as JSON. The hosted runtime applies a per-turn language default
+without recreating the SDK session. Explicit output-language requests take
+precedence, do not change jurisdiction, and follow-up generation is instructed
+to follow the response language (UI locale is only a fallback).
+
+The foundation covers landing, chat, sidebar, files, persona import, prompt
+editing and export. Akte Agent is the application-facing identity; Generic
+Assistant keeps its own persona identity. Runtime/service names, telemetry,
+environment variables, `kratos.locale` and embedding contracts remain unchanged.
+
+### Configuration localization inventory
+
+| Surface | English/Dutch coverage |
+|---------|------------------------|
+| AI service settings | Labels, status, loading, save/error guidance, cancellation and accessible dialog/field names |
+| Application-owned OBO controls | Optional sign-in/out, busy state, account name and safe failure guidance; external identity-provider pages are unchanged |
+| Themes | Picker, descriptions, mode controls and accessible names; theme names stay identifiers |
+| How it works | All eleven steps, illustrations, navigation, keyboard hints and accessible names; examples are explanatory, not live checks |
+| Agent Manager | Navigation, persona selection, counts, system-prompt and deployment controls; [evaluation and trace journeys](#evals--tracing) |
+| Skills and files | Create/edit/toggle/delete, instructions, text-file editing/upload/delete, confirmations, loading/empty/error/success states and accessible controls |
+| MCP | Local/HTTP/SSE configuration, fields, validation, save/delete confirmations and safe errors |
+| APM | Discovery, install/update/sync/removal, MCP packages, confirmations, status, errors, duration formatting and output controls |
+| Consistency | Controls, category/severity labels, progress, summary counts/durations and safe fix failures; generated analysis text remains source content |
+
+These surfaces use the same typed catalogs and provider. Locale changes do not
+remount editors, reset forms or trigger API mutations. User instructions,
+prompt metadata, file contents, technical package/tool identifiers, third-party
+names and raw command output are not translated. Locally authored package
+recommendation descriptions are translated; failed command output is kept
+separate from localized guidance and initially collapsed.
+
+The backend currently exposes **GET-only `/api/settings`**. The existing UI
+save request is retained for compatible backends; this backend returns 405 and
+the UI explains that deployment configuration is read-only, without claiming
+anything was saved. This localization does not introduce configuration
+persistence or change authorization. Settings changes on this backend remain
+an administrator's environment-configuration task.
+
+Deterministic browser coverage lives in the existing
+`.copilot/skills/e2e-smoke/tests/09-locale.spec.ts` harness. Serve a local static
+frontend export, set `KRATOS_FRONTEND_URL` and `KRATOS_BACKEND_URL` to that local
+origin, and run `npx playwright test tests/09-locale.spec.ts --project=browser`
+from the harness directory. The same tests support a `NEXT_PUBLIC_BASE_PATH`
+build and matching mounted frontend URL. API/model responses are intercepted
+synthetic fixtures; these tests do **not** establish live-model language quality.
+Backend transport and metadata checks are in `test_locale_contracts.py`,
+`test_import_persona.py`, and `test_project_exporter.py`. No deployment or
+credentials are required for these checks.
+
+Configuration browser acceptance is in `10-settings-locale.spec.ts`, in the
+same harness. Run it alongside `09-locale.spec.ts` for both language journeys,
+unsaved-state preservation, file CRUD, MCP/package operations, cancellations,
+optional OBO failure guidance and help/theme coverage. Both files support root
+and base-path exports. API responses, including settings-save success, package
+installation and analysis, are controlled synthetic fixtures: they do **not**
+establish live persistence, package installation or successful Entra sign-in.
 
 ## Tech Stack
 
@@ -103,7 +199,7 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 |-----------|-----------|---------|
 | Language | Python | 3.11 |
 | Web framework | FastAPI + uvicorn | ≥0.115 |
-| Agent SDK | `github-copilot-sdk` | 1.0.8 |
+| Agent SDK | `github-copilot-sdk` | 1.0.14 |
 | Agent runtime | Copilot CLI (`@github/copilot`) | latest |
 | Hosted agent protocol | `azure-ai-agentserver-invocations` | ≥1.0.0b3 |
 | Database | Azure Cosmos DB (serverless) / SQLite (local) | — |
@@ -116,11 +212,26 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Framework | Next.js (static export) | 15 |
-| UI | React + Tailwind CSS | 18 / 3.4 |
-| Auth | MSAL (Azure AD) | 3.20 |
-| Markdown | react-markdown + remark-gfm | 9.0 / 4.0 |
+| Framework | Next.js (static export) | 16 |
+| UI | React + Tailwind CSS | 19 / 4 |
+| Auth | MSAL Browser / React (Azure AD) | 4 / 3 |
+| Type checking | TypeScript native compiler | 7 |
+| Markdown | react-markdown + remark-gfm | 10 / 4 |
 | Hosting | Azure Static Web Apps | — |
+
+`npm run typecheck` invokes TypeScript 7 explicitly through the
+`typescript-native` package alias; `npm run build` runs it before exporting.
+TypeScript 6 remains installed for ESLint and Next.js tooling that use its
+JavaScript compiler API, which TypeScript 7 no longer provides. Use the npm
+scripts rather than `npx tsc`, since both packages expose a `tsc` executable.
+Linting uses ESLint's flat configuration (`npm run lint`), not `next lint`.
+
+Tailwind 4 uses `@tailwindcss/postcss`, with theme tokens and animations in
+`src/frontend/src/app/globals.css`. `npm run test:styles` checks generated
+semantic utilities, manual dark mode, typography and theme variable aliases;
+it also runs during builds. Supported browsers: Safari 16.4+, Chrome 111+,
+Firefox 128+. ESLint stays on 9 until the Next.js Babel parser and React plugin
+support 10; OBO's Pydantic/core pins must match Pydantic's exact requirement.
 
 ### Infrastructure (Bicep)
 
@@ -137,7 +248,7 @@ Azure services provisioned via `azd up`:
 - [Azure Developer CLI (azd)](https://learn.microsoft.com/azure/developer/azure-developer-cli/) ≥1.12
 - [Azure CLI](https://learn.microsoft.com/cli/azure/)
 - [Docker](https://www.docker.com/)
-- [Node.js 20+](https://nodejs.org/)
+- [Node.js 20.9+](https://nodejs.org/)
 - [Python 3.11+](https://www.python.org/)
 
 ### Deploy to Azure
@@ -187,6 +298,26 @@ resource-name hash, so renaming one means reprovisioning it from scratch.
 Per-environment settings are set with `azd env set` while that environment is active — for example
 `azd env set DEPLOY_OBO false` to skip the on-behalf-of stack in an experiment. Values set this way
 land in that environment's `.env` only, never in another's.
+
+### Azure SRE Agent (opt-in)
+
+An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
+that observes that environment's resources and reuses its Application Insights and Log Analytics.
+It is off by default: environments never opted in create no billable SRE resource.
+Workload telemetry connectors and their read-only permissions are configured
+after core provisioning by default, alongside optional GitHub Code Access
+registration. Query and current source access remain `pending` until verified
+through SRE. For an explicit **core-only** deployment:
+
+```bash
+azd env set DEPLOY_SRE_AGENT true
+azd env set SRE_CONNECT_TELEMETRY false
+azd env set SRE_CONNECT_GITHUB false
+azd provision
+```
+
+See [`docs/sre-agent.md`](./docs/sre-agent.md) for prerequisites, supported-region checks,
+permissions, outputs, cost, and cleanup (turning the flag off does **not** delete an existing agent).
 
 ### Register the Agent in Foundry (One-Time Manual Step)
 
@@ -620,6 +751,28 @@ The UI shows real-time execution details per message:
 
 Per-use-case evaluation harness and an App-Insights waterfall trace inspector — both surfaced as admin tabs in the UI and exposed via CLI for CI.
 
+Evaluation controls, scenario generation/review, results and trace inspection use
+the shared English/Dutch selector. Switching language keeps drafts, selected
+results, trace filters and ongoing requests intact. Persona labels come from the
+dynamic catalog; imported personas without translations keep their original label.
+Dates, durations, counts and scores use locale formatting. Scenario content,
+evaluator identifiers, model/tool output and raw logs are not translated.
+
+Failures show safe translated guidance and stable error codes. Evaluation
+diagnostics remain available in explicitly labeled, untranslated detail sections;
+failed trace-detail requests never substitute summary data as a successful result.
+Generation reviews validate required fields, preserve unsaved drafts on failure,
+and retain successfully saved scenarios if a later save fails.
+
+Deterministic coverage is in
+`.copilot/skills/e2e-smoke/tests/10-eval-trace.spec.ts`, separate from persona
+stage-evaluation fixtures. Serve a local frontend export, point
+`KRATOS_FRONTEND_URL` and `KRATOS_BACKEND_URL` at that local origin, then run
+`npx playwright test tests/10-eval-trace.spec.ts --project=browser` from the smoke
+harness. The same suite supports a `NEXT_PUBLIC_BASE_PATH` build and matching
+mounted URL. These synthetic API fixtures prove UI behavior, **not live model
+quality or cloud connectivity**.
+
 ### Per-Use-Case Eval Scenarios
 
 Each use-case carries its own eval suite under `use-cases/<name>/evals/`:
@@ -776,7 +929,7 @@ kratos-agent/
 │   │   ├── agent.yaml              # Foundry agent manifest
 │   │   └── pyproject.toml
 │   │
-│   └── frontend/                   # Next.js 14 chat UI
+│   └── frontend/                   # Next.js 16 chat UI
 │       └── src/
 │           ├── app/                # Pages
 │           ├── components/         # ChatWindow, MessageBubble, ThoughtChain, etc.
@@ -914,6 +1067,20 @@ All service-to-service auth uses Managed Identity with least-privilege roles:
 ## Troubleshooting
 
 Real findings from deploying this repo end-to-end on a fresh Azure subscription. Add to this list as you hit new ones.
+
+### Foundry project fails with `RequestConflict` during provisioning
+
+**Symptom:** `azd` suggests a duplicate or soft-deleted resource, but the detailed
+error says "Another operation is in progress" on the Foundry account.
+
+**Cause:** Model deployment and project creation share an account-level lock.
+Depending only on the parent account allows both child writes to run concurrently.
+
+**Fix in this repo:** `infra/modules/ai-services.bicep` sequences account, model,
+project, then Application Insights connection. Exported projects reuse this module.
+Once any active provisioning operation has finished, retry `azd provision -e <environment>`
+with the updated template, then `azd deploy -e <environment>`. Keep the same resource
+names; this conflict does not require deleting, purging, or renaming resources.
 
 ### Postdeploy 404 "false alarm" at the tail of every `azd deploy`
 

@@ -33,6 +33,7 @@ from opentelemetry import context as otel_context
 from opentelemetry import trace
 
 from app.config import Settings
+from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
 from app.observability import operation_duration_histogram, token_usage_histogram
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
@@ -850,6 +851,7 @@ class CopilotAgent:
         sdk_session_id: str | None = None,
         use_case: str = "",
         eval_run_id: str | None = None,
+        locale: Locale | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events."""
 
@@ -1220,7 +1222,7 @@ class CopilotAgent:
                     session.on(on_event)
                     self._registered_handlers.add(conversation_id)
 
-                await session.send(message, attachments=attachments)
+                await session.send(localize_turn(message, locale), attachments=attachments)
 
                 # Drain the queue until sentinel. 300s silence threshold matches
                 # eval_service._REQUEST_TIMEOUT — gives complex multi-tool scenarios

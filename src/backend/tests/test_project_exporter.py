@@ -532,6 +532,78 @@ def test_export_endpoint_rejects_bad_name(export_client: TestClient):
     assert response.status_code in (400, 404)
 
 
+def test_authenticated_localizations_survive_import_edit_and_export(kratos_repo, monkeypatch):
+    import base64
+
+    from app.config import Settings, get_settings
+    from app.main import app
+    from app.services.blob_skill_service import BlobSkillService
+
+    monkeypatch.setattr(app.state, "registries", {})
+    monkeypatch.setattr(
+        app.state,
+        "blob_skill_service",
+        BlobSkillService(Settings(local_mode="true"), local_base_dir=str(kratos_repo / "use-cases")),
+    )
+    monkeypatch.setattr(app.state, "apm_service", None, raising=False)
+    monkeypatch.setitem(app.dependency_overrides, get_settings, lambda: Settings(admin_auth_enabled="true"))
+    client = TestClient(app, raise_server_exceptions=False)
+    manifest = {
+        "name": "Synthetic language fixture",
+        "description": "Original scalar description",
+        "instructions": "User-authored instructions stay unchanged.",
+        "sampleQuestions": ["Original question"],
+        "localizations": {
+            "en": {
+                "displayName": "Synthetic helper",
+                "description": "English description",
+                "sampleQuestions": ["English question"],
+            },
+            "nl": {
+                "displayName": "Synthetische assistent",
+                "description": "Nederlandse beschrijving",
+                "sampleQuestions": ["Nederlandse vraag"],
+            },
+        },
+    }
+    assert client.post("/api/use-cases/import", json={"manifest": manifest}).status_code == 401
+    client.headers["x-ms-client-principal"] = base64.b64encode(
+        json.dumps({"userId": "synthetic-admin", "userRoles": ["authenticated"]}).encode()
+    ).decode()
+    imported = client.post("/api/use-cases/import", json={"manifest": manifest})
+    assert imported.status_code == 201, imported.text
+    slug = imported.json()["name"]
+    prompt_url = f"/api/admin/system-prompt?use_case={slug}"
+    original = client.get(prompt_url).json()["content"]
+    assert manifest["instructions"] in original
+    # Older clients send a body-only edit, unaware of localization metadata.
+    edited = client.put(prompt_url, json={"content": "Edited user-authored instructions."})
+    assert edited.status_code == 200, edited.text
+    catalog = client.get("/api/use-cases").json()["useCases"]
+    persona = next(p for p in catalog if p["name"] == slug)
+    assert persona["displayName"] == manifest["name"]
+    assert persona["description"] == manifest["description"]
+    assert persona["sampleQuestions"] == manifest["sampleQuestions"]
+    assert persona["curated"] is True
+    assert persona["localizations"] == manifest["localizations"]
+
+    # Full-frontmatter edits may deliberately update translations.
+    updated = edited.json()["content"].replace("Synthetische assistent", "Bijgewerkte assistent")
+    assert client.put(prompt_url, json={"content": updated}).status_code == 200
+    exported = client.get(f"/api/use-cases/{slug}/export")
+    assert exported.status_code == 200, exported.text
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        exported_prompt = archive.read(f"use-cases/{slug}/SYSTEM_PROMPT.md").decode()
+        assert exported_prompt == updated
+        assert "Edited user-authored instructions." in exported_prompt
+        metadata = yaml.safe_load(exported_prompt.split("---\n", 2)[1])
+        assert metadata["localizations"]["nl"]["displayName"] == "Bijgewerkte assistent"
+
+    client.headers.pop("x-ms-client-principal")
+    assert client.put(prompt_url, json={"content": "Unauthorized edit"}).status_code == 401
+    assert client.get(f"/api/use-cases/{slug}/export").status_code == 401
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — runtime correctness fixes (RBAC, telemetry, region docs)
 # ---------------------------------------------------------------------------

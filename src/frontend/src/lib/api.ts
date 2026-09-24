@@ -1,5 +1,6 @@
 import { getApiUrl, getAuthConfig } from "@/lib/config";
 import { getMcpAccessToken } from "@/lib/auth";
+import { ApplicationError, responseError, type ErrorCode } from "@/lib/errors";
 import type {
   Attachment,
   EvalScenario,
@@ -7,6 +8,7 @@ import type {
   EvalMode,
   TraceList,
   TraceOperation,
+  Locale,
 } from "@/types";
 
 /**
@@ -19,7 +21,8 @@ export async function streamAgentChat(
   onError: (error: Error) => void,
   onDone: () => void,
   attachments?: Attachment[],
-  useCase?: string
+  useCase?: string,
+  locale?: Locale
 ): Promise<void> {
   try {
     const payload: Record<string, unknown> = { conversationId, message };
@@ -28,6 +31,9 @@ export async function streamAgentChat(
     }
     if (useCase) {
       payload.useCase = useCase;
+    }
+    if (locale) {
+      payload.locale = locale;
     }
 
     // When OBO sign-in is configured, attach the user's MCP-scoped access token
@@ -56,48 +62,53 @@ export async function streamAgentChat(
     });
 
     if (!response.ok) {
-      throw new Error(`Agent request failed: ${response.status}`);
+      throw await responseError(response, "PROXY_ERROR");
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error("No response body");
+      throw new ApplicationError("STREAM_ERROR");
     }
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let eventType = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
 
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          // Ignore — we extract type from the data
-          continue;
-        }
-        if (line.startsWith("data: ")) {
-          const jsonStr = line.slice(6);
-          try {
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+            continue;
+          }
+          if (!line.trim()) eventType = "";
+          if (line.startsWith("data: ")) {
+            const jsonStr = line.slice(6);
             const parsed = JSON.parse(jsonStr);
-            onEvent({ type: parsed.type, data: parsed });
+            const type = parsed.type || eventType;
+            if (!type) throw new ApplicationError("STREAM_ERROR");
+            onEvent({ type, data: parsed });
 
-            if (parsed.type === "done") {
+            if (type === "done") {
               onDone();
               return;
             }
-          } catch {
-            // Skip malformed JSON
           }
         }
       }
-    }
 
-    onDone();
+      throw new ApplicationError("STREAM_ERROR");
+    } finally {
+      await reader.cancel();
+      reader.releaseLock();
+    }
   } catch (err) {
     onError(err instanceof Error ? err : new Error(String(err)));
   }
@@ -117,7 +128,7 @@ export async function createConversation(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to create conversation: ${response.status}`);
+    throw await responseError(response, "CREATE_ERROR");
   }
 
   return response.json();
@@ -157,7 +168,7 @@ export async function updateConversation(
     }
   );
   if (!response.ok) {
-    throw new Error(`Failed to update conversation: ${response.status}`);
+    throw await responseError(response, "TITLE_ERROR");
   }
 }
 
@@ -170,7 +181,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
     { method: "DELETE" }
   );
   if (!response.ok) {
-    throw new Error(`Failed to delete conversation: ${response.status}`);
+    throw await responseError(response, "DELETE_ERROR");
   }
 }
 
@@ -180,7 +191,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function listConversations(): Promise<{ conversations: unknown[] }> {
   const response = await fetch(`${getApiUrl()}/api/conversations`);
   if (!response.ok) {
-    throw new Error(`Failed to list conversations: ${response.status}`);
+    throw await responseError(response, "HISTORY_ERROR");
   }
   return response.json();
 }
@@ -191,7 +202,7 @@ export async function listConversations(): Promise<{ conversations: unknown[] }>
 export async function getConversationMessages(conversationId: string): Promise<unknown[]> {
   const response = await fetch(`${getApiUrl()}/api/conversations/${encodeURIComponent(conversationId)}/messages`);
   if (!response.ok) {
-    throw new Error(`Failed to get messages: ${response.status}`);
+    throw await responseError(response, "HISTORY_ERROR");
   }
   return response.json();
 }
@@ -202,8 +213,9 @@ import type { UseCase } from "@/types";
 
 export async function listUseCases(): Promise<UseCase[]> {
   const response = await fetch(`${getApiUrl()}/api/use-cases`);
-  if (!response.ok) throw new Error(`Failed to list use-cases: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "CATALOG_ERROR");
   const data = await response.json();
+  if (!Array.isArray(data.useCases)) throw new ApplicationError("CATALOG_ERROR");
   return data.useCases;
 }
 
@@ -219,14 +231,7 @@ export async function exportUseCase(name: string): Promise<Blob> {
     { headers: { Accept: "application/zip" } },
   );
   if (!response.ok) {
-    let detail = `${response.status}`;
-    try {
-      const body = await response.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      // Body wasn't JSON — keep the status code as the error.
-    }
-    throw new Error(`Failed to export use-case: ${detail}`);
+    throw await responseError(response, "EXPORT_ERROR");
   }
   return response.blob();
 }
@@ -263,14 +268,7 @@ export async function importPersona(
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    let detail = `${response.status}`;
-    try {
-      const body = await response.json();
-      if (body?.detail) detail = String(body.detail);
-    } catch {
-      // Body wasn't JSON — keep the status code as the error.
-    }
-    throw new Error(`Failed to import persona: ${detail}`);
+    throw await responseError(response, "IMPORT_ERROR");
   }
   return (await response.json()) as PersonaImportResult;
 }
@@ -281,14 +279,14 @@ import type { Skill, SkillCreate, SkillUpdate } from "@/types";
 
 export async function listSkills(useCase: string = "generic"): Promise<Skill[]> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to list skills: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   const data = await response.json();
   return data.skills;
 }
 
 export async function getSkill(name: string, useCase: string = "generic"): Promise<Skill> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to get skill: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   return response.json();
 }
 
@@ -298,10 +296,7 @@ export async function createSkill(skill: SkillCreate, useCase: string = "generic
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(skill),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to create skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
   return response.json();
 }
 
@@ -311,10 +306,7 @@ export async function updateSkill(name: string, updates: SkillUpdate, useCase: s
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
   return response.json();
 }
 
@@ -322,10 +314,7 @@ export async function deleteSkill(name: string, useCase: string = "generic"): Pr
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`, {
     method: "DELETE",
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to delete skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
 }
 
 // ─── Skill Files API ───
@@ -336,7 +325,7 @@ export async function listSkillFiles(skillName: string, useCase: string = "gener
   const response = await fetch(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files?use_case=${encodeURIComponent(useCase)}`
   );
-  if (!response.ok) throw new Error(`Failed to list skill files: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
   return response.json();
 }
 
@@ -354,10 +343,7 @@ export async function upsertSkillFile(
       body: JSON.stringify({ content }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to upload file: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
 }
 
 export async function deleteSkillFile(
@@ -369,10 +355,7 @@ export async function deleteSkillFile(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files/${filePath}?use_case=${encodeURIComponent(useCase)}`,
     { method: "DELETE" }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to delete file: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
 }
 
 // ─── System Prompt Admin API ───
@@ -382,7 +365,7 @@ import type { SystemPrompt } from "@/types";
 export async function getSystemPrompt(useCase?: string): Promise<SystemPrompt> {
   const params = useCase ? `?use_case=${encodeURIComponent(useCase)}` : "";
   const response = await fetch(`${getApiUrl()}/api/admin/system-prompt${params}`);
-  if (!response.ok) throw new Error(`Failed to get system prompt: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "PROMPT_ERROR");
   return response.json();
 }
 
@@ -394,8 +377,7 @@ export async function updateSystemPrompt(content: string, useCase?: string): Pro
     body: JSON.stringify({ content }),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update system prompt: ${response.status}`);
+    throw await responseError(response, "PROMPT_ERROR");
   }
   return response.json();
 }
@@ -406,8 +388,7 @@ export async function resetSystemPrompt(useCase?: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to reset system prompt: ${response.status}`);
+    throw await responseError(response, "PROMPT_ERROR");
   }
 }
 
@@ -417,7 +398,7 @@ import type { MCPConfig } from "@/types";
 
 export async function getMCPConfig(useCase: string): Promise<MCPConfig> {
   const response = await fetch(`${getApiUrl()}/api/admin/mcp-servers?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to get MCP config: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "MCP_ERROR");
   return response.json();
 }
 
@@ -427,10 +408,7 @@ export async function updateMCPConfig(useCase: string, servers: MCPConfig["serve
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ servers }),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update MCP config: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "MCP_ERROR");
   return response.json();
 }
 
@@ -450,10 +428,7 @@ export async function analyzeConsistency(
       body: JSON.stringify({ includeDisabled }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Analysis failed: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "ANALYSIS_ERROR");
   return response.json();
 }
 
@@ -467,36 +442,8 @@ export async function getApmStatus(useCase: string): Promise<ApmStatusResponse> 
   const response = await fetch(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm`
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    const detail = typeof err.detail === "string" ? err.detail : err.detail?.detail;
-    throw new Error(detail || `Failed to get APM status: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
-}
-
-async function readApmError(response: Response, fallback: string): Promise<Error> {
-  const err = await response.json().catch(() => ({}));
-  // APM failure payloads are { detail: string, stderr?: string, returncode?: number }
-  // but FastAPI sometimes wraps object details as { detail: {...} }
-  const body = (err && typeof err === "object" ? err : {}) as Record<string, unknown>;
-  const detailField = body.detail;
-  let message: string;
-  let stderr: string | undefined;
-  let returncode: number | undefined;
-  if (detailField && typeof detailField === "object") {
-    const d = detailField as Record<string, unknown>;
-    message = (d.detail as string) ?? fallback;
-    stderr = d.stderr as string | undefined;
-    returncode = d.returncode as number | undefined;
-  } else if (typeof detailField === "string") {
-    message = detailField;
-  } else {
-    message = fallback;
-  }
-  const tail = stderr ? `\n${stderr.split("\n").slice(-10).join("\n")}` : "";
-  const rc = returncode !== undefined ? ` (rc=${returncode})` : "";
-  return new Error(`${message}${rc}${tail}`);
 }
 
 export async function installApmPackage(
@@ -511,7 +458,7 @@ export async function installApmPackage(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to install package: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -526,7 +473,7 @@ export async function uninstallApmPackage(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/${encodedPkg}`,
     { method: "DELETE" }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to uninstall package: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -549,7 +496,7 @@ export async function installApmMcpServer(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to install MCP server: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -561,7 +508,7 @@ export async function uninstallApmMcpServer(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/mcp/${encodeURIComponent(name)}`,
     { method: "DELETE" }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to uninstall MCP server: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -574,7 +521,7 @@ export async function syncApm(useCase: string): Promise<ApmCommandResponse> {
       body: JSON.stringify({}),
     }
   );
-  if (!response.ok) throw await readApmError(response, `APM sync failed: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -590,7 +537,7 @@ export async function updateApm(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `APM update failed: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -612,20 +559,14 @@ export async function applyAnalysisFix(
       }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Apply fix failed: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "ANALYSIS_ERROR");
   return response.json();
 }
 
 // ─── Evals ─────────────────────────────────────────────────────────────────
 
-async function readJson<T>(response: Response, errPrefix: string): Promise<T> {
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`${errPrefix} (${response.status})${body ? `: ${body}` : ""}`);
-  }
+async function readJson<T>(response: Response, code: ErrorCode): Promise<T> {
+  if (!response.ok) throw await responseError(response, code);
   return response.json();
 }
 
@@ -633,8 +574,9 @@ export async function listEvalScenarios(useCase: string): Promise<EvalScenario[]
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/scenarios`,
   );
-  const data = await readJson<{ scenarios: EvalScenario[] }>(r, "List scenarios failed");
-  return data.scenarios ?? [];
+  const data = await readJson<{ scenarios: EvalScenario[] }>(r, "EVAL_LOAD");
+  if (!Array.isArray(data.scenarios)) throw new ApplicationError("EVAL_LOAD");
+  return data.scenarios;
 }
 
 export async function generateEvalScenarios(
@@ -649,7 +591,9 @@ export async function generateEvalScenarios(
       body: JSON.stringify({ count: 10, persist: false, instructions: "", ...body }),
     },
   );
-  return readJson(r, "Generate scenarios failed");
+  const data = await readJson<{ scenarios: EvalScenario[]; persisted: boolean }>(r, "EVAL_GENERATE");
+  if (!Array.isArray(data.scenarios)) throw new ApplicationError("EVAL_GENERATE");
+  return data;
 }
 
 export async function upsertEvalScenario(
@@ -664,7 +608,7 @@ export async function upsertEvalScenario(
       body: JSON.stringify(scenario),
     },
   );
-  return readJson(r, "Save scenario failed");
+  return readJson(r, "EVAL_SAVE");
 }
 
 export async function deleteEvalScenario(useCase: string, name: string): Promise<void> {
@@ -673,7 +617,7 @@ export async function deleteEvalScenario(useCase: string, name: string): Promise
     { method: "DELETE" },
   );
   if (!r.ok && r.status !== 404) {
-    throw new Error(`Delete scenario failed: ${r.status}`);
+    throw await responseError(r, "EVAL_DELETE");
   }
 }
 
@@ -689,22 +633,23 @@ export async function startEvalRun(
       body: JSON.stringify(body),
     },
   );
-  return readJson(r, "Start eval run failed");
+  return readJson(r, "EVAL_START");
 }
 
 export async function listEvalRuns(useCase: string): Promise<EvalRun[]> {
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/runs`,
   );
-  const data = await readJson<{ runs: EvalRun[] }>(r, "List runs failed");
-  return data.runs ?? [];
+  const data = await readJson<{ runs: EvalRun[] }>(r, "EVAL_LOAD");
+  if (!Array.isArray(data.runs)) throw new ApplicationError("EVAL_LOAD");
+  return data.runs;
 }
 
 export async function getEvalRun(useCase: string, runId: string): Promise<EvalRun> {
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/runs/${encodeURIComponent(runId)}`,
   );
-  return readJson(r, "Get run failed");
+  return readJson(r, "EVAL_POLL");
 }
 
 // ─── Traces ────────────────────────────────────────────────────────────────
@@ -724,7 +669,9 @@ export async function listTraceOperations(filters: {
   if (filters.maxOperations) params.set("limit", String(filters.maxOperations));
   const qs = params.toString();
   const r = await fetch(`${getApiUrl()}/api/traces/operations${qs ? `?${qs}` : ""}`);
-  return readJson(r, "List trace operations failed");
+  const data = await readJson<TraceList>(r, "TRACE_LOAD");
+  if (!Array.isArray(data.operations) || !data.summary) throw new ApplicationError("TRACE_LOAD");
+  return data;
 }
 
 export async function getTraceOperation(
@@ -734,5 +681,7 @@ export async function getTraceOperation(
   const r = await fetch(
     `${getApiUrl()}/api/traces/operations/${encodeURIComponent(operationId)}?hours=${lookbackHours}`,
   );
-  return readJson(r, "Get trace operation failed");
+  const data = await readJson<TraceOperation>(r, "TRACE_DETAIL");
+  if (!Array.isArray(data.spans) || !Array.isArray(data.logs)) throw new ApplicationError("TRACE_DETAIL");
+  return data;
 }

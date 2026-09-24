@@ -1,0 +1,80 @@
+{
+  "en": {
+    "execution": {
+      "dossier": "SYNTHETIC-AKTE-EXEC",
+      "locale": "en",
+      "sources": [
+        {"reference": "SYNTHETIC deed A, clause 1, draft v1", "kind": "synthetic"},
+        {"reference": "SYNTHETIC appointment B", "kind": "user_observation"}
+      ],
+      "observations": [
+        {"id": "pressure1", "topic": "pressure", "text": "A relative answers for the client and demands signing now.", "recorded_by": "SYNTHETIC Notary A", "source": "SYNTHETIC appointment B"},
+        {"id": "capacity1", "topic": "understanding", "text": "Client cannot explain the consequences yet.", "recorded_by": "SYNTHETIC Notary A", "source": "SYNTHETIC appointment B"}
+      ],
+      "concerns": [
+        {"category": "coercion", "text": "Speak privately; escalate before proceeding.", "source": "SYNTHETIC appointment B"},
+        {"category": "capacity_uncertain", "text": "Capacity remains uncertain; responsible notary assessment needed.", "source": "SYNTHETIC appointment B"},
+        {"category": "missing_approval", "text": "No approval supplied.", "source": "SYNTHETIC appointment B"}
+      ],
+      "clauses": [
+        {"reference": "clause 1, draft v1", "excerpt": "SYNTHETIC: Client A krijgt vruchtgebruik, geen eigendom.", "explanation": "Vruchtgebruik is a right to use and enjoy another person's property, not ownership. Scope and duration remain for the notary to clarify.", "source": "SYNTHETIC deed A, clause 1, draft v1"}
+      ],
+      "signing_evidence": [
+        {"claim": "unsigned", "text": "Supplied document is draft v1 without signatures.", "source": "SYNTHETIC deed A, clause 1, draft v1"}
+      ]
+    },
+    "reconciliation": {
+      "dossier": "SYNTHETIC-AKTE-EXEC",
+      "locale": "en",
+      "currency": "EUR",
+      "rounding": "ROUND_HALF_UP",
+      "sources": [{"reference": "SYNTHETIC complete statement C", "kind": "synthetic"}],
+      "coverage": {"client_funds": "SYNTHETIC complete statement C", "tax": "SYNTHETIC complete statement C", "office_fee": "SYNTHETIC complete statement C", "other_charge": "SYNTHETIC complete statement C"},
+      "entries": [
+        {"id": "funds", "category": "client_funds", "description": "Third-party account funds", "amount": "484.00", "source": "SYNTHETIC complete statement C"},
+        {"id": "fee", "category": "office_fee", "description": "Office fee", "amount": "350.00", "tax_treatment": "Excludes separate supplied tax", "source": "SYNTHETIC complete statement C"},
+        {"id": "cost", "category": "other_charge", "description": "Other charge", "amount": "50.00", "tax_treatment": "Excludes separate supplied tax", "source": "SYNTHETIC complete statement C"},
+        {"id": "tax", "category": "tax", "description": "Explicit supplied tax", "amount": "84.00", "tax_treatment": "Separate supplied total tax; no inferred rate", "source": "SYNTHETIC complete statement C"}
+      ]
+    }
+  },
+  "nl": {
+    "execution": {
+      "dossier": "SYNTHETIC-AKTE-EXEC",
+      "locale": "nl",
+      "sources": [
+        {"reference": "SYNTHETIC akte A, bepaling 1, concept v1", "kind": "synthetic"},
+        {"reference": "SYNTHETIC afspraak B", "kind": "user_observation"}
+      ],
+      "observations": [
+        {"id": "pressure1", "topic": "pressure", "text": "Een familielid antwoordt voor de client en eist nu ondertekening.", "recorded_by": "SYNTHETIC Notaris A", "source": "SYNTHETIC afspraak B"},
+        {"id": "capacity1", "topic": "understanding", "text": "Client kan de gevolgen nog niet uitleggen.", "recorded_by": "SYNTHETIC Notaris A", "source": "SYNTHETIC afspraak B"}
+      ],
+      "concerns": [
+        {"category": "coercion", "text": "Spreek client alleen; escaleer voordat wordt doorgegaan.", "source": "SYNTHETIC afspraak B"},
+        {"category": "capacity_uncertain", "text": "Wilsbekwaamheid onzeker; beoordeling verantwoordelijke notaris nodig.", "source": "SYNTHETIC afspraak B"},
+        {"category": "missing_approval", "text": "Geen goedkeuring aangeleverd.", "source": "SYNTHETIC afspraak B"}
+      ],
+      "clauses": [
+        {"reference": "bepaling 1, concept v1", "excerpt": "SYNTHETIC: Client A krijgt vruchtgebruik, geen eigendom.", "explanation": "Vruchtgebruik is het recht om goederen van een ander te gebruiken en daarvan de vruchten te genieten, niet het eigendom. Omvang en duur moeten nog met de notaris worden verduidelijkt.", "source": "SYNTHETIC akte A, bepaling 1, concept v1"}
+      ],
+      "signing_evidence": [
+        {"claim": "unsigned", "text": "Aangeleverd document is concept v1 zonder handtekeningen.", "source": "SYNTHETIC akte A, bepaling 1, concept v1"}
+      ]
+    },
+    "reconciliation": {
+      "dossier": "SYNTHETIC-AKTE-EXEC",
+      "locale": "nl",
+      "currency": "EUR",
+      "rounding": "ROUND_HALF_UP",
+      "sources": [{"reference": "SYNTHETIC volledig overzicht C", "kind": "synthetic"}],
+      "coverage": {"client_funds": "SYNTHETIC volledig overzicht C", "tax": "SYNTHETIC volledig overzicht C", "office_fee": "SYNTHETIC volledig overzicht C", "other_charge": "SYNTHETIC volledig overzicht C"},
+      "entries": [
+        {"id": "funds", "category": "client_funds", "description": "Geld op derdengeldenrekening", "amount": "484,00", "source": "SYNTHETIC volledig overzicht C"},
+        {"id": "fee", "category": "office_fee", "description": "Kantoorkosten", "amount": "350,00", "tax_treatment": "Exclusief afzonderlijk aangeleverde belasting", "source": "SYNTHETIC volledig overzicht C"},
+        {"id": "cost", "category": "other_charge", "description": "Overige kosten", "amount": "50,00", "tax_treatment": "Exclusief afzonderlijk aangeleverde belasting", "source": "SYNTHETIC volledig overzicht C"},
+        {"id": "tax", "category": "tax", "description": "Expliciet aangeleverde belasting", "amount": "84,00", "tax_treatment": "Afzonderlijk aangeleverde totale belasting; geen verondersteld tarief", "source": "SYNTHETIC volledig overzicht C"}
+      ]
+    }
+  }
+}
