@@ -201,6 +201,8 @@ def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_
             "web-search",
             "working-artifacts",
             "legal-preparation",
+            "execution-preparation",
+            "reconciliation",
         } <= {Path(directory).name for directory in config["skill_directories"]}
         assert all("akte-agent" in directory for directory in config["skill_directories"])
         assert {tool.name for tool in config["tools"]} == {"code_interpreter", "web_search", "rag_search"}

@@ -52,6 +52,8 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         "working_artifacts",
         "notarial_intake",
         "legal_preparation",
+        "execution_preparation",
+        "reconciliation",
     } <= names
 
 
@@ -74,6 +76,8 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
         "web-search",
         "working-artifacts",
         "legal-preparation",
+        "execution-preparation",
+        "reconciliation",
     } <= registry.skills.keys()
     assert registry.mcp_servers == {}
     script = destination / "use-cases/akte-agent/skills/working-artifacts/scripts/time_record.py"
@@ -101,7 +105,6 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
 async def test_bilingual_scenarios_load_through_existing_eval_harness():
     storage = EvalStorage(SimpleNamespace(is_available=False), local_base_dir=REPO / "use-cases")
     scenarios = await storage.list_scenarios("akte-agent")
-    assert len(scenarios) >= 8
     for stem in ("intake-time", "missing-injection", "time-review", "unavailable"):
         for locale in ("en", "nl"):
             scenario = next(item for item in scenarios if item.name == f"{stem}-{locale}")

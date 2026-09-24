@@ -42,3 +42,8 @@ costs and tax rules. `currency` requires an explicit rounding argument;
 obtain agreement when needed. It is a calculation convention, not tax advice.
 Keep unrounded values for intermediate arithmetic and client funds separate
 from office fees. This helper does not implement invoice posting or banking.
+
+For stage 4/5 drafts, load `execution-preparation` or `reconciliation` and read
+`references/execution-contract.md` or `references/reconciliation-contract.md`
+respectively. Run the matching packaged script; reconciliation explicitly
+rounds each line before summing payable cents, retaining original precision.
