@@ -34,6 +34,10 @@ on:
         description: "Provision the opt-in read-only Azure SRE Agent (needs `provision: true` and SRE access in the subscription)"
         type: boolean
         default: false
+      sre_connect_telemetry:
+        description: "Configure read-only workload telemetry connectors when provisioning SRE (query verification remains manual)"
+        type: boolean
+        default: true
       sre_location:
         description: "Region for the SRE Agent (blank = same region as the application, if supported)"
         type: string
@@ -129,13 +133,15 @@ jobs:
           # Passed through env rather than interpolated into the script body,
           # so a value cannot be executed by the runner.
           DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
+          SRE_CONNECT_TELEMETRY_INPUT: ${{ inputs.sre_connect_telemetry }}
           SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
           SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
         run: |
+          . ./hooks/sre-lib.sh
+          sre_bool SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-}" true >/dev/null || exit 1
           azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
-          # This slice provisions the read-only core only; the connectors and
-          # repository attachment are separate work.
-          azd env set SRE_CONNECT_TELEMETRY false
+          azd env set SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-true}"
+          # Repository attachment is configured separately.
           azd env set SRE_CONNECT_GITHUB false
           # Empty inputs clear old overrides rather than retaining stale values.
           azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"

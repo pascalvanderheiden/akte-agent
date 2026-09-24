@@ -97,6 +97,11 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 ## Bilingual chat foundation
 
+The curated **Akte Agent** persona adds bilingual notarial intake, draft follow-up
+and exact downloadable time records alongside the unchanged Generic default.
+See [Akte intake and timekeeping](docs/akte-intake.md) for the delivered draft-only
+slice, evidence boundaries, reusable helpers and temporary-download limitations.
+
 The language selector supports English and Nederlands. A valid saved
 `kratos.locale` preference wins over the first supported browser language;
 otherwise English is used. Storage is optional. Changing language keeps the
@@ -296,8 +301,9 @@ land in that environment's `.env` only, never in another's.
 An environment can opt into a read-only [Azure SRE Agent](https://learn.microsoft.com/azure/sre-agent/)
 that observes that environment's resources and reuses its Application Insights and Log Analytics.
 It is off by default: environments never opted in create no billable SRE resource.
-This release provisions **core only**; telemetry connectors and GitHub attachment
-remain pending follow-on work:
+Workload telemetry connectors and their read-only permissions are configured
+after core provisioning by default; query access remains `pending` until verified
+through SRE. For an explicit **core-only** deployment:
 
 ```bash
 azd env set DEPLOY_SRE_AGENT true
