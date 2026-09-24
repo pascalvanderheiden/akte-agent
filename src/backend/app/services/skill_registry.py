@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from app.models import PersonaRoutingConfig
 from app.personas import require_not_retired
 
 if TYPE_CHECKING:
@@ -97,7 +98,13 @@ class SkillRegistry:
     skills: dict[str, SkillMetadata] = field(default_factory=dict)
     mcp_servers: dict = field(default_factory=dict)
     mcp_sources: dict[str, str] = field(default_factory=dict)
+    routing: PersonaRoutingConfig | None = None
     _blob_service: BlobSkillService | None = field(default=None, repr=False)
+
+    def _load_routing(self) -> None:
+        frontmatter, _ = _parse_frontmatter(self.system_prompt)
+        raw = frontmatter.get("routing")
+        self.routing = PersonaRoutingConfig.model_validate(raw) if raw is not None else None
 
     async def load(
         self,
@@ -126,6 +133,7 @@ class SkillRegistry:
             prompt_path = local_dir / "SYSTEM_PROMPT.md"
             if prompt_path.exists():
                 self.system_prompt = prompt_path.read_text()
+                self._load_routing()
 
             # Load MCP servers config
             mcp_path = local_dir / ".mcp.json"
@@ -171,6 +179,7 @@ class SkillRegistry:
         prompt_path = uc_dir / "SYSTEM_PROMPT.md"
         if prompt_path.exists():
             self.system_prompt = prompt_path.read_text()
+            self._load_routing()
 
         # Load MCP servers config
         mcp_path = uc_dir / ".mcp.json"

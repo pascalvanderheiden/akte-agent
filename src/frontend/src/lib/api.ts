@@ -2,6 +2,7 @@ import { getApiUrl, getAuthConfig } from "@/lib/config";
 import { getMcpAccessToken } from "@/lib/auth";
 import { ApplicationError, responseError, type ErrorCode } from "@/lib/errors";
 import type {
+ModelCatalogue,
   Attachment,
   EvalScenario,
   EvalRun,
@@ -22,7 +23,8 @@ export async function streamAgentChat(
   onDone: () => void,
   attachments?: Attachment[],
   useCase?: string,
-  locale?: Locale
+  locale?: Locale,
+  selectedModelId?: string
 ): Promise<void> {
   try {
     const payload: Record<string, unknown> = { conversationId, message };
@@ -34,6 +36,9 @@ export async function streamAgentChat(
     }
     if (locale) {
       payload.locale = locale;
+    }
+    if (selectedModelId) {
+      payload.selectedModelId = selectedModelId;
     }
 
     // When OBO sign-in is configured, attach the user's MCP-scoped access token
@@ -684,4 +689,38 @@ export async function getTraceOperation(
   const data = await readJson<TraceOperation>(r, "TRACE_DETAIL");
   if (!Array.isArray(data.spans) || !Array.isArray(data.logs)) throw new ApplicationError("TRACE_DETAIL");
   return data;
+}
+
+// ─── Models API ───
+
+/**
+ * Fetch the available model catalogue.
+ */
+export async function listModels(): Promise<ModelCatalogue> {
+  const response = await fetch(`${getApiUrl()}/api/models`);
+  if (!response.ok) {
+    throw await responseError(response, "MODELS_ERROR");
+  }
+  const data = await response.json();
+  return data as ModelCatalogue;
+}
+
+/**
+ * Update conversation's selected model.
+ */
+export async function updateConversationModel(
+  conversationId: string,
+  modelId: string
+): Promise<void> {
+  const response = await fetch(
+    `${getApiUrl()}/api/conversations/${encodeURIComponent(conversationId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedModelId: modelId }),
+    }
+  );
+  if (!response.ok) {
+    throw await responseError(response, "MODEL_ERROR");
+  }
 }

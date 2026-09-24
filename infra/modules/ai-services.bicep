@@ -10,17 +10,41 @@ param tags object = {}
 @description('Name of the Foundry project')
 param projectName string = '${name}-proj'
 
-@description('Name of the GPT model deployment')
-param modelDeploymentName string = 'gpt-54'
+@description('Name of the orchestrator model deployment')
+param orchestratorDeploymentName string = 'gpt-6-luna'
 
-@description('Model name to deploy')
-param modelName string = 'gpt-5.4'
+@description('Model name for the orchestrator deployment')
+param orchestratorModelName string = 'gpt-6-luna'
 
-@description('Model version')
-param modelVersion string = '2026-03-05'
+@description('Model version for the orchestrator deployment')
+param orchestratorModelVersion string = '2026-09-01'
 
-@description('Deployment SKU capacity (thousands of tokens per minute)')
-param modelCapacity int = 350
+@description('Orchestrator deployment SKU capacity (thousands of tokens per minute)')
+param orchestratorModelCapacity int = 350
+
+@description('Name of the deep-reasoning model deployment')
+param deepReasoningDeploymentName string = 'gpt-6-sol'
+
+@description('Model name for the deep-reasoning deployment')
+param deepReasoningModelName string = 'gpt-6-sol'
+
+@description('Model version for the deep-reasoning deployment')
+param deepReasoningModelVersion string = '2026-09-01'
+
+@description('Deep-reasoning deployment SKU capacity (thousands of tokens per minute)')
+param deepReasoningModelCapacity int = 350
+
+@description('Name of the fast model deployment')
+param fastDeploymentName string = 'gpt-6-astra'
+
+@description('Model name for the fast deployment')
+param fastModelName string = 'gpt-6-astra'
+
+@description('Model version for the fast deployment')
+param fastModelVersion string = '2026-09-01'
+
+@description('Fast deployment SKU capacity (thousands of tokens per minute)')
+param fastModelCapacity int = 350
 
 @description('Application Insights resource ID to connect to the project (powers the Foundry Traces tab). Empty = no connection.')
 param appInsightsId string = ''
@@ -54,7 +78,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   location: location
   // Concurrent project/model writes lock the same account and cause RequestConflict.
   dependsOn: [
-    modelDeployment
+    fastDeployment
   ]
   identity: {
     type: 'SystemAssigned'
@@ -62,18 +86,57 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   properties: {}
 }
 
-resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+resource orchestratorDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: aiFoundry
-  name: modelDeploymentName
+  name: orchestratorDeploymentName
   sku: {
     name: 'GlobalStandard'
-    capacity: modelCapacity
+    capacity: orchestratorModelCapacity
   }
   properties: {
     model: {
       format: 'OpenAI'
-      name: modelName
-      version: modelVersion
+      name: orchestratorModelName
+      version: orchestratorModelVersion
+    }
+  }
+}
+
+// Cognitive Services serialises deployment writes at account scope.
+resource deepReasoningDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: aiFoundry
+  name: deepReasoningDeploymentName
+  dependsOn: [
+    orchestratorDeployment
+  ]
+  sku: {
+    name: 'GlobalStandard'
+    capacity: deepReasoningModelCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: deepReasoningModelName
+      version: deepReasoningModelVersion
+    }
+  }
+}
+
+resource fastDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: aiFoundry
+  name: fastDeploymentName
+  dependsOn: [
+    deepReasoningDeployment
+  ]
+  sku: {
+    name: 'GlobalStandard'
+    capacity: fastModelCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: fastModelName
+      version: fastModelVersion
     }
   }
 }
@@ -102,7 +165,11 @@ resource appInsightsConnection 'Microsoft.CognitiveServices/accounts/projects/co
 output id string = aiFoundry.id
 output name string = aiFoundry.name
 output endpoint string = aiFoundry.properties.endpoint
-output modelDeploymentName string = modelDeployment.name
+output orchestratorModelDeployment string = orchestratorDeployment.name
+output fastModelDeployment string = fastDeployment.name
+output deepReasoningModelDeployment string = deepReasoningDeployment.name
+// Backwards-compatible alias. The orchestrator remains the default chat model.
+output modelDeploymentName string = orchestratorDeployment.name
 output projectName string = project.name
 output projectEndpoint string = project.properties.endpoints['AI Foundry API']
 output projectId string = project.id

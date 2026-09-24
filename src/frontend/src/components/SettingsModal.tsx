@@ -20,7 +20,7 @@ interface Props {
 export function SettingsModal({ open, onClose }: Props) {
   const { t } = useLocale();
   const [endpoint, setEndpoint] = useState("");
-  const [model, setModel] = useState("gpt-52");
+  const [model, setModel] = useState("");
   const [status, setStatus] = useState<AIServiceStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ErrorCode | null>(null);
@@ -44,7 +44,7 @@ export function SettingsModal({ open, onClose }: Props) {
         if (cancelled) return;
         setStatus(data);
         setEndpoint(data.foundryEndpoint || "");
-        setModel(data.foundryModelDeployment || "gpt-52");
+        setModel(data.foundryModelDeployment || "");
       })
       .catch((err) => {
         if (cancelled) return;
@@ -150,7 +150,7 @@ export function SettingsModal({ open, onClose }: Props) {
               disabled={loading || saving || !status}
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="gpt-52"
+              placeholder={t("settings.infraDefault")}
               className="w-full px-4 py-2.5 bg-surface-2 border border-border-soft rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all placeholder:text-muted"
             />
           </div>

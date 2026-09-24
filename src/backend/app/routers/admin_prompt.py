@@ -12,7 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from app.auth import require_authenticated_user
 from app.locale import Locale
-from app.models import PersonaLocalization, SystemPromptResponse, SystemPromptUpdate
+from app.models import PersonaLocalization, PersonaRoutingConfig, SystemPromptResponse, SystemPromptUpdate
 from app.services.copilot_agent import DEFAULT_SYSTEM_PROMPT
 from app.services.skill_registry import SkillRegistry, _parse_frontmatter, _update_frontmatter
 
@@ -62,6 +62,8 @@ async def update_system_prompt(
     metadata, _ = _parse_frontmatter(content)
     try:
         TypeAdapter(dict[Locale, PersonaLocalization]).validate_python(metadata.get("localizations", {}))
+        if "routing" in metadata:
+            PersonaRoutingConfig.model_validate(metadata["routing"])
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_REQUEST"}) from exc
 
@@ -80,6 +82,7 @@ async def update_system_prompt(
         prompt_path.write_text(content)
 
     registry.system_prompt = content
+    registry._load_routing()
     logger.info("System prompt updated for use-case '%s' (%d chars)", use_case, len(content))
     return SystemPromptResponse(content=content, isDefault=False)
 
@@ -96,5 +99,6 @@ async def reset_system_prompt(request: Request, use_case: str = Query("generic")
         prompt_path = local_dir / "SYSTEM_PROMPT.md"
         if prompt_path.exists():
             registry.system_prompt = prompt_path.read_text()
+            registry._load_routing()
 
     logger.info("System prompt reset for use-case '%s'", use_case)

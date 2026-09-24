@@ -34,6 +34,7 @@ from app.models import (
 from app.personas import require_available
 from app.services.eval_storage import EvalStorage
 from app.services.foundry_agent_proxy import FoundryAgentProxy
+from app.services.model_routing import AuxiliaryTask, ModelRouting
 from app.services.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -139,12 +140,12 @@ def _build_foundry_oai_client(settings: Settings) -> Any:
     return project.get_openai_client(agent_name=settings.foundry_agent_name)
 
 
-def _build_model_config(settings: Settings) -> dict[str, Any]:
+def _build_model_config(settings: Settings, deployment: str | None = None) -> dict[str, Any]:
     """Return the model config dict for azure-ai-evaluation evaluators."""
-    azure_endpoint = settings.foundry_endpoint.rstrip("/")
+    azure_endpoint = (settings.llm_gateway_base_url or settings.foundry_endpoint).rstrip("/")
     # Prefer the actual deployment name (e.g. ``gpt-54``) — ``eval_model``'s
     # default of ``gpt-4.1`` is only used if the runtime model isn't set.
-    model = settings.foundry_model_deployment or settings.eval_model or "gpt-4.1"
+    model = deployment or ModelRouting(settings).auxiliary_target(AuxiliaryTask.EVAL_JUDGE).deployment
     api_key = os.environ.get("FOUNDRY_API_KEY", "").strip()
     config: dict[str, Any] = {
         "azure_endpoint": azure_endpoint,
@@ -336,10 +337,10 @@ class EvalService:
         use_case: str,
         run_id: str | None = None,
         timeout: float = _REQUEST_TIMEOUT,
-    ) -> tuple[str, list[dict[str, Any]], str | None]:
+    ) -> tuple[str, list[dict[str, Any]], str | None, list[str]]:
         """Invoke the hosted agent once and aggregate the SSE stream.
 
-        Returns ``(response_text, tool_calls, error_message)``. ``error_message``
+        Returns ``(response_text, tool_calls, error_message, models)``. ``error_message``
         is non-empty when the agent stream emitted an error event.
         """
         if self._foundry_proxy is None:
@@ -347,6 +348,7 @@ class EvalService:
 
         chunks: list[str] = []
         tool_calls: list[dict[str, Any]] = []
+        models: set[str] = set()
         error_msg: str | None = None
 
         async def _drain() -> None:
@@ -365,6 +367,8 @@ class EvalService:
                         chunks.append(str(txt))
                 elif etype == "tool_call":
                     tool_calls.append(data if isinstance(data, dict) else {"raw": str(data)})
+                elif etype == "usage" and data.get("model"):
+                    models.add(str(data["model"]))
                 elif etype == "error":
                     error_msg = str(data.get("message") or data)
 
@@ -373,7 +377,7 @@ class EvalService:
         except TimeoutError:
             error_msg = error_msg or f"Hosted agent invocation timed out after {timeout}s"
 
-        return "".join(chunks), tool_calls, error_msg
+        return "".join(chunks), tool_calls, error_msg, sorted(models)
 
     # ── Public API ────────────────────────────────────────────────────────
 
@@ -389,8 +393,8 @@ class EvalService:
         registry = self._registries.get(use_case) or SkillRegistry(use_case=use_case)
         system_prompt = _build_generator_system_prompt(use_case, registry, count, instructions)
 
-        azure_endpoint = self._settings.foundry_endpoint.rstrip("/")
-        model = self._settings.foundry_model_deployment or self._settings.eval_model or "gpt-4.1"
+        azure_endpoint = (self._settings.llm_gateway_base_url or self._settings.foundry_endpoint).rstrip("/")
+        model = ModelRouting(self._settings).auxiliary_target(AuxiliaryTask.EVAL_GENERATION).deployment
         api_key = os.environ.get("FOUNDRY_API_KEY", "").strip()
 
         if api_key:
@@ -471,6 +475,7 @@ class EvalService:
             created_at=now,
             updated_at=now,
             started_by=started_by,
+            judge_model=ModelRouting(self._settings).auxiliary_target(AuxiliaryTask.EVAL_JUDGE).deployment,
         )
         await self._storage.save_run(run)
 
@@ -551,7 +556,7 @@ class EvalService:
         backoff = _WARMUP_BACKOFF_S
         for attempt in range(1, _WARMUP_ATTEMPTS + 1):
             try:
-                wtext, _, werr = await self._invoke_hosted_agent(
+                wtext, _, werr, _ = await self._invoke_hosted_agent(
                     message="ping",
                     conversation_id=f"warmup-{run_id}-{attempt}",
                     use_case=use_case,
@@ -578,7 +583,7 @@ class EvalService:
         for idx, scenario in enumerate(scenarios_to_run):
             t_start = time.monotonic()
             try:
-                resp_text, raw_tool_calls, err = await self._invoke_hosted_agent(
+                resp_text, raw_tool_calls, err, answer_models = await self._invoke_hosted_agent(
                     message=scenario.input_message,
                     conversation_id=f"eval-{run_id}-{scenario.name}",
                     use_case=use_case,
@@ -588,7 +593,7 @@ class EvalService:
                 # Retry once on empty response (and no explicit error)
                 if not resp_text and not err:
                     await asyncio.sleep(3)
-                    resp_text, raw_tool_calls, err = await self._invoke_hosted_agent(
+                    resp_text, raw_tool_calls, err, answer_models = await self._invoke_hosted_agent(
                         message=scenario.input_message,
                         conversation_id=f"eval-{run_id}-{scenario.name}-retry",
                         use_case=use_case,
@@ -604,6 +609,8 @@ class EvalService:
                         status="error",
                         error=err,
                         duration_ms=duration_ms,
+                        answer_models=answer_models,
+                        judge_model=run.judge_model,
                     )
                 else:
                     result = ScenarioResult(
@@ -613,6 +620,8 @@ class EvalService:
                         tool_calls=raw_tool_calls,
                         status="completed",
                         duration_ms=duration_ms,
+                        answer_models=answer_models,
+                        judge_model=run.judge_model,
                     )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - t_start) * 1000)
@@ -623,6 +632,7 @@ class EvalService:
                     status="error",
                     error=str(exc),
                     duration_ms=duration_ms,
+                    judge_model=run.judge_model,
                 )
 
             run.results.append(result)
@@ -698,7 +708,7 @@ class EvalService:
             logger.error("[eval %s] azure-ai-evaluation not installed: %s — skipping scoring", run_id, exc)
             return
 
-        model_config = _build_model_config(self._settings)
+        model_config = _build_model_config(self._settings, run.judge_model)
         # Lazy per-evaluator instantiation — if one evaluator class fails to
         # construct (e.g. version-specific validation), the rest still run.
         evaluator_classes = {

@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
-from azure.identity.aio import ManagedIdentityCredential, get_bearer_token_provider
+from azure.identity.aio import ManagedIdentityCredential
 from copilot import CopilotClient, PermissionHandler
 
 try:
@@ -36,6 +36,7 @@ from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
 from app.observability import operation_duration_histogram, token_usage_histogram
+from app.services.model_routing import ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
 if TYPE_CHECKING:
@@ -44,9 +45,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+
+def get_bearer_token_provider(credential, scope: str):
+    """Build the SDK 1.0.14 bearer callback (provider args are optional)."""
+
+    async def provider(*_args, **_kwargs) -> str:
+        return (await credential.get_token(scope)).token
+
+    return provider
+
+
 # Regex patterns for extracting actual skill name from the generic "skill" tool
 _SKILL_OUTPUT_RE = re.compile(r'Skill ["\']([^"\']+ )["\']')
 _SKILL_INPUT_NAME_RE = re.compile(r'["\']?name["\']?\s*[:=]\s*["\']([^"\'\.]+)["\']')
+_DELEGATION_GUIDELINE = """
+Delegate self-contained deep analysis to deep-reasoning-analyst and quick,
+bounded work to fast-worker. Use persona subagents when their description
+matches the task. Review their output and compose the final answer yourself.
+""".strip()
 
 
 def _resolve_skill_display_name(event_data, fallback: str = "skill") -> str:
@@ -173,6 +189,8 @@ class CopilotAgent:
         # so the live OBO bearer is applied — resume_session cannot refresh an MCP
         # server's frozen auth headers.
         self._session_mcp_fingerprints: dict[str, str] = {}
+        self._conversation_model_selections: dict[str, str] = {}
+        self._session_model_selections: dict[str, str] = {}
         # conv_id -> lock serialising SDK session acquisition / eviction.
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._system_prompt: str = DEFAULT_SYSTEM_PROMPT
@@ -187,6 +205,7 @@ class CopilotAgent:
         self._first_token_time: dict[str, float] = {}
         self._model_response_start: dict[str, float] = {}
         self._response_parts: dict[str, list[str]] = {}
+        self._routing = ModelRouting(settings)
 
     @property
     def system_prompt(self) -> str:
@@ -199,6 +218,7 @@ class CopilotAgent:
         # Sessions are not explicitly disconnected here (async not possible in a property setter);
         # use update_system_prompt() in async contexts for a full disconnect + Cosmos cleanup.
         self._sessions.clear()
+        self._session_model_selections.clear()
         self._session_mcp_fingerprints.clear()
         # Must also clear registered handlers — without this, new sessions created after the
         # reset would skip session.on(on_event) registration (the handler guard checks this set),
@@ -357,6 +377,7 @@ class CopilotAgent:
                 await session.disconnect()
         self._registered_handlers.discard(conversation_id)
         self._session_mcp_fingerprints.pop(conversation_id, None)
+        self._session_model_selections.pop(conversation_id, None)
 
     def _get_registry(self, conversation_id: str) -> object | None:
         """Get the SkillRegistry for a conversation's use-case."""
@@ -413,6 +434,7 @@ class CopilotAgent:
                 await session.disconnect()
         self._system_prompt = value
         self._sessions.clear()
+        self._session_model_selections.clear()
         self._session_mcp_fingerprints.clear()
         self._registered_handlers.clear()
         self._queues.clear()
@@ -453,18 +475,7 @@ class CopilotAgent:
         local_mode = self.settings.is_local_mode
 
         if self._use_azure_provider:
-            # Fail fast on misconfiguration: an Azure provider with no endpoint or
-            # no deployment would build a bogus base_url ("/openai/deployments/…")
-            # and fail later inside session creation with a misleading error.
-            llm_base = self.settings.llm_gateway_base_url or self.settings.foundry_endpoint
-            if not llm_base or not self.settings.foundry_model_deployment:
-                raise RuntimeError(
-                    "Azure provider mode requires an endpoint and a model deployment: "
-                    f"llm_gateway_base_url={self.settings.llm_gateway_base_url!r} "
-                    f"foundry_endpoint={self.settings.foundry_endpoint!r} "
-                    f"foundry_model_deployment={self.settings.foundry_model_deployment!r}. "
-                    "Set LLM_GATEWAY_BASE_URL (or FOUNDRY_ENDPOINT) and FOUNDRY_MODEL_DEPLOYMENT."
-                )
+            self._routing.validate()
 
             # Cloud, or local opted-in to the APIM gateway: authenticate to the
             # Azure endpoint. NOTE: the Copilot SDK's backing engine authenticates
@@ -489,6 +500,7 @@ class CopilotAgent:
             else:
                 self._credential = ManagedIdentityCredential()
             scope = "https://cognitiveservices.azure.com/.default"
+
             self._token_provider = get_bearer_token_provider(self._credential, scope)
 
             # Pre-warm the token so a request doesn't pay first-token latency. This
@@ -522,10 +534,10 @@ class CopilotAgent:
             _mode = "azure-direct"
             _addr = self.settings.foundry_endpoint
         logger.info(
-            "LLM provider resolved: mode=%s endpoint=%s deployment=%s local=%s",
+            "LLM provider resolved: mode=%s endpoint=%s roles=%s local=%s",
             _mode,
             _addr,
-            self.settings.foundry_model_deployment or "(github-default)",
+            {role.value: model for role, model in self._routing.role_deployments().items()},
             local_mode,
         )
 
@@ -583,6 +595,7 @@ class CopilotAgent:
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
         self._tool_counters.clear()
@@ -597,18 +610,30 @@ class CopilotAgent:
         self,
         foundry_endpoint: str,
         foundry_model_deployment: str,
+        *,
+        model_deployment_orchestrator: str | None = None,
+        model_deployment_deep_reasoning: str | None = None,
+        model_deployment_fast: str | None = None,
     ) -> None:
         """Update config and drop all sessions so they recreate with new settings."""
         if foundry_endpoint:
             self.settings.foundry_endpoint = foundry_endpoint
         if foundry_model_deployment:
             self.settings.foundry_model_deployment = foundry_model_deployment
+        if model_deployment_orchestrator is not None:
+            self.settings.model_deployment_orchestrator = model_deployment_orchestrator
+        if model_deployment_deep_reasoning is not None:
+            self.settings.model_deployment_deep_reasoning = model_deployment_deep_reasoning
+        if model_deployment_fast is not None:
+            self.settings.model_deployment_fast = model_deployment_fast
+        self._routing.validate()
 
         # Drop all existing sessions so they get recreated with the new config
         for session in self._sessions.values():
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
         self._tool_counters.clear()
@@ -625,14 +650,10 @@ class CopilotAgent:
 
         * Cloud mode → always (the agent talks to Foundry, optionally fronted by
           the APIM AI gateway when ``llm_gateway_base_url`` is set).
-        * Local mode → opt-in: only when ``llm_gateway_base_url`` is explicitly
-          configured, so an operator can exercise the real Azure path locally
-          (e.g. to capture prompts/completions in the APIM gateway log). Without
-          it, local mode keeps using the Copilot SDK's GitHub-hosted model.
+        * Local mode → never. Local sessions use Copilot API model IDs and do
+          not send BYOK provider configuration.
         """
-        if not self.settings.is_local_mode:
-            return True
-        return bool(self.settings.llm_gateway_base_url)
+        return not self.settings.is_local_mode
 
     def _build_provider_config(self) -> dict | None:
         """Return the Azure provider dict, or ``None`` for the GitHub-hosted model.
@@ -651,36 +672,38 @@ class CopilotAgent:
         """
         if not self._use_azure_provider:
             return None
-        llm_base = (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint).rstrip("/")
-        return {
-            "type": "azure",
-            "base_url": f"{llm_base}/openai/deployments/{self.settings.foundry_model_deployment}",
-            "token_provider": self._token_provider,
-            "wire_api": "completions",
-            "azure": {
-                "api_version": "2024-10-21",
-            },
-        }
+        plan = self._routing.plan("auto", None, self._token_provider)
+        return plan.providers[0] if plan.providers else None
 
     def _build_session_config(
-        self, enabled_tools: list, skill_dirs: list, system_prompt: str, mcp_servers: dict | None = None
+        self,
+        enabled_tools: list,
+        skill_dirs: list,
+        system_prompt: str,
+        mcp_servers: dict | None = None,
+        model_selection: str = "auto",
+        persona_routing=None,
     ) -> dict:
         """Build the shared session config dict used for both create and resume."""
+        plan = self._routing.plan(model_selection, persona_routing, self._token_provider)
         config = {
-            "model": self.settings.foundry_model_deployment,
+            "model": plan.model,
             "streaming": True,
             "tools": enabled_tools,
             "skill_directories": skill_dirs,
             "system_message": {
                 "mode": "replace",
-                "content": system_prompt,
+                "content": f"{system_prompt.rstrip()}\n\n{_DELEGATION_GUIDELINE}",
             },
             "on_permission_request": PermissionHandler.approve_all,
             "on_user_input_request": self._handle_user_input_request,
+            "custom_agents": plan.custom_agents,
+            "include_sub_agent_streaming_events": True,
+            "reasoning_effort": plan.reasoning_effort,
         }
-        provider = self._build_provider_config()
-        if provider is not None:
-            config["provider"] = provider
+        if plan.providers is not None:
+            config["providers"] = plan.providers
+            config["models"] = plan.models
         if mcp_servers:
             config["mcp_servers"] = mcp_servers
         return config
@@ -765,15 +788,21 @@ class CopilotAgent:
             mcp_servers = self._apply_mcp_tokens(conversation_id, mcp_servers)
             has_identity = self._mcp_has_auth(mcp_servers)
             fingerprint = self._mcp_fingerprint(mcp_servers)
+            model_selection = self._routing.validate_selection(
+                self._conversation_model_selections.get(conversation_id, "auto")
+            )
 
             # In-memory reuse — only when the injected identity is unchanged. A changed,
             # newly added, or removed token evicts the cached session so the next create
             # applies the live header (resume cannot refresh MCP auth headers).
             cached = self._sessions.get(conversation_id)
             if cached is not None:
-                if self._session_mcp_fingerprints.get(conversation_id) == fingerprint:
+                same_model = self._session_model_selections.get(conversation_id, "auto") == model_selection
+                if self._session_mcp_fingerprints.get(conversation_id) == fingerprint and same_model:
                     logger.info("Reusing SDK session for conversation=%s", conversation_id)
                     return cached
+                if not has_identity and not sdk_session_id:
+                    sdk_session_id = getattr(cached, "session_id", None)
                 logger.info("MCP identity changed for conversation=%s — rebuilding SDK session", conversation_id)
                 await self._discard_session(conversation_id)
 
@@ -787,7 +816,14 @@ class CopilotAgent:
             )
 
             system_prompt = self._get_system_prompt(conversation_id)
-            config = self._build_session_config(enabled_tools, skill_dirs, system_prompt, mcp_servers)
+            config = self._build_session_config(
+                enabled_tools,
+                skill_dirs,
+                system_prompt,
+                mcp_servers,
+                model_selection,
+                getattr(registry, "routing", None),
+            )
 
             # Identity-bearing sessions must never resume a persisted session id (Cosmos
             # or caller-supplied) — the CLI would replay the create-time bearer. Force a
@@ -841,6 +877,7 @@ class CopilotAgent:
                 )
             self._sessions[conversation_id] = session
             self._session_mcp_fingerprints[conversation_id] = fingerprint
+            self._session_model_selections[conversation_id] = model_selection
             return session
 
     async def run(
@@ -852,6 +889,7 @@ class CopilotAgent:
         use_case: str = "",
         eval_run_id: str | None = None,
         locale: Locale | None = None,
+        model_selection: str | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events."""
         from app.personas import RETIRED_PERSONAS
@@ -859,6 +897,11 @@ class CopilotAgent:
         selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
         if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
             yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
+            return
+        try:
+            self._conversation_model_selections[conversation_id] = self._routing.validate_selection(model_selection)
+        except ValueError as exc:
+            yield ErrorEvent(message=str(exc), code="INVALID_MODEL_SELECTION")
             return
 
         # Propagate kratos context into tool spans via ContextVars
@@ -930,6 +973,7 @@ class CopilotAgent:
                     _pending_tools: list[str] = []  # track started tools in order for matching
                     _tool_spans: dict[str, trace.Span] = {}  # active tool span per tool name
                     _tool_span_stack: list[tuple[str, trace.Span]] = []  # ordered stack for matching
+                    _subagent_spans: dict[str, trace.Span] = {}
 
                     def on_event(event) -> None:
                         """Translate SDK events into our SSE event types."""
@@ -1005,14 +1049,93 @@ class CopilotAgent:
                                     total_t,
                                 )
                                 if total_t > 0:
+                                    usage_model = str(
+                                        getattr(data, "model", None)
+                                        or getattr(data, "model_name", None)
+                                        or self._routing.plan(
+                                            self._conversation_model_selections.get(cid, "auto"),
+                                            getattr(self._get_registry(cid), "routing", None),
+                                            self._token_provider,
+                                        ).model
+                                    )
+                                    agent_name = str(
+                                        getattr(event, "agent_id", None)
+                                        or getattr(data, "agent_id", None)
+                                        or "orchestrator"
+                                    )
                                     q.put_nowait(
                                         UsageEvent(
-                                            promptTokens=usage["prompt"],
-                                            completionTokens=usage["completion"],
-                                            reasoningTokens=usage["reasoning"],
-                                            totalTokens=usage["total"],
+                                            promptTokens=prompt_t,
+                                            completionTokens=completion_t,
+                                            reasoningTokens=reasoning_t,
+                                            totalTokens=total_t,
+                                            model=usage_model,
+                                            agentName=agent_name,
                                         )
                                     )
+
+                            elif etype in ("subagent.started", "subagent.completed", "subagent.failed"):
+                                agent_name = str(
+                                    getattr(event.data, "agent_name", None)
+                                    or getattr(event.data, "name", None)
+                                    or getattr(event, "agent_id", None)
+                                    or "subagent"
+                                )
+                                model = str(
+                                    getattr(event.data, "model", None)
+                                    or getattr(event.data, "model_name", None)
+                                    or getattr(event.data, "first_dispatched_model", None)
+                                    or getattr(event.data, "configured_model_preference", None)
+                                    or ""
+                                )
+                                subagent_call_id = str(getattr(event.data, "tool_call_id", None) or agent_name)
+                                state = etype.rsplit(".", 1)[-1]
+                                if state == "started":
+                                    _subagent_spans[subagent_call_id] = tracer.start_span(
+                                        f"invoke_agent {agent_name}",
+                                        context=self._span_contexts.get(cid),
+                                        attributes={
+                                            "gen_ai.operation.name": "invoke_agent",
+                                            "gen_ai.agent.name": agent_name,
+                                            "gen_ai.request.model": model,
+                                            "kratos.conversation_id": cid,
+                                        },
+                                    )
+                                else:
+                                    subagent_span = _subagent_spans.pop(subagent_call_id, None)
+                                    if subagent_span is not None:
+                                        if state == "failed":
+                                            subagent_span.set_status(trace.Status(trace.StatusCode.ERROR))
+                                        subagent_span.end()
+                                if state == "failed":
+                                    logger.warning(
+                                        "Subagent %s failed on model %s; SDK will continue with the parent model",
+                                        agent_name,
+                                        model or "unknown",
+                                    )
+                                elif getattr(event.data, "configured_model_matches_actual", None) is False:
+                                    logger.warning(
+                                        "Subagent %s model unavailable; SDK fell back from %s to %s",
+                                        agent_name,
+                                        getattr(event.data, "configured_model_preference", "unknown"),
+                                        model or "parent model",
+                                    )
+                                q.put_nowait(
+                                    ThoughtEvent(
+                                        content=f"Subagent {agent_name} {state}" + (f" on {model}" if model else ""),
+                                        agentName=agent_name,
+                                        model=model,
+                                        status=state,
+                                    )
+                                )
+                                q.put_nowait(
+                                    ToolCallEvent(
+                                        skillName=f"subagent:{agent_name}",
+                                        status=state,
+                                        agentName=agent_name,
+                                        model=model,
+                                    )
+                                )
 
                             elif etype == "tool.execution_start":
                                 tool_name = (

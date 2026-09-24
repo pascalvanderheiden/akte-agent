@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import re
 import time
 
@@ -12,6 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.auth import require_authenticated_user
+from app.config import get_settings
+from app.services.model_routing import AuxiliaryTask, ModelRouting
 from app.services.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -234,16 +235,11 @@ async def analyze_consistency(
 
 async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = False) -> str:
     """Call the Foundry model and return the raw response content string."""
-    foundry_endpoint = os.environ.get("FOUNDRY_ENDPOINT", "")
-    model_deployment = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "")
-    if not foundry_endpoint or not model_deployment:
-        raise HTTPException(status_code=503, detail="FOUNDRY_ENDPOINT or FOUNDRY_MODEL_DEPLOYMENT not configured")
-
-    account_name = foundry_endpoint.rstrip("/").split("//")[1].split(".")[0]
-    chat_url = (
-        f"https://{account_name}.services.ai.azure.com/openai/deployments/"
-        f"{model_deployment}/chat/completions?api-version=2024-12-01-preview"
-    )
+    routing = ModelRouting(get_settings())
+    try:
+        chat_url = routing.auxiliary_chat_url(AuxiliaryTask.ADMIN_ANALYSIS)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     try:
         credential = _get_credential()
@@ -355,6 +351,7 @@ async def apply_fix(
                     }
                 )
                 registry.system_prompt = fixed
+                registry._load_routing()
                 changes.append(
                     FixChange(
                         target="system-prompt",

@@ -215,6 +215,9 @@ module agentService './modules/agent-service.bicep' = {
     cosmosDbEndpoint: cosmosDb.outputs.endpoint
     keyVaultUri: keyVault.outputs.uri
     foundryEndpoint: aiFoundry.outputs.endpoint
+    orchestratorModelDeployment: aiFoundry.outputs.orchestratorModelDeployment
+    deepReasoningModelDeployment: aiFoundry.outputs.deepReasoningModelDeployment
+    fastModelDeployment: aiFoundry.outputs.fastModelDeployment
     foundryModelDeployment: aiFoundry.outputs.modelDeploymentName
     foundryProjectName: aiFoundry.outputs.projectName
     foundryProjectEndpoint: aiFoundry.outputs.projectEndpoint
@@ -346,6 +349,10 @@ output AZURE_STATIC_WEB_APP_URL string = staticWebApp.outputs.url
 output AGENT_SERVICE_DIRECT_URL string = agentService.outputs.url
 output AGENT_SERVICE_URL string = agentService.outputs.url
 output FOUNDRY_ENDPOINT string = aiFoundry.outputs.endpoint
+output MODEL_DEPLOYMENT_ORCHESTRATOR string = aiFoundry.outputs.orchestratorModelDeployment
+output MODEL_DEPLOYMENT_DEEP_REASONING string = aiFoundry.outputs.deepReasoningModelDeployment
+output MODEL_DEPLOYMENT_FAST string = aiFoundry.outputs.fastModelDeployment
+// Backwards-compatible alias for consumers that have not adopted routing roles.
 output FOUNDRY_MODEL_DEPLOYMENT string = aiFoundry.outputs.modelDeploymentName
 output AZURE_AI_PROJECT_ENDPOINT string = aiFoundry.outputs.projectEndpoint
 // Extension contract drift (per foundry-hosted-agents skill): azure.ai.agents

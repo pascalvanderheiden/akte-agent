@@ -29,10 +29,15 @@ class ConversationStatus(str, Enum):
 class ConversationCreate(BaseModel):
     title: str = "New Conversation"
     useCase: str = "generic"
+    modelSelection: str = "auto"
+    selectedModelId: str | None = None
 
 
 class ConversationUpdate(BaseModel):
     title: str | None = None
+    modelSelection: str | None = None
+    selectedModelId: str | None = None
+    modelId: str | None = None
 
 
 class Conversation(BaseModel):
@@ -40,6 +45,7 @@ class Conversation(BaseModel):
     userId: str
     title: str
     useCase: str = "generic"
+    modelSelection: str = "auto"
     status: ConversationStatus = ConversationStatus.ACTIVE
     createdAt: datetime
     updatedAt: datetime
@@ -100,6 +106,8 @@ class AgentRequest(BaseModel):
     message: str
     useCase: str = "generic"
     locale: Locale | None = None
+    modelSelection: str | None = None
+    selectedModelId: str | None = None
     attachments: list[Attachment] = Field(default_factory=list)
     # Per-MCP-server user access tokens, keyed by MCP server name
     # (e.g. {"graph-obo": "<entra access token>"}). Sent by the frontend after
@@ -119,6 +127,8 @@ class ToolCallEvent(BaseModel):
     output: str = ""
     durationMs: int = 0
     source: str = ""  # "local" | "blob" | "apm:<package>" — populated best-effort from the registry
+    agentName: str = ""
+    model: str = ""
 
 
 class ThoughtEvent(BaseModel):
@@ -127,6 +137,9 @@ class ThoughtEvent(BaseModel):
     type: str = "thought"
     content: str
     iteration: int = 0
+    agentName: str = ""
+    model: str = ""
+    status: str = ""
 
 
 class ContentEvent(BaseModel):
@@ -144,6 +157,8 @@ class UsageEvent(BaseModel):
     completionTokens: int = 0
     reasoningTokens: int = 0
     totalTokens: int = 0
+    model: str = ""
+    agentName: str = ""
 
 
 class DoneEvent(BaseModel):
@@ -207,6 +222,8 @@ class CopilotStudioRequest(BaseModel):
     )
     useCase: str = Field(default="generic", description="Use-case identifier")
     locale: Locale | None = None
+    modelSelection: str | None = None
+    selectedModelId: str | None = None
 
 
 class CopilotStudioResponse(BaseModel):
@@ -223,7 +240,7 @@ class AIServiceSettings(BaseModel):
     """AI service configuration submitted by the user."""
 
     foundryEndpoint: str = Field(default="", description="Microsoft Foundry endpoint URL")
-    foundryModelDeployment: str = Field(default="gpt-52", description="Model deployment name")
+    foundryModelDeployment: str = Field(default="", description="Model deployment name")
 
 
 class AIServiceStatus(BaseModel):
@@ -233,6 +250,21 @@ class AIServiceStatus(BaseModel):
     foundryEndpoint: str = ""
     foundryModelDeployment: str = ""
     code: str = "INTERNAL_ERROR"
+
+
+class ModelCatalogueItem(BaseModel):
+    id: str
+    name: str = ""
+    provider: str = ""
+    displayName: str
+    enabled: bool = True
+    available: bool = True
+    role: str = ""
+
+
+class ModelCatalogue(BaseModel):
+    models: list[ModelCatalogueItem]
+    selectedModelId: str = "auto"
 
 
 # ─── Skills Admin ───
@@ -341,6 +373,34 @@ class ImportMcpServer(BaseModel):
     registry: bool = False
 
 
+class PersonaSubagentConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,63}$")
+    description: str
+    role: Literal["orchestrator", "deep-reasoning", "fast"]
+    reasoningEffort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    tools: list[str] | None = None
+    prompt: str
+
+
+class PersonaRoutingConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    baselineReasoningEffort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    extraSubagents: list[PersonaSubagentConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _protect_default_roster(self) -> "PersonaRoutingConfig":
+        reserved = {"deep-reasoning-analyst", "fast-worker"}
+        names = [agent.name for agent in self.extraSubagents]
+        if reserved.intersection(names):
+            raise ValueError("Persona routing cannot replace or remove default subagents")
+        if len(names) != len(set(names)):
+            raise ValueError("Persona subagent names must be unique")
+        return self
+
+
 class PersonaManifest(BaseModel):
     """threadlight-design-compatible persona manifest consumed by the import API.
 
@@ -358,6 +418,7 @@ class PersonaManifest(BaseModel):
     mcpServers: list[ImportMcpServer] = Field(default_factory=list)
     traits: list[str] = Field(default_factory=list)
     workflow_model: Literal["agent", "workflow"] = "agent"
+    routing: PersonaRoutingConfig | None = None
 
 
 class PersonaImportRequest(BaseModel):
@@ -512,6 +573,8 @@ class ScenarioResult(BaseModel):
     error: str = ""
     duration_ms: int = 0
     scores: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    answer_models: list[str] = Field(default_factory=list)
+    judge_model: str = ""
 
 
 class FoundryEvalSummary(BaseModel):
@@ -541,6 +604,7 @@ class EvalRun(BaseModel):
     error: str = ""
     results: list[ScenarioResult] = Field(default_factory=list)
     foundry: FoundryEvalSummary | None = None
+    judge_model: str = ""
 
 
 class EvalRunList(BaseModel):

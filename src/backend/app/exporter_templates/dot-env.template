@@ -4,8 +4,13 @@
 # For `azd up`, all of these are provisioned + wired automatically — you
 # don't need a .env file at all.
 
-# Foundry model deployment (e.g. "gpt-4o-mini" — must exist in the project)
-MODEL_DEPLOYMENT_NAME=gpt-4o-mini
+# Foundry deployment per routing role (each must exist in the project)
+MODEL_DEPLOYMENT_ORCHESTRATOR=gpt-6-luna
+MODEL_DEPLOYMENT_DEEP_REASONING=gpt-6-sol
+MODEL_DEPLOYMENT_FAST=gpt-6-astra
+
+# Backwards-compatible alias for the orchestrator role
+MODEL_DEPLOYMENT_NAME=gpt-6-luna
 
 # BYOK Foundry endpoint (only set for local dev — auto-injected on Azure)
 # FOUNDRY_PROJECT_ENDPOINT=https://<your-ai-foundry-resource>.services.ai.azure.com/api/projects/<your-project-name>

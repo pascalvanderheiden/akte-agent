@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Conversation, ChatMessage, ToolCallInfo, RunStats, Attachment } from "@/types";
+import { Conversation, ChatMessage, ModelInfo, ModelCatalogue, ToolCallInfo, RunStats, Attachment } from "@/types";
 import { useLocale } from "./LocaleProvider";
 import { errorCode, type ErrorCode } from "@/lib/errors";
-import { streamAgentChat, getConversationMessages, updateConversation } from "@/lib/api";
+import { streamAgentChat, getConversationMessages, updateConversation, listModels, updateConversationModel } from "@/lib/api";
 import { MessageBubble } from "./MessageBubble";
 import { ThoughtChain } from "./ThoughtChain";
 
@@ -40,6 +40,9 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
   const [userInputPrompt, setUserInputPrompt] = useState<UserInputPrompt | null>(null);
   const [userInputAnswer, setUserInputAnswer] = useState("");
   const [followUpQuestions, setFollowUpQuestions] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const [modelsLoading, setModelsLoading] = useState(true);
   // True when an answer is being generated on the backend but is not being
   // streamed into this view (e.g. after navigating back to a conversation
   // whose response is still in flight). We poll Cosmos until it arrives.
@@ -57,6 +60,28 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, thoughts, activeToolCalls, runStats]);
+
+  // Load available models
+  useEffect(() => {
+    let cancelled = false;
+    const loadModels = async () => {
+      try {
+        const catalogue = await listModels();
+        if (!cancelled) {
+          setModels(catalogue.models);
+          setSelectedModelId(conversation.modelSelection || catalogue.selectedModelId || (catalogue.models[0]?.id || ""));
+          setModelsLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setModels([]);
+          setModelsLoading(false);
+        }
+      }
+    };
+    loadModels();
+    return () => { cancelled = true; };
+  }, [conversation.id, conversation.modelSelection]);
 
   // Load message history when switching to an existing conversation. The agent
   // run is durable on the backend (it persists to Cosmos even if the client
@@ -130,6 +155,16 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
       if (pollTimer) clearTimeout(pollTimer);
     };
   }, [conversation.id, historyRetry, readOnly]);
+
+  
+  const handleModelChange = async (modelId: string) => {
+    setSelectedModelId(modelId);
+    try {
+      await updateConversationModel(conversation.id, modelId);
+    } catch {
+      setError("MODEL_ERROR");
+    }
+  };
 
   const handleSend = async (messageOverride?: string) => {
     const trimmed = (messageOverride ?? input).trim();
@@ -581,6 +616,33 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                 </button>
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      
+      {/* Model selector */}
+      {models.length > 0 && (
+        <div className="px-4 mb-3">
+          <div className="max-w-5xl mx-auto flex items-center gap-2">
+            <label htmlFor="modelSelect" className="text-xs font-medium text-muted uppercase tracking-wider">
+              {t("model")}
+            </label>
+            <select
+              id="modelSelect"
+              value={selectedModelId}
+              onChange={(e) => handleModelChange(e.target.value)}
+              disabled={isStreaming || readOnly || modelsLoading}
+              title={t("modelSelection")}
+              aria-label={t("selectModel")}
+              className="flex-1 max-w-xs text-sm text-text bg-surface border border-border-soft rounded-lg px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {models.map((model) => (
+                <option key={model.id} value={model.id} disabled={!model.enabled}>
+                  {model.displayName}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       )}
