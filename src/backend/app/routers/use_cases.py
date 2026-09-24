@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("", response_model=UseCaseList)
+@router.get("", response_model=UseCaseList, response_model_exclude_unset=True)
 async def list_use_cases(request: Request) -> UseCaseList:
     """List all available use-cases."""
     registries: dict[str, SkillRegistry] = request.app.state.registries
@@ -23,6 +23,7 @@ async def list_use_cases(request: Request) -> UseCaseList:
         description = ""
         sample_questions: list[str] = []
         curated = False
+        localizations = {}
         if registry.system_prompt:
             from app.services.skill_registry import _parse_frontmatter
 
@@ -31,6 +32,7 @@ async def list_use_cases(request: Request) -> UseCaseList:
             description = fm.get("description", "")
             sample_questions = fm.get("sampleQuestions", [])
             curated = bool(fm.get("curated", False))
+            localizations = fm.get("localizations", {})
 
         use_cases.append(
             UseCaseInfo(
@@ -40,6 +42,7 @@ async def list_use_cases(request: Request) -> UseCaseList:
                 skillCount=len(registry.skills),
                 sampleQuestions=sample_questions,
                 curated=curated,
+                localizations=localizations,
             )
         )
     return UseCaseList(useCases=use_cases)

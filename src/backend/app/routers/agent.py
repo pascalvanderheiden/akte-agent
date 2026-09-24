@@ -41,7 +41,7 @@ _background_runs: set[asyncio.Task] = set()
 _SAFE_RELPATH_RE = re.compile(r"^[\w\-. /]+$")
 
 
-def _save_streamed_file(event_data: dict) -> None:
+def _save_streamed_file(event_data: dict) -> bool:
     """Save a file streamed from the hosted agent to /tmp.
 
     The filename field may contain a relative path with subdirectories
@@ -50,23 +50,26 @@ def _save_streamed_file(event_data: dict) -> None:
     filename = event_data.get("filename", "")
     content_b64 = event_data.get("content", "")
     if not filename or not content_b64:
-        return
+        logger.warning("Streamed file is missing its filename or content")
+        return False
     if not _SAFE_RELPATH_RE.match(filename):
         logger.warning("Ignoring streamed file with unsafe name: %s", filename)
-        return
+        return False
     # Prevent path traversal (e.g. '../' or absolute paths)
     if ".." in filename or filename.startswith("/"):
         logger.warning("Ignoring streamed file with path traversal: %s", filename)
-        return
+        return False
     try:
-        data = base64.b64decode(content_b64)
+        data = base64.b64decode(content_b64, validate=True)
         path = f"/tmp/{filename}"  # noqa: S108
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(data)
         logger.info("Saved streamed file: %s (%d bytes)", path, len(data))
-    except Exception:
+        return True
+    except (OSError, ValueError, TypeError):
         logger.warning("Failed to save streamed file: %s", filename, exc_info=True)
+        return False
 
 
 @router.post("/chat")
@@ -160,6 +163,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 conversation_id=body.conversationId,
                 use_case=body.useCase,
                 system_prompt=system_prompt,
+                locale=body.locale,
                 agent_session_id=agent_session_id,
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
@@ -248,7 +252,12 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 elif event_name == "file_content":
                     # Hosted agent streams generated files — save to /tmp for
                     # the download endpoint to serve. Do NOT forward to frontend.
-                    _save_streamed_file(event_data)
+                    if not _save_streamed_file(event_data):
+                        error = ErrorEvent(
+                            code="DOWNLOAD_ERROR",
+                            message="Generated file could not be stored for download. Request a new draft.",
+                        )
+                        await event_queue.put({"event": "error", "data": error.model_dump_json()})
                 elif event_name == "user_input_request":
                     await event_queue.put({"event": "user_input_request", "data": json.dumps(event_data)})
                 elif event_name == "error":
@@ -305,7 +314,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 registries = getattr(app.state, "registries", {})
                 registry = registries.get(body.useCase)
                 skill_names = [s.name for s in registry.skills if s.enabled] if registry else []
-                follow_ups = await generate_follow_ups(body.message, full_response, skill_names)
+                follow_ups = await generate_follow_ups(body.message, full_response, skill_names, locale=body.locale)
                 if follow_ups:
                     await event_queue.put(
                         {

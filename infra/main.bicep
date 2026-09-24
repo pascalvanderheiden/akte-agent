@@ -35,6 +35,24 @@ param agentApiPath string = 'kratos-agent'
 @description('Deploy the OBO MCP server and its Entra app registrations. Requires directory permission to register Entra applications. Set to false in tenants/subscriptions where the deploying identity cannot create app registrations.')
 param deployObo bool = true
 
+@description('Deploy an opt-in, read-only Azure SRE Agent for this environment. Default false: environments that have not opted in get no SRE resources and no SRE role assignments. Enabling requires SRE service availability in the subscription and region — hooks/sre-preflight.sh checks that before provisioning.')
+param deploySreAgent bool = false
+
+@maxLength(63)
+@description('Optional name override for the SRE Agent, from SRE_AGENT_NAME_OVERRIDE. Empty (default) derives a deterministic, environment-scoped name. Deliberately not named after the SRE_AGENT_NAME output: azd writes outputs back into the environment, which would pin the derived name as an override on the next provision.')
+param sreAgentName string = ''
+
+@description('Optional region override for the SRE Agent. Empty (default) uses the application location, which preflight verifies is supported rather than silently relocating anything.')
+param sreLocation string = ''
+
+@description('Principal type of principalId. A CI deployment logs in as a ServicePrincipal and a developer as a User; role assignments fail when this is wrong.')
+@allowed([
+  'User'
+  'ServicePrincipal'
+  'Group'
+])
+param principalType string = 'User'
+
 @description('Location for the Static Web App (must be one of: centralus, eastus2, westus2, westeurope, eastasia)')
 @allowed([
   'centralus'
@@ -280,6 +298,24 @@ module oboMcpServer './modules/obo-mcp-server.bicep' = if (deployObo) {
   }
 }
 
+// ─── Azure SRE Agent (opt-in, read-only) ───
+// Off by default. Reuses this environment's Application Insights and Log
+// Analytics rather than creating its own; see infra/modules/sre-agent.bicep.
+module sreAgent './modules/sre-agent.bicep' = if (deploySreAgent) {
+  name: 'sre-agent'
+  scope: rg
+  params: {
+    name: !empty(sreAgentName) ? sreAgentName : '${namePrefix}sre-${resourceToken}'
+    location: !empty(sreLocation) ? sreLocation : location
+    tags: tags
+    identityName: 'id-sre-${resourceToken}'
+    appInsightsName: appInsights.outputs.name
+    logAnalyticsWorkspaceId: logAnalytics.outputs.id
+    operatorPrincipalId: principalId
+    operatorPrincipalType: principalType
+  }
+}
+
 // ─── Role Assignments ───
 module roleAssignments './modules/role-assignments.bicep' = {
   name: 'role-assignments'
@@ -334,3 +370,21 @@ output OBO_SERVER_APP_IDENTIFIER_URI string = deployObo ? oboEntraAppServer.outp
 output OBO_SERVER_APP_SCOPE_VALUE string = deployObo ? oboEntraAppServer.outputs.entraAppScopeValue : ''
 output OBO_CLIENT_APP_CLIENT_ID string = deployObo ? oboEntraAppClient.outputs.entraAppClientId : ''
 output OBO_TENANT_ID string = tenant().tenantId
+
+// ─── SRE Agent outputs ───
+// Empty on environments that have not opted in. Later setup steps resolve the
+// agent's data-plane endpoint from ARM using SRE_AGENT_ID; it is deliberately
+// not constructed from a hostname pattern here.
+output SRE_AGENT_ENABLED bool = deploySreAgent
+output SRE_AGENT_ID string = deploySreAgent ? sreAgent.outputs.agentId : ''
+output SRE_AGENT_NAME string = deploySreAgent ? sreAgent.outputs.agentName : ''
+output SRE_AGENT_LOCATION string = deploySreAgent ? sreAgent.outputs.agentLocation : ''
+output SRE_AGENT_PRINCIPAL_ID string = deploySreAgent ? sreAgent.outputs.agentPrincipalId : ''
+output SRE_AGENT_IDENTITY_ID string = deploySreAgent ? sreAgent.outputs.identityId : ''
+output SRE_AGENT_IDENTITY_PRINCIPAL_ID string = deploySreAgent ? sreAgent.outputs.identityPrincipalId : ''
+output SRE_AGENT_PORTAL_URL string = deploySreAgent ? sreAgent.outputs.portalUrl : ''
+// Monitoring references the telemetry connectors need later. AppId (query API)
+// and resource ID are different values for the same component.
+output SRE_APP_INSIGHTS_APP_ID string = deploySreAgent ? sreAgent.outputs.appInsightsAppId : ''
+output SRE_APP_INSIGHTS_ID string = deploySreAgent ? sreAgent.outputs.appInsightsId : ''
+output SRE_LOG_ANALYTICS_ID string = deploySreAgent ? sreAgent.outputs.logAnalyticsWorkspaceId : ''
