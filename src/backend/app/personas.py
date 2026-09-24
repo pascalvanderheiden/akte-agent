@@ -20,6 +20,9 @@ RETIRED_PERSONAS = frozenset(
 )
 
 
+DEFAULT_USE_CASE = "akte-agent"
+
+
 class PersonaUnavailable(HTTPException):
     def __init__(self, status_code: int = 410) -> None:
         super().__init__(status_code=status_code, detail={"code": "PERSONA_UNAVAILABLE"})
@@ -52,16 +55,18 @@ def require_available(use_case: str, registries: Mapping[str, object]) -> None:
         raise PersonaUnavailable(status_code=404)
 
 
-def require_persona_match(requested: str | None, stored: str) -> None:
+def require_persona_match(requested: str | None, stored: str | None) -> None:
     """Reject an explicit persona selection that conflicts with a conversation's
     stored identity. An omitted selection (``None``) silently continues against
     the stored persona instead of being coerced to a different default.
     """
-    if requested is not None and requested != stored:
+    if requested is not None and stored is not None and requested != stored:
         raise PersonaMismatch()
 
 
-def resolve_use_case(requested: str | None, stored: str | None, default: str = "akte-agent") -> str:
+def resolve_use_case(
+    requested: str | None, stored: str | None, default: str = DEFAULT_USE_CASE
+) -> str:
     """Derive the persona identity execution must use for this turn.
 
     Continuations of an identified conversation always execute as the

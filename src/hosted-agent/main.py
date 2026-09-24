@@ -61,6 +61,7 @@ from app.models import (
 )
 from app.observability import setup_telemetry
 from app.personas import (
+    DEFAULT_USE_CASE,
     RETIRED_PERSONAS,
     PersonaMismatch,
     PersonaUnavailable,
@@ -508,7 +509,7 @@ async def handle_invoke(request: Request) -> Response:
             # Parse <use_case> tag (fallback when gateway strips useCase field)
             uc_match = re.search(r"<use_case>\s*(\S+?)\s*</use_case>", message)
             if uc_match:
-                if use_case is None or use_case == "akte-agent":
+                if use_case is None or use_case == DEFAULT_USE_CASE:
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
                 message = message[: uc_match.start()] + message[uc_match.end() :]
