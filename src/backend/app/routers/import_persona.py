@@ -131,8 +131,9 @@ def _build_mcp_json(servers: list[ImportMcpServer]) -> str:
     """
     config: dict[str, dict] = {}
     for server in servers:
+        entry: dict[str, str | list[str]]
         if server.command:
-            entry: dict[str, str | list[str]] = {"type": "local", "command": server.command}
+            entry = {"type": "local", "command": server.command}
             if server.args:
                 entry["args"] = server.args
         elif server.url:
