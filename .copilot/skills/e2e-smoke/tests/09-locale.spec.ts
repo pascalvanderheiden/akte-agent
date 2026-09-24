@@ -66,6 +66,9 @@ async function fixture(page: Page) {
     }
     if (path === "/api/use-cases/import") {
       if (state.fail === "import") return route.fulfill({ status: 401, json: { detail: "SENSITIVE_SYNTHETIC_DIAGNOSTIC" } });
+      if (state.fail === "unsupported-package") {
+        return route.fulfill({ status: 422, json: { detail: { code: "UNSUPPORTED_PACKAGE_DEPENDENCY" } } });
+      }
       state.imported = request.postDataJSON().manifest;
       state.catalog.push({
         ...persona("synthetic-import"),
@@ -319,6 +322,29 @@ test("embedded import retains metadata, chosen language, persona and base path",
   await expect(page.getByRole("link", { name: nl.backHost })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(`${mount}/`);
 });
+
+for (const locale of ["en", "nl"] as const) {
+  test(`${locale}: package-dependent embedded import reports a localized error without a partial persona`, async ({ page }) => {
+    const state = await fixture(page);
+    state.fail = "unsupported-package";
+    const manifest = {
+      name: "synthetic-package-persona",
+      instructions: "Synthetic package-dependent import.",
+      skills: [{ name: "synthetic-package-skill", package: "obsolete-package" }],
+    };
+    await page.addInitScript(({ locale, manifest }) => {
+      localStorage.setItem("kratos.locale", locale);
+      sessionStorage.setItem("kratos.import", JSON.stringify(manifest));
+    }, { locale, manifest });
+    await page.goto(`${FRONTEND_URL}/?embed=1&import=1`);
+    await expect(page.getByRole("alert").filter({ hasText: ui[locale]["error.UNSUPPORTED_PACKAGE_DEPENDENCY"] })).toBeVisible();
+    expect(state.imported).toBeNull();
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona }).locator("option"))
+      .toHaveCount(state.catalog.length);
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona }))
+      .not.toHaveValue("synthetic-package-persona");
+  });
+}
 
 for (const locale of ["en", "nl"] as const) {
   test(`${locale}: chat HTTP/SSE failures, history retry and deletion rollback stay visible and safe`, async ({ page }) => {

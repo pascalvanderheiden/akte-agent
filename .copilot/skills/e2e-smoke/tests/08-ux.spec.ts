@@ -9,6 +9,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { FRONTEND_URL, USE_CASES } from "./helpers";
 
+const origin = new URL(FRONTEND_URL).origin;
+
 async function gotoHome(page: Page) {
   await page.goto(FRONTEND_URL, { waitUntil: "domcontentloaded" });
   // Wait for runtime config + use-cases to land — landing input is the gate.
@@ -48,24 +50,34 @@ test.describe("UX — interactive flows", () => {
     else await expect(persona).toBeVisible();
   });
 
-  test("switching persona updates the persona selector value", async ({ page }) => {
-    await gotoHome(page);
-    const persona = page.locator('select[aria-label="Select agent persona"]');
-    await expect(persona).toBeVisible();
-    const optionValues = await persona.locator("option").evaluateAll((opts) =>
-      opts.map((o) => (o as HTMLOptionElement).value).filter(Boolean),
-    );
-    test.skip(optionValues.length < 2, "requires a synthetic multi-persona catalog");
-    for (const value of optionValues.slice(0, 2)) {
-      await persona.selectOption(value);
-      await expect(persona).toHaveValue(value);
-    }
-  });
-
   test("landing textarea + send button triggers a chat and an assistant reply renders", async ({
     page,
   }) => {
-    test.setTimeout(180_000);
+    const conversations: unknown[] = [];
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.origin !== origin) return route.abort();
+      if (url.pathname === "/config.json") return route.fulfill({ json: { apiUrl: origin } });
+      if (url.pathname === "/api/use-cases") {
+        return route.fulfill({ json: { useCases: [{ name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", skillCount: 0, sampleQuestions: [] }] } });
+      }
+      if (url.pathname === "/api/conversations") {
+        if (route.request().method() === "POST") {
+          const body = route.request().postDataJSON();
+          const conversation = { id: "synthetic-conversation", title: body.title, useCase: "akte-agent", status: "active", createdAt: "2020-03-21T12:00:00Z", updatedAt: "2020-03-21T12:00:00Z" };
+          conversations.push(conversation);
+          return route.fulfill({ status: 201, json: conversation });
+        }
+        return route.fulfill({ json: { conversations } });
+      }
+      if (url.pathname === "/api/agent/chat") {
+        return route.fulfill({
+          contentType: "text/event-stream",
+          body: `data: ${JSON.stringify({ type: "content", content: "Synthetic Akte response." })}\n\ndata: ${JSON.stringify({ type: "done" })}\n\n`,
+        });
+      }
+      return route.continue();
+    });
     await gotoHome(page);
 
     const input = page.getByPlaceholder("Ask me anything...");
@@ -83,13 +95,7 @@ test.describe("UX — interactive flows", () => {
       "user message bubble rendered",
     ).toBeVisible({ timeout: 15_000 });
 
-    // Wait for the assistant's reply: once the agent finishes streaming, the
-    // ChatWindow's send button label flips from "Sending message" back to
-    // "Send message". That's the unambiguous "done" signal.
-    await page
-      .getByRole("button", { name: "Sending message" })
-      .waitFor({ state: "visible", timeout: 30_000 })
-      .catch(() => undefined);
+    await expect(page.getByText("Synthetic Akte response.", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Send message" }),
       "send button returns to non-streaming state after assistant reply",

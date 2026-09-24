@@ -103,7 +103,7 @@ async function open(page: Page, locale: Locale) {
     }
   }, locale);
   await page.goto(`${FRONTEND_URL}/`);
-  await page.getByRole("combobox", { name: ui[locale].selectPersona }).selectOption("akte-agent");
+  await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
 }
 
 async function download(page: Page, draft: Draft) {
@@ -134,7 +134,7 @@ for (const locale of ["en", "nl"] as const) {
         await box.fill("SYNTHETIC unsent correction");
         await page.getByRole("combobox", { name: /^(Language|Taal)$/ }).selectOption(currentLocale);
         await expect(page.getByRole("textbox", { name: ui[currentLocale].ask })).toHaveValue("SYNTHETIC unsent correction");
-        await expect(page.getByRole("combobox", { name: ui[currentLocale].selectPersona })).toHaveValue("akte-agent");
+        await expect(page.getByRole("combobox", { name: ui[currentLocale].selectPersona })).toHaveCount(0);
         expect(state.messages.map((message) => message.content)).toEqual(oldMessages);
       }
       const prompt = `SYNTHETIC-AKTE-LEGAL ${draft.name}; ${locale === "en" ? "write output in English" : "schrijf uitvoer in het Nederlands"}; retain raw sources.`;
@@ -177,7 +177,7 @@ for (const locale of ["en", "nl"] as const) {
     const original = state.messages[0].content;
     await expect(page.getByText(original, { exact: true })).toBeVisible();
     await page.reload();
-    await page.getByRole("combobox", { name: ui[currentLocale].selectPersona }).selectOption("akte-agent");
+    await expect(page.getByRole("combobox", { name: ui[currentLocale].selectPersona })).toHaveCount(0);
     await page.getByRole("button", { name: /SYNTHETIC-AKTE-LEGAL intake/ }).first().click();
     await expect(page.getByText(original, { exact: true })).toBeVisible();
     await download(page, drafts.at(-1)!);

@@ -10,12 +10,14 @@ const ui = { en, nl };
 const origin = new URL(FRONTEND_URL).origin;
 const mount = new URL(FRONTEND_URL).pathname.replace(/\/$/, "");
 
-async function fixture(page: Page, locale: Locale) {
-  const catalog: UseCase[] = [
-    { name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", curated: true, skillCount: 0, sampleQuestions: [] },
-    { name: "synthetic-import", displayName: "Imported fixture", description: "Synthetic", curated: false, skillCount: 0, sampleQuestions: [] },
-    { name: "synthetic-hidden", displayName: "Non-curated fixture", description: "Synthetic", curated: false, skillCount: 0, sampleQuestions: [] },
-  ];
+async function fixture(page: Page, locale: Locale, singleAkte = false) {
+  const catalog: UseCase[] = [{ name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", curated: true, skillCount: 0, sampleQuestions: [] }];
+  if (!singleAkte) {
+    catalog.push(
+      { name: "synthetic-import", displayName: "Imported fixture", description: "Synthetic", curated: false, skillCount: 0, sampleQuestions: [] },
+      { name: "synthetic-hidden", displayName: "Non-curated fixture", description: "Synthetic", curated: false, skillCount: 0, sampleQuestions: [] },
+    );
+  }
   const now = "2020-03-21T12:00:00Z";
   const conversations: Conversation[] = [{
     id: "synthetic-old", title: "Preserved retired history", useCase: "generic",
@@ -123,6 +125,33 @@ for (const locale of ["en", "nl"] as const) {
     expect(state.writes).toEqual([]);
     await page.getByRole("button", { name: ui[locale].startAvailableConversation }).click();
     await expect(page.getByRole("textbox", { name: ui[locale].ask })).toBeEnabled();
+    expect(state.writes).toEqual([]);
+  });
+
+  test(`${locale}: single Akte catalog preserves unavailable history without a selector`, async ({ page }) => {
+    const state = await fixture(page, locale, true);
+    state.conversations.push({
+      id: "metadata-less",
+      title: "Unknown history",
+      useCase: "",
+      status: "active",
+      createdAt: "2020-03-21T12:00:00Z",
+      updatedAt: "2020-03-21T12:00:00Z",
+    });
+    await page.goto(`${FRONTEND_URL}/`);
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
+    await page.getByRole("button", { name: /Preserved retired history/ }).first().click();
+    await expect(page.getByText(ui[locale]["error.PERSONA_UNAVAILABLE"], { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: ui[locale].ask })).toBeDisabled();
+    const pending = page.waitForEvent("download");
+    await page.getByRole("link", { name: /historical.txt.*download|Download historical.txt/i }).click();
+    const download = await pending;
+    expect(await download.suggestedFilename()).toBe("historical.txt");
+    await page.getByRole("button", { name: ui[locale].startAvailableConversation }).click();
+    await expect(page.getByRole("textbox", { name: ui[locale].ask })).toBeEnabled();
+    await page.getByRole("button", { name: /Unknown history/ }).first().click();
+    await expect(page.getByText(ui[locale]["error.PERSONA_UNAVAILABLE"], { exact: true })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: ui[locale].ask })).toBeDisabled();
     expect(state.writes).toEqual([]);
   });
 }

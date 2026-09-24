@@ -103,11 +103,8 @@ for (const locale of ["en", "nl"] as const) {
     const state = await routeFixture(page, fixture);
     await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
     await page.goto(`${FRONTEND_URL}/`);
-    const selector = page.getByRole("combobox", { name: ui[locale].selectPersona });
-    await expect(selector).toHaveValue("akte-agent");
-    expect(await selector.locator("option").evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value)))
-      .toEqual(fixture.catalog.map((persona) => persona.name));
-    await selector.selectOption("akte-agent");
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
+    expect(fixture.catalog.map((persona) => persona.name)).toEqual(["akte-agent"]);
     await expect(page.getByRole("heading", { name: "Akte Agent", exact: true })).toBeVisible();
     const akte = fixture.catalog.find((persona) => persona.name === "akte-agent")!;
     for (const starter of akte.localizations![locale]!.sampleQuestions!) {

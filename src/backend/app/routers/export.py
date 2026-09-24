@@ -34,6 +34,19 @@ router = APIRouter()
 _USE_CASE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
+def _resolve_code_root() -> Path:
+    """Locate the checkout/container root that supplies export code and infra."""
+    candidates = (Path.cwd(), *Path(__file__).resolve().parents)
+    for candidate in candidates:
+        if (
+            (candidate / "src" / "hosted-agent").is_dir()
+            and (candidate / "src" / "backend" / "app").is_dir()
+            and (candidate / "infra").is_dir()
+        ):
+            return candidate
+    raise FileNotFoundError("Kratos source tree required for export was not found")
+
+
 _auth_dep = Depends(require_authenticated_user)
 
 
@@ -66,12 +79,7 @@ async def export_use_case(
         if blob_service is not None and getattr(blob_service, "local_base_dir", None)
         else Path(request.app.state.settings.use_cases_root).resolve()
     )
-    candidate_repo_root = persona_assets_root.parent
-    repo_root = (
-        candidate_repo_root
-        if (candidate_repo_root / "src" / "hosted-agent").is_dir()
-        else Path(__file__).resolve().parents[4]
-    )
+    repo_root = _resolve_code_root()
     exporter = ProjectExporter(repo_root=repo_root, persona_assets_root=persona_assets_root)
 
     try:
