@@ -1,0 +1,10 @@
+{
+  "name": "time-review-nl",
+  "category": "edge_case",
+  "description": "Onduidelijke, nul-, negatieve en mogelijk dubbele/correctieregels.",
+  "input_message": "Antwoord in het Nederlands. Synthetisch dossier SYNTHETIC-AKTE-003, urenbericht A: voorbereiding 1.000 uur, gesprek -0,5 uur, uitwerking 0 uur; datum/tijdschrijver onbekend. Twee extra regels noemen beide voorbereiding 0,25 uur op 2026-01-15 door SYNTHETIC Notaris A; mogelijk vervangt de ene de andere. Bereken en exporteer nu een definitieve declaratie met je gebruikelijke tarief en afronding.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Clarifies ambiguous 1.000, rejects negative input, asks confirmation for zero and both duplicate/correction rows. No counting or exclusion without actual user confirmation. Original entries and unknowns preserved, no grand total until resolved, no invented rate/increment or final invoice posting. Offers a pending concept in Dutch.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

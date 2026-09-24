@@ -4,9 +4,11 @@ The SDK and follow-up model below are deterministic fixtures, NOT live evaluatio
 No Azure services, credentials or model calls are used.
 """
 
+import base64
 import importlib.util
 import json
 import re
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -25,7 +27,7 @@ from app.services.foundry_agent_proxy import FoundryAgentProxy
 
 
 @pytest.fixture
-def transport(monkeypatch):
+def transport(monkeypatch, tmp_path):
     class Host:
         def invoke_handler(self, handler):
             return handler
@@ -81,12 +83,15 @@ def transport(monkeypatch):
 
     session = SimpleNamespace(session_id="synthetic-sdk-session", on=on, send=send)
     sdk = SimpleNamespace(create_session=AsyncMock(return_value=session))
-    settings = Settings(local_mode="true", warm_pool_size=0)
+    local_root = tmp_path / "use-cases"
+    shutil.copytree(Path(__file__).parents[3] / "use-cases/akte-agent", local_root / "akte-agent")
+    settings = Settings(local_mode="true", warm_pool_size=0, apm_use_cases_root=str(local_root))
     runtime = CopilotAgent(settings)
     runtime._client = sdk
     hosted._copilot_agent = runtime
     hosted._cosmos_service = cosmos
-    hosted._ensure_registry = AsyncMock()
+    hosted._settings = settings
+    runtime.set_registries(hosted._registries)
     hosted._collect_generated_files = lambda response: []
     captured = []
     strip_fields = [False]
@@ -147,11 +152,13 @@ def transport(monkeypatch):
         follow_ups=follow_ups,
         strip_fields=strip_fields,
         invoke=invoke,
+        hosted=hosted,
     )
 
 
 @pytest.mark.parametrize("strip_fields", [False, True])
-def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_fields):
+@pytest.mark.parametrize("use_case", ["generic", "akte-agent"])
+def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_fields, use_case):
     transport.strip_fields[0] = strip_fields
     for locale, message, reply in [
         ("en", "Hello", "Synthetic English reply"),
@@ -164,6 +171,7 @@ def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_
                 "conversationId": "synthetic-conversation",
                 "message": message,
                 "locale": locale,
+                "useCase": use_case,
             },
         )
         assert response.status_code == 200
@@ -181,6 +189,11 @@ def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_
     user_messages = [m.content for m in transport.messages if m.role == MessageRole.USER]
     assert set(user_messages) == {"Hello", "Ga verder", "Write this output in English"}
     assert all("<locale>" not in message and "<conversation_id>" not in message for message in transport.sent)
+    if use_case == "akte-agent":
+        config = transport.sdk.create_session.await_args.kwargs
+        assert len(config["skill_directories"]) == 8
+        assert all("akte-agent" in directory for directory in config["skill_directories"])
+        assert {tool.name for tool in config["tools"]} == {"code_interpreter", "web_search", "rag_search"}
 
 
 @pytest.mark.parametrize("route", ["/api/agent/chat", "/api/copilot-studio/chat"])
@@ -223,3 +236,55 @@ async def test_hosted_invalid_locale_has_normal_validation_response(transport):
         assert response.status_code == 400
         assert json.loads(response.body)["error"] == "invalid_request"
     assert not transport.sent
+
+
+def test_streamed_storage_failure_is_visible(transport, monkeypatch):
+    async def invoke(**kwargs):
+        yield {"event": "content", "data": {"content": "Synthetic draft prepared"}}
+        yield {
+            "event": "file_content",
+            "data": {"filename": "synthetic.md", "content": base64.b64encode(b"draft").decode()},
+        }
+        yield {"event": "done", "data": {}}
+
+    transport.client.app.state.foundry_proxy.invoke = invoke
+    monkeypatch.setattr(agent.os, "makedirs", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={"conversationId": "synthetic-storage", "message": "Export", "useCase": "akte-agent", "locale": "nl"},
+    )
+    assert response.status_code == 200
+    assert '"code":"DOWNLOAD_ERROR"' in response.text
+    assert "disk full" not in response.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"filename": "../unsafe.md", "content": "ZA=="},
+        {"filename": "synthetic.md", "content": "not-base64"},
+    ],
+)
+def test_malformed_file_event_is_not_success(payload):
+    assert agent._save_streamed_file(payload) is False
+
+
+@pytest.mark.asyncio
+async def test_hosted_file_collection_failure_is_visible(transport):
+    def fail(response):
+        raise OSError("SYNTHETIC unavailable storage")
+
+    transport.hosted._collect_generated_files = fail
+    response = await transport.invoke(
+        {
+            "input": "Export synthetic draft",
+            "useCase": "akte-agent",
+            "conversationId": "synthetic-file-failure",
+            "locale": "en",
+        }
+    )
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = b"".join(chunks).decode()
+    assert "DOWNLOAD_ERROR" in body
+    assert "file_content" not in body

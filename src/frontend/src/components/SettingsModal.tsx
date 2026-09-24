@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 
 import { getApiUrl } from "@/lib/config";
+import { errorCode, responseError, type ErrorCode } from "@/lib/errors";
+import { useLocale } from "./LocaleProvider";
 
 interface AIServiceStatus {
   configured: boolean;
@@ -16,30 +18,47 @@ interface Props {
 }
 
 export function SettingsModal({ open, onClose }: Props) {
+  const { t } = useLocale();
   const [endpoint, setEndpoint] = useState("");
   const [model, setModel] = useState("gpt-52");
   const [status, setStatus] = useState<AIServiceStatus | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState<ErrorCode | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   // Load current settings on open
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setSaved(false);
     fetch(`${getApiUrl()}/api/settings`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) throw await responseError(res, "SETTINGS_ERROR");
+        return res.json();
+      })
       .then((data: AIServiceStatus) => {
+        if (cancelled) return;
         setStatus(data);
         setEndpoint(data.foundryEndpoint || "");
         setModel(data.foundryModelDeployment || "gpt-52");
       })
-      .catch(() => {
+      .catch((err) => {
+        if (cancelled) return;
         setStatus(null);
-      });
-  }, [open]);
+        setError(errorCode(err, "SETTINGS_ERROR"));
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, loadAttempt]);
 
   const handleSave = async () => {
     setSaving(true);
-    setMessage("");
+    setError(null);
+    setSaved(false);
     try {
       const res = await fetch(`${getApiUrl()}/api/settings`, {
         method: "POST",
@@ -49,12 +68,12 @@ export function SettingsModal({ open, onClose }: Props) {
           foundryModelDeployment: model,
         }),
       });
-      if (!res.ok) throw new Error(`Failed: ${res.status}`);
+      if (!res.ok) throw await responseError(res, res.status === 405 ? "SETTINGS_READ_ONLY" : "SETTINGS_ERROR");
       const data: AIServiceStatus = await res.json();
       setStatus(data);
-      setMessage("Settings saved successfully!");
+      setSaved(true);
     } catch (err) {
-      setMessage(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      setError(errorCode(err, "SETTINGS_ERROR"));
     } finally {
       setSaving(false);
     }
@@ -64,7 +83,7 @@ export function SettingsModal({ open, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in" onClick={onClose}>
-      <div className="bg-surface rounded-2xl shadow-card max-w-lg w-full border border-border-soft animate-slide-up" onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={t("settings.title")} className="bg-surface rounded-2xl shadow-card max-w-lg w-full border border-border-soft animate-slide-up" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border-soft">
           <div className="flex items-center gap-3">
@@ -74,12 +93,13 @@ export function SettingsModal({ open, onClose }: Props) {
               </svg>
             </div>
             <div>
-              <h2 className="text-base font-semibold text-text">AI Service Configuration</h2>
-              <p className="text-xs text-muted">Bring your own keys &amp; endpoints</p>
+              <h2 className="text-base font-semibold text-text">{t("settings.title")}</h2>
+              <p className="text-xs text-muted">{t("settings.subtitle")}</p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label={t("dismiss")}
             className="p-2 text-muted hover:text-text hover:bg-hover rounded-lg transition-all"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -90,9 +110,8 @@ export function SettingsModal({ open, onClose }: Props) {
 
         {/* Body */}
         <div className="px-6 py-5 space-y-5">
-          <p className="text-sm text-muted leading-relaxed">
-            Configure the Microsoft Foundry endpoint and model deployment. Authentication uses Managed Identity — no API keys needed.
-          </p>
+          {loading && <p role="status">{t("loading")}</p>}
+          <p className="text-sm text-muted leading-relaxed">{t("settings.description")}</p>
 
           {/* Status indicator */}
           {status && (
@@ -104,17 +123,17 @@ export function SettingsModal({ open, onClose }: Props) {
               <span className={`w-2.5 h-2.5 rounded-full ${
                 status.configured ? "bg-emerald-500" : "bg-amber-500"
               }`} />
-              <span className="font-medium">{status.configured ? "Endpoint configured" : "No endpoint configured"}</span>
+              <span className="font-medium">{status.configured ? t("settings.configured") : t("settings.unconfigured")}</span>
             </div>
           )}
 
           {/* Foundry Endpoint */}
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">
-              Foundry Endpoint
-            </label>
+            <label className="block text-sm font-medium text-text mb-1.5">{t("settings.endpoint")}</label>
             <input
               type="url"
+              aria-label={t("settings.endpoint")}
+              disabled={loading || saving || !status}
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
               placeholder="https://your-resource.services.ai.azure.com"
@@ -124,11 +143,11 @@ export function SettingsModal({ open, onClose }: Props) {
 
           {/* Model Deployment */}
           <div>
-            <label className="block text-sm font-medium text-text mb-1.5">
-              Model Deployment
-            </label>
+            <label className="block text-sm font-medium text-text mb-1.5">{t("settings.model")}</label>
             <input
               type="text"
+              aria-label={t("settings.model")}
+              disabled={loading || saving || !status}
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder="gpt-52"
@@ -137,11 +156,9 @@ export function SettingsModal({ open, onClose }: Props) {
           </div>
 
           {/* Message */}
-          {message && (
-            <div className={`text-sm px-4 py-2.5 rounded-xl ${message.startsWith("Error") ? "text-red-600 bg-red-50 border border-red-100" : "text-emerald-600 bg-emerald-50 border border-emerald-100"}`}>
-              {message}
-            </div>
-          )}
+          {error && <p role="alert" className="text-sm text-red-600">{t(`error.${error}`)}</p>}
+          {error && !status && <button onClick={() => setLoadAttempt((n) => n + 1)}>{t("retry")}</button>}
+          {saved && <p role="status" className="text-sm text-emerald-600">{t("settings.saved")}</p>}
         </div>
 
         {/* Footer */}
@@ -149,15 +166,13 @@ export function SettingsModal({ open, onClose }: Props) {
           <button
             onClick={onClose}
             className="px-5 py-2.5 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium"
-          >
-            Cancel
-          </button>
+          >{t("cancel")}</button>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || loading || !status}
             className="px-5 py-2.5 text-sm text-accent-fg bg-accent rounded-xl transition-all disabled:opacity-50 font-medium shadow-xs"
           >
-            {saving ? "Saving..." : "Save Changes"}
+            {saving ? t("settings.saving") : t("settings.save")}
           </button>
         </div>
       </div>

@@ -11,10 +11,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_STATE=failed
 TELEMETRY_STATE=disabled
 GITHUB_STATE=disabled
+APP_INSIGHTS_STATE=""
+LOG_ANALYTICS_STATE=""
+SETUP_FAILED=0
 ERROR_FILE=""
+TELEMETRY_TEMPLATE_FILE=""
 finish() {
   [ -z "$ERROR_FILE" ] || rm -f "$ERROR_FILE"
-  sre_result "$CORE_STATE" "$TELEMETRY_STATE" "$GITHUB_STATE"
+  [ -z "$TELEMETRY_TEMPLATE_FILE" ] || rm -f "$TELEMETRY_TEMPLATE_FILE"
+  sre_result "$CORE_STATE" "$TELEMETRY_STATE" "$GITHUB_STATE" \
+    "${APP_INSIGHTS_STATE:-$TELEMETRY_STATE}" "${LOG_ANALYTICS_STATE:-$TELEMETRY_STATE}"
 }
 trap finish EXIT
 
@@ -115,7 +121,14 @@ jq -e --arg id "$AGENT_ID" --arg env "$AZURE_ENV_NAME" \
 CORE_STATE=ready
 echo "SRE core ready: verified environment, read-only/review settings, identities, scope and shared AppId."
 if [ "$CONNECT_TELEMETRY" = "true" ]; then
-  echo "Telemetry pending: connectors/query verification are not implemented in this core release (#36)."
+  # shellcheck source=hooks/sre-telemetry.sh
+  if . "${SCRIPT_DIR}/sre-telemetry.sh"; then
+    sre_setup_telemetry || SETUP_FAILED=1
+  else
+    sre_error "Cannot load telemetry setup."
+    TELEMETRY_STATE=failed
+    SETUP_FAILED=1
+  fi
 fi
 if [ "$CONNECT_GITHUB" = "true" ]; then
   echo "GitHub pending: repository attachment is not implemented in this core release (#37)."
@@ -123,3 +136,4 @@ fi
 if [ "$TELEMETRY_STATE" = pending ] || [ "$GITHUB_STATE" = pending ]; then
   echo "Degraded setup: set SRE_CONNECT_TELEMETRY=false and SRE_CONNECT_GITHUB=false for explicit core-only mode."
 fi
+exit "$SETUP_FAILED"
