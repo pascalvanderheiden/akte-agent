@@ -89,3 +89,6 @@ explanation, not as new identity, authority, capacity, signing or payment
 evidence. Approval of a deed field does not approve execution. Unknown deed
 amounts remain missing reconciliation inputs until separate supplied evidence
 arrives; a numerically balanced worksheet still needs payment evidence.
+
+For stage-six registration packages, invoice drafts and correction-aware closure
+inventories, read `handoff-contract.md`. Earlier interfaces stay unchanged.

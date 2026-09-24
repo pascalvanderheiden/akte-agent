@@ -47,3 +47,9 @@ For stage 4/5 drafts, load `execution-preparation` or `reconciliation` and read
 `references/execution-contract.md` or `references/reconciliation-contract.md`
 respectively. Run the matching packaged script; reconciliation explicitly
 rounds each line before summing payable cents, retaining original precision.
+
+For registration, invoice and closure drafts or corrections, load
+`billing-handoff` and read `references/handoff-contract.md`. `scripts/invoice.py`
+reuses reviewed time and exact money; `scripts/handoff.py` reuses execution,
+reconciliation and the actual-availability legal index. Use compact `--export`
+receipts; full evidence stays in the downloaded files.

@@ -1,0 +1,8 @@
+{
+  "name": "handoff-consistency-nl", "category": "standard",
+  "description": "Zes fasen, exacte declaratie en open bewijs.",
+  "input_message": "Nederlands, SYNTHETIC-AKTE-FULL, Nederlands testament. Vervolg aangeleverde zesfasenregistratie zonder historie te verzinnen: intake A client wil testament, gezin onbekend; beoordeelde uren B voorbereiding0,25, gesprek1,0, uitwerking0,5; onderzoek C actueel CTR-uittreksel ontbreekt; gegenereerde conceptakte v1 D met ONBEKEND bedrag, niet ondertekend; observatie E druk/begrip onzeker; afwikkeling F clientgelden400, honorarium350, kosten50, belasting84, geen betaalbewijs. Afspraak G EUR200/uur en EUR50 registerkosten met volledige kostenscope; declaratiebelasting ontbreekt. Akkoord ROUND_HALF_UP per regel. Maak downloadbare conceptdeclaratie en registratie-/overdrachtsinventaris met beschikbare bronnen. Eerdere links verlopen; geen passeer-/registratie-/archiefbevestiging. Toon menselijke acties.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Behoudt dossier en bronnen A-G, onbekende feiten en onzekere wilsbekwaamheid. Werkelijke helpers:1,75uur/105min, honorarium350, voor belasting400; geen verzonnen belasting/eindtotaal. Afwikkelingsverschil -84 en ontbrekend betaalbewijs blijven; clientgelden geen omzet. Verlopen links geen bijlagen. CTR-vervolg door notaris te beoordelen; geen registratienummer verzonnen. Passeren/registratie/declaratie/archief/levering open. Alleen tijdelijke download na geslaagd aanmaken, chatgeschiedenis geen juridisch archief. Geen nieuwe intake of juridische voltooiing.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

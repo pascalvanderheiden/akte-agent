@@ -16,6 +16,7 @@ from app.routers import export, files
 from app.services.project_exporter import ProjectExporter
 from app.services.skill_registry import SkillRegistry
 from tests.akte_combined_fixture import create_journey
+from tests.akte_handoff_fixture import create_complete_journey
 
 REPO = Path(__file__).resolve().parents[3]
 REQUIRED_SKILLS = {
@@ -30,6 +31,7 @@ REQUIRED_SKILLS = {
     "legal-preparation",
     "execution-preparation",
     "reconciliation",
+    "billing-handoff",
 }
 
 
@@ -110,6 +112,19 @@ async def test_cross_stage_artifacts_keep_provenance_and_pending_evidence(tmp_pa
         for document in documents[:-1]:
             assert Path(document["path"]).name.replace("_", "\\_") in index["text"]
         assert ("no office system updated" if locale == "en" else "geen kantoorsysteem bijgewerkt") in index["text"]
+        complete = create_complete_journey(destination / "use-cases/akte-agent", locale, correction=True)
+        documents.extend(complete)
+        for document in complete:
+            path = Path(document["path"])
+            response = TestClient(app).get(f"/api/files/download/{path.name}", params={"path": str(path)})
+            assert response.status_code == 200
+            assert response.content == path.read_bytes()
+        invoice = next(item for item in complete if item["name"] == "invoice")
+        assert invoice["receipt"]["totals"]["pretax"] == "400.00"
+        handoff = next(item for item in complete if item["name"] == "corrected-handoff")
+        assert handoff["receipt"]["review_status"] == "pending"
+        assert handoff["receipt"]["evidence_status"]["registration"] == "pending"
+        assert handoff["receipt"]["stale_count"] > 0
     finally:
         for document in documents:
             Path(document["path"]).unlink()

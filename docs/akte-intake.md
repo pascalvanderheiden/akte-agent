@@ -6,6 +6,8 @@ each language cover the notarial journey. This page documents intake/timekeeping
 [execution preparation and reconciliation](akte-execution.md) documents the
 additional stage 4/5 draft skills and their handoff from stage 2/3 legal drafts.
 None introduces live notarial integrations.
+For the complete six-stage journey, registration package, exact invoice and
+evidence-based closure inventory, see [dossier handoff](akte-handoff.md).
 
 ## Delivered draft slice
 

@@ -54,6 +54,7 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         "legal_preparation",
         "execution_preparation",
         "reconciliation",
+        "billing_handoff",
     } <= names
 
 
@@ -78,6 +79,7 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
         "legal-preparation",
         "execution-preparation",
         "reconciliation",
+        "billing-handoff",
     } <= registry.skills.keys()
     assert registry.mcp_servers == {}
     script = destination / "use-cases/akte-agent/skills/working-artifacts/scripts/time_record.py"
