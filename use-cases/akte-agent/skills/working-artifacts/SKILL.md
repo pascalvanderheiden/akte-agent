@@ -27,6 +27,10 @@ enabled: true
    files to the approved office system. Errors mean generation failed: provide
    draft text inline if useful, without claiming a downloadable file exists.
 
+For research, deeds, translation, comparison, dossier records and delivery,
+read `references/legal-record.md` and use `scripts/legal_record.py`. Load
+`legal-preparation` for the evidence and human-review process first.
+
 ## Later financial drafts
 
 `scripts/exact.py` provides `parse_decimal`, `exact_sum`, `exact_product`,

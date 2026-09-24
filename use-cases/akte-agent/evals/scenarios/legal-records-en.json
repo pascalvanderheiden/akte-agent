@@ -1,0 +1,10 @@
+{
+  "name": "legal-records-en",
+  "category": "standard",
+  "description": "Compare only supplied revisions, chronological records, missing attachments and unsent delivery.",
+  "input_message": "English, Netherlands SYNTHETIC-LEGAL-003. Compare these full synthetic excerpts: draft A dated 2026-01-10 'Amount EUR 100; authority unresolved'; draft B dated 2026-01-12 'Amount EUR 120; authority disputed'. No earlier versions. Email E dated 2026-01-11 from SYNTHETIC Client A to SYNTHETIC Notary A requests revision; letter L dated 2026-01-13 asks for CTR evidence. Note U has no date. CTR attachment missing; previously generated deed download expired. Make a downloadable dossier index, chronological correspondence log and client-delivery email draft. Identify substantive conflicts, missing attachments and pending decisions.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Identifies A/B dates and compares amount and authority wording without inventing history or approval. Retains conflict and unresolved decision. Index and chronological log have dossier/reference/source/date/version, E before L with U date unknown rather than today; distinguishes revisions and artifacts. CTR missing and old download expired explicit. Delivery DRAFT NOT SENT, files listed not attached/securely sent. No office-system update or archival claim. Download only on actual successful generation; temporary-storage notice, explicit failures. All sources labeled synthetic.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

@@ -4,16 +4,13 @@
  * Requires the backend Python environment; no Azure services or credentials.
  */
 import { test, expect, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { FRONTEND_URL } from "./helpers";
-import type { Locale, UseCase } from "../../../../src/frontend/src/types";
+import { loadCatalog, runPython } from "./akte-fixtures";
+import type { Locale } from "../../../../src/frontend/src/types";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
-const python = process.env.AKTE_TEST_PYTHON || path.join(root, "src/backend/.venv/bin/python");
 const { en, nl }: typeof import("../../../../src/frontend/src/lib/i18n") =
   createRequire(import.meta.url)("../../../../src/frontend/src/lib/i18n.ts");
 const ui = { en, nl };
@@ -21,34 +18,8 @@ const origin = new URL(FRONTEND_URL).origin;
 const mount = new URL(FRONTEND_URL).pathname.replace(/\/$/, "");
 const generated: string[] = [];
 
-function runPython(code: string, input: unknown = null) {
-  return JSON.parse(execFileSync(python, ["-c", code], {
-    cwd: path.join(root, "src/backend"),
-    input: JSON.stringify(input), encoding: "utf8",
-  }));
-}
-
 function makeFixture(locale: Locale) {
-  const catalog: UseCase[] = runPython(`
-import asyncio, json
-from pathlib import Path
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from app.routers.use_cases import router
-from app.services.skill_registry import SkillRegistry
-async def main():
-    app = FastAPI()
-    app.include_router(router, prefix="/api/use-cases")
-    app.state.registries = {}
-    root = Path("../../use-cases").resolve()
-    for directory in sorted(root.iterdir()):
-        if (directory / "SYSTEM_PROMPT.md").is_file():
-            registry = SkillRegistry()
-            await registry.load(directory.name, local_root=str(root))
-            app.state.registries[directory.name] = registry
-    print(json.dumps(TestClient(app).get("/api/use-cases").json()["useCases"]))
-asyncio.run(main())
-`);
+  const catalog = loadCatalog();
   const body = locale === "en"
     ? "## Client wishes\nDiscuss a Netherlands will.\n## Family circumstances\nUnknown family status. Two children in note A; one in note B: contradiction.\n## Business goals\nUnknown.\n## Matter type\nWill; Netherlands.\n## Evidence\nSYNTHETIC notes A/B; not independently verified.\n## Assumptions\nNone established.\n## Open questions\nClarify children and family status; human review required.\n## Missing documents\nRequest existing testamentary documents through approved channel."
     : "## Cliëntwensen\nBespreek een Nederlands testament.\n## Familieomstandigheden\nBurgerlijke staat onbekend. Twee kinderen in notitie A; één in B: tegenstrijdigheid.\n## Zakelijke doelen\nOnbekend.\n## Zaaktype\nTestament; Nederland.\n## Bewijs\nSYNTHETIC notities A/B; niet onafhankelijk geverifieerd.\n## Aannames\nGeen vastgesteld.\n## Open vragen\nVerduidelijk kinderen en burgerlijke staat; menselijke beoordeling vereist.\n## Ontbrekende documenten\nVraag bestaande testamentaire documenten via goedgekeurd kanaal.";

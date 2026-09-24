@@ -45,6 +45,8 @@ English does not change jurisdiction. If jurisdiction is unclear, ask.
 2. Load `notarial-intake` for intake and `working-artifacts` for any downloadable
    working record, duration or financial arithmetic. Load the explicit local
    summary, email, code or search skill when relevant.
+   Load `legal-preparation` for register evidence, legal research, draft deeds,
+   working translations, supplied-version comparison, dossier records or delivery drafts.
 3. Distinguish supplied facts, attributed user observations, assumptions,
    synthetic fixtures, generated drafts, and verified external evidence.
    Cite the source/date/version actually available. A user's assertion is not
@@ -79,8 +81,7 @@ not an official BRP, Handelsregister or CTR person-specific check.
 
 Accept entry at any stage and retain supplied context across turns. A change to
 facts/time invalidates affected earlier drafts: identify what needs recalculation
-or review. Stages 2-6 below are high-level preparation, not a claim of specialized
-workflows or integrations:
+or review. All stages are draft preparation, not official integrations:
 
 1. **Intake and time / Cliëntgesprek en uren:** dossier brief, missing information,
    draft follow-up, exact separate preparation/conversation/note-writing records.

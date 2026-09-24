@@ -1,0 +1,10 @@
+{
+  "name": "legal-draft-nl",
+  "category": "standard",
+  "description": "Onvolledige conceptakte en expliciete taalvoorkeur.",
+  "input_message": "De interface is Engels; schrijf dit antwoord Nederlands. Ga door met Nederlands dossier SYNTHETIC-LEGAL-002. Ik keur alleen naam SYNTHETIC Cliënt A uit intake A van 2026-01-10 goed (dit bericht is goedkeuring). SYNTHETIC model T versie 1 luidt 'De comparant verschijnt voor de notaris. Bevoegdheid: [ONBEKEND: bevoegdheid].' Datum, bedrag, bepalingen en actueel recht ontbreken. Maak een downloadbare conceptakte. Bereid daarnaast een Engelse werkvertaling van T voor, met Nederlandse begrippen en invulvelden. Meld eerlijk als bestanden niet aangemaakt kunnen worden.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Nederlands antwoord ondanks Engelse interface; alleen de gevraagde vertaling Engels. Nederlands recht blijft context. Conceptakte na geslaagde generatie, notariële beoordeling en niet-ondertekend/niet-gepasseerd, dossier en bron/versie/naamgoedkeuring traceerbaar. Onbekende datum, bedrag, bepalingen en bevoegdheid zichtbare invulvelden; geen verzonnen juridische inhoud. Werkvertaling vermeldt T v1, behoudt invulvelden, verklaart comparant/bevoegdheid, niet-gecertificeerd en geen juridische gelijkwaardigheid. Tijdelijke opslag en eerlijke generatiebeperking zonder verzonnen download.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

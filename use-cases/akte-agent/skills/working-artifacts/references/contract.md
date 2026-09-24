@@ -27,6 +27,12 @@ Assumptions remain labeled and never upgraded merely because repeated.
 All exports have fixed DRAFT/human-review status and a temporary-storage notice.
 The downloaded Markdown is UTF-8.
 
+## Legal preparation
+
+For sourced research, deeds, working translations, supplied-version comparisons,
+dossier indexes/correspondence and delivery drafts, read `legal-record.md`.
+These reuse the common artifact envelope without changing time or arithmetic APIs.
+
 ## Time input
 
 Use the common dossier/locale/sources fields, replacing body/type with entries:

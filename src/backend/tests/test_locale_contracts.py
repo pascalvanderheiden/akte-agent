@@ -191,7 +191,17 @@ def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_
     assert all("<locale>" not in message and "<conversation_id>" not in message for message in transport.sent)
     if use_case == "akte-agent":
         config = transport.sdk.create_session.await_args.kwargs
-        assert len(config["skill_directories"]) == 8
+        assert {
+            "code-interpreter",
+            "document-summary",
+            "email-draft",
+            "file-sharing",
+            "notarial-intake",
+            "rag-search",
+            "web-search",
+            "working-artifacts",
+            "legal-preparation",
+        } <= {Path(directory).name for directory in config["skill_directories"]}
         assert all("akte-agent" in directory for directory in config["skill_directories"])
         assert {tool.name for tool in config["tools"]} == {"code_interpreter", "web_search", "rag_search"}
 

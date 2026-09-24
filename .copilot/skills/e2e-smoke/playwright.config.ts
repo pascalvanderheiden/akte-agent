@@ -21,12 +21,12 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: SKIP_BROWSER
-    ? [{ name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte)\.spec\.ts$/ }]
+    ? [{ name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte|11-akte-legal)\.spec\.ts$/ }]
     : [
-        { name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte)\.spec\.ts$/ },
+        { name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte|11-akte-legal)\.spec\.ts$/ },
         {
           name: "browser",
-          testMatch: /(06-ui|08-ux|09-locale|10-akte)\.spec\.ts$/,
+          testMatch: /(06-ui|08-ux|09-locale|10-akte|11-akte-legal)\.spec\.ts$/,
           use: { ...devices["Desktop Chrome"] },
         },
       ],
