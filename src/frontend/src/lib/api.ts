@@ -279,14 +279,14 @@ import type { Skill, SkillCreate, SkillUpdate } from "@/types";
 
 export async function listSkills(useCase: string = "generic"): Promise<Skill[]> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to list skills: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   const data = await response.json();
   return data.skills;
 }
 
 export async function getSkill(name: string, useCase: string = "generic"): Promise<Skill> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to get skill: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   return response.json();
 }
 
@@ -296,10 +296,7 @@ export async function createSkill(skill: SkillCreate, useCase: string = "generic
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(skill),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to create skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
   return response.json();
 }
 
@@ -309,10 +306,7 @@ export async function updateSkill(name: string, updates: SkillUpdate, useCase: s
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
   return response.json();
 }
 
@@ -320,10 +314,7 @@ export async function deleteSkill(name: string, useCase: string = "generic"): Pr
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`, {
     method: "DELETE",
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to delete skill: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_CHANGE_ERROR");
 }
 
 // ─── Skill Files API ───
@@ -334,7 +325,7 @@ export async function listSkillFiles(skillName: string, useCase: string = "gener
   const response = await fetch(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files?use_case=${encodeURIComponent(useCase)}`
   );
-  if (!response.ok) throw new Error(`Failed to list skill files: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
   return response.json();
 }
 
@@ -352,10 +343,7 @@ export async function upsertSkillFile(
       body: JSON.stringify({ content }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to upload file: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
 }
 
 export async function deleteSkillFile(
@@ -367,10 +355,7 @@ export async function deleteSkillFile(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files/${filePath}?use_case=${encodeURIComponent(useCase)}`,
     { method: "DELETE" }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to delete file: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "SKILL_FILE_ERROR");
 }
 
 // ─── System Prompt Admin API ───
@@ -413,7 +398,7 @@ import type { MCPConfig } from "@/types";
 
 export async function getMCPConfig(useCase: string): Promise<MCPConfig> {
   const response = await fetch(`${getApiUrl()}/api/admin/mcp-servers?use_case=${encodeURIComponent(useCase)}`);
-  if (!response.ok) throw new Error(`Failed to get MCP config: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "MCP_ERROR");
   return response.json();
 }
 
@@ -423,10 +408,7 @@ export async function updateMCPConfig(useCase: string, servers: MCPConfig["serve
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ servers }),
   });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Failed to update MCP config: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "MCP_ERROR");
   return response.json();
 }
 
@@ -446,10 +428,7 @@ export async function analyzeConsistency(
       body: JSON.stringify({ includeDisabled }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Analysis failed: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "ANALYSIS_ERROR");
   return response.json();
 }
 
@@ -463,36 +442,8 @@ export async function getApmStatus(useCase: string): Promise<ApmStatusResponse> 
   const response = await fetch(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm`
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    const detail = typeof err.detail === "string" ? err.detail : err.detail?.detail;
-    throw new Error(detail || `Failed to get APM status: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
-}
-
-async function readApmError(response: Response, fallback: string): Promise<Error> {
-  const err = await response.json().catch(() => ({}));
-  // APM failure payloads are { detail: string, stderr?: string, returncode?: number }
-  // but FastAPI sometimes wraps object details as { detail: {...} }
-  const body = (err && typeof err === "object" ? err : {}) as Record<string, unknown>;
-  const detailField = body.detail;
-  let message: string;
-  let stderr: string | undefined;
-  let returncode: number | undefined;
-  if (detailField && typeof detailField === "object") {
-    const d = detailField as Record<string, unknown>;
-    message = (d.detail as string) ?? fallback;
-    stderr = d.stderr as string | undefined;
-    returncode = d.returncode as number | undefined;
-  } else if (typeof detailField === "string") {
-    message = detailField;
-  } else {
-    message = fallback;
-  }
-  const tail = stderr ? `\n${stderr.split("\n").slice(-10).join("\n")}` : "";
-  const rc = returncode !== undefined ? ` (rc=${returncode})` : "";
-  return new Error(`${message}${rc}${tail}`);
 }
 
 export async function installApmPackage(
@@ -507,7 +458,7 @@ export async function installApmPackage(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to install package: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -522,7 +473,7 @@ export async function uninstallApmPackage(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/${encodedPkg}`,
     { method: "DELETE" }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to uninstall package: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -545,7 +496,7 @@ export async function installApmMcpServer(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to install MCP server: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -557,7 +508,7 @@ export async function uninstallApmMcpServer(
     `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/mcp/${encodeURIComponent(name)}`,
     { method: "DELETE" }
   );
-  if (!response.ok) throw await readApmError(response, `Failed to uninstall MCP server: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -570,7 +521,7 @@ export async function syncApm(useCase: string): Promise<ApmCommandResponse> {
       body: JSON.stringify({}),
     }
   );
-  if (!response.ok) throw await readApmError(response, `APM sync failed: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -586,7 +537,7 @@ export async function updateApm(
       body: JSON.stringify(body),
     }
   );
-  if (!response.ok) throw await readApmError(response, `APM update failed: ${response.status}`);
+  if (!response.ok) throw await responseError(response, "APM_ERROR");
   return response.json();
 }
 
@@ -608,10 +559,7 @@ export async function applyAnalysisFix(
       }),
     }
   );
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || `Apply fix failed: ${response.status}`);
-  }
+  if (!response.ok) throw await responseError(response, "ANALYSIS_ERROR");
   return response.json();
 }
 

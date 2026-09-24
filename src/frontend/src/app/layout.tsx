@@ -4,7 +4,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { LanguageSelector, LocaleProvider } from "@/components/LocaleProvider";
 
 export const metadata: Metadata = {
-  title: "Kratos Agent",
+  title: "Akte Agent",
   description:
     "Enterprise AI Agent powered by GitHub Copilot SDK & Microsoft Foundry",
 };
