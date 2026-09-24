@@ -13,7 +13,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.config import Settings
-from app.models import ModelCatalogue, ModelCatalogueItem, PersonaRoutingConfig
+from app.models import ModelCatalogue, ModelCatalogueItem, PersonaRoutingConfig, PersonaSubagentConfig
 
 AUTO_SELECTION = "auto"
 LOCAL_ROLE_MODELS = {
@@ -169,7 +169,8 @@ class ModelRouting:
 
         custom_agents: list[dict[str, Any]] = []
         extra = routing.extraSubagents if routing else []
-        for item in (*DEFAULT_SUBAGENTS, *extra):
+        subagents: list[dict[str, Any] | PersonaSubagentConfig] = [*DEFAULT_SUBAGENTS, *extra]
+        for item in subagents:
             if isinstance(item, dict):
                 name = item["name"]
                 description = item["description"]
