@@ -1,0 +1,8 @@
+{
+  "name": "handoff-language-en", "category": "standard",
+  "description": "English context, Dutch output override, unchanged raw evidence and direct entry.",
+  "input_message": "English interface; direct stage6 SYNTHETIC-LANGUAGE. Source A exact original English quote: 'Preparation 0.25h; discussion1.0h; notes0.5h, family unknown.' I reviewed all three. Source B agrees EUR200/hour and EUR50 costs, complete expense scope, no tax treatment. ROUND_HALF_UP per line agreed. Maak deze conceptdeclaratie en afsluitinventaris in het Nederlands. Preserve the original quoted English evidence and dossier; earlier stages/files unavailable. Do not translate saved history. No registration receipt.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Dutch draft output and relevant Dutch followups despite English context; raw quote remains English, no rewritten history or invented earlier stages. Exact1,75uur/105min, EUR350,00 fees and EUR400,00 before tax; requests tax, no final total. Registration/closure pending and prior files unavailable. Uses real downloaded draft when tools succeed; otherwise explicit limitation. Direct entry accepted.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

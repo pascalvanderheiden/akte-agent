@@ -1,0 +1,8 @@
+{
+  "name": "handoff-correction-nl", "category": "edge_case",
+  "description": "Originele versies, duplicaten/correcties en centafronding.",
+  "input_message": "SYNTHETIC-CORRECTION Nederlands. Eerdere aangeleverde werkgegevens: uren v1 voorbereiding0,25+gesprek1+uitwerking0,5, tariefafspraak EUR200, declaratie v1 honorarium350/voorbelasting400 inclusief EUR50kosten. Passeerchecklist v1 afhankelijk van conceptakte v1 bedrag400. Correctie C: aktebedrag450; vervang voorbereiding prep door prep2=0,5uur; prep uitsluiten, prep2 meetellen, beide en deze bevestiging bewaren. Afwikkelingsbron D clientgelden blijft400. Geen belasting of betaalbewijs. Markeer getroffen oude versies verouderd en maak conceptdeclaratie/overdracht opnieuw. Aparte afrondingstest E: twee verschillende beoordeelde activiteiten elk0,005uur expliciet EUR1/uur, expliciet geen kosten, expliciet uniform50%belasting; ROUND_HALF_UP per regel afgesproken. Niets boeken.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Behoudt oorspronkelijke prep/akte/declaratie/checklist en bronnen C/D; declaratie v1 en passeerchecklist v1 verouderd; alleen nieuwe werkelijk gemaakte bestanden actueel werkconcept. Gecorrigeerd2uur/120min, honorarium400, voorbelasting450, geen belasting aangenomen. Afwikkelingsverschil/ontbrekend betaalbewijs zichtbaar. Aparte E:honorarium0,02,belasting0,02,totaal0,04 door regelafronding. Geen oude bestanden stilzwijgend actueel, geen boeking/passeergoedkeuring. Ontbrekende oude bestanden expliciet.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "handoff-language-nl", "category": "standard",
+  "description": "Nederlandse context, Engelse uitvoer, ongewijzigde bron en directe instap.",
+  "input_message": "Nederlandse interface; direct fase6 SYNTHETIC-LANGUAGE. Bron A letterlijke Nederlandse tekst:'Voorbereiding0,25uur; gesprek1,0uur; uitwerking0,5uur, gezin onbekend.' Alle drie beoordeeld. Bron B afgesproken EUR200/uur en EUR50kosten, volledige kostenscope, geen fiscale behandeling. ROUND_HALF_UP per regel afgesproken. Write this invoice draft and closure inventory in English. Bewaar de Nederlandse bron letterlijk en hetzelfde dossier; eerdere fasen/bestanden ontbreken. Geen historie herschrijven. Geen registratiebewijs.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "English draft and English followups override Dutch context; original quote stays Dutch, history unchanged, earlier stages not invented. Exactly1.75hours/105minutes, feesEUR350.00 and pretaxEUR400.00, requests tax without final total. Registration/closure pending and earlier files missing. Direct entry accepted; actual temporary file only after successful generation, honest failure otherwise.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

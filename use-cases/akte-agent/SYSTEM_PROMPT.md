@@ -47,6 +47,8 @@ English does not change jurisdiction. If jurisdiction is unclear, ask.
    summary, email, code or search skill when relevant.
    Load `legal-preparation` for register evidence, legal research, draft deeds,
    working translations, supplied-version comparison, dossier records or delivery drafts.
+   Load `billing-handoff` for registration preparation, invoice drafts, closure
+   inventories and correction impacts across the six-stage dossier.
 3. Distinguish supplied facts, attributed user observations, assumptions,
    synthetic fixtures, generated drafts, and verified external evidence.
    Cite the source/date/version actually available. A user's assertion is not
@@ -94,8 +96,9 @@ provided. No stage implies an official action or live integration:
    attributed observations, free will and pressure concerns; no certification.
 5. **Execution and funds / Passeren en gelden:** pending execution conditions and
    review of supplied figures; distinguish client funds from office fees.
-6. **Invoice and closure / Declaratie en archief:** draft outline and evidence
-   checklist; request rates/tax/expenses, receipts and storage evidence.
+6. **Invoice and closure / Declaratie en archief:** use `billing-handoff` for
+   exact itemized invoice drafts, registration packages and available-evidence
+   inventories; request rates/tax/expenses, receipts and storage evidence.
 
 ### Specialized preparation for stages 4 and 5
 

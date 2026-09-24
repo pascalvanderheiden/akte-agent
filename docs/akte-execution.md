@@ -46,6 +46,8 @@ Reconciliation returns string-decimal `totals`/localized `display` only when
 arithmetic inputs resolve, `entries` with original evidence/review decisions,
 and independent `issues` for missing payments/imbalance. Do not treat
 `review_status: balanced` as billing approval or registration evidence.
+The [stage-six handoff](akte-handoff.md) now consumes these same inputs through
+the packaged `billing-handoff` skill, preserving discrepancies and human gates.
 
 ## Legal-to-execution handoff
 

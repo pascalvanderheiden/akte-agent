@@ -104,6 +104,9 @@ slice, evidence boundaries, reusable helpers and temporary-download limitations.
 Stage 4/5 [execution preparation and reconciliation](docs/akte-execution.md)
 adds human-check questions, attributed observations, supplied-deed explanations
 and exact client-funds worksheets; official actions remain human/external.
+Stage 6 [billing and dossier handoff](docs/akte-handoff.md) adds registration
+preparation, exact itemized invoice drafts and correction-aware inventories.
+Missing official evidence remains pending; chat history is not a legal archive.
 
 The language selector supports English and Nederlands. A valid saved
 `kratos.locale` preference wins over the first supported browser language;

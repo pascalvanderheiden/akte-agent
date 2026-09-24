@@ -1,0 +1,46 @@
+{
+  "en": {
+    "dossier": "SYNTHETIC-AKTE-LEGAL", "locale": "en", "version": "SYNTHETIC invoice v1",
+    "sources": [{"reference": "SYNTHETIC reviewed time A", "kind": "synthetic"}, {"reference": "SYNTHETIC agreement and expense evidence B", "kind": "synthetic"}],
+    "currency": "EUR", "rounding": "ROUND_HALF_UP",
+    "review_source": "SYNTHETIC reviewed time A",
+    "time": {
+      "dossier": "SYNTHETIC-AKTE-LEGAL", "locale": "en",
+      "sources": [{"reference": "SYNTHETIC reviewed time A", "kind": "synthetic"}],
+      "entries": [
+        {"id": "prep", "activity": "Preparation", "hours": "0.25", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notary", "source": "SYNTHETIC reviewed time A"},
+        {"id": "talk", "activity": "Conversation", "hours": "1.0", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notary", "source": "SYNTHETIC reviewed time A"},
+        {"id": "notes", "activity": "Note-writing", "hours": "0.5", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notary", "source": "SYNTHETIC reviewed time A"}
+      ]
+    },
+    "rates": {
+      "prep": {"amount": "200", "source": "SYNTHETIC agreement and expense evidence B"},
+      "talk": {"amount": "200", "source": "SYNTHETIC agreement and expense evidence B"},
+      "notes": {"amount": "200", "source": "SYNTHETIC agreement and expense evidence B"}
+    },
+    "costs": [{"id": "register", "category": "register_cost", "description": "SYNTHETIC supplied register costs", "amount": "50", "source": "SYNTHETIC agreement and expense evidence B"}],
+    "costs_source": "SYNTHETIC agreement and expense evidence B"
+  },
+  "nl": {
+    "dossier": "SYNTHETIC-AKTE-LEGAL", "locale": "nl", "version": "SYNTHETIC declaratie v1",
+    "sources": [{"reference": "SYNTHETIC beoordeelde uren A", "kind": "synthetic"}, {"reference": "SYNTHETIC afspraak en kostenbewijs B", "kind": "synthetic"}],
+    "currency": "EUR", "rounding": "ROUND_HALF_UP",
+    "review_source": "SYNTHETIC beoordeelde uren A",
+    "time": {
+      "dossier": "SYNTHETIC-AKTE-LEGAL", "locale": "nl",
+      "sources": [{"reference": "SYNTHETIC beoordeelde uren A", "kind": "synthetic"}],
+      "entries": [
+        {"id": "prep", "activity": "Voorbereiding", "hours": "0,25", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notaris", "source": "SYNTHETIC beoordeelde uren A"},
+        {"id": "talk", "activity": "Gesprek", "hours": "1,0", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notaris", "source": "SYNTHETIC beoordeelde uren A"},
+        {"id": "notes", "activity": "Uitwerking", "hours": "0,5", "date": "2026-01-15", "timekeeper": "SYNTHETIC Notaris", "source": "SYNTHETIC beoordeelde uren A"}
+      ]
+    },
+    "rates": {
+      "prep": {"amount": "200", "source": "SYNTHETIC afspraak en kostenbewijs B"},
+      "talk": {"amount": "200", "source": "SYNTHETIC afspraak en kostenbewijs B"},
+      "notes": {"amount": "200", "source": "SYNTHETIC afspraak en kostenbewijs B"}
+    },
+    "costs": [{"id": "register", "category": "register_cost", "description": "SYNTHETIC aangeleverde registerkosten", "amount": "50", "source": "SYNTHETIC afspraak en kostenbewijs B"}],
+    "costs_source": "SYNTHETIC afspraak en kostenbewijs B"
+  }
+}

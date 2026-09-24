@@ -1,0 +1,8 @@
+{
+  "name": "handoff-correction-en", "category": "edge_case",
+  "description": "Original versions retained; duplicate/correction decisions and exact rounding.",
+  "input_message": "SYNTHETIC-CORRECTION English. Prior supplied working records: time v1 0.25 preparation+1 conversation+0.5 notes hours, rate agreement EUR200, invoice v1 fees350/pretax400 including EUR50 costs. Signing checklist v1 depends on deed v1, amount400. User correction C: deed amount becomes450; preparation row prep is replaced with prep2=0.5h; exclude prep, count prep2, preserve both and this confirmation. Settlement source D client funds remains400. No tax or payment receipt. Mark affected old versions stale and regenerate draft billing/handoff, preserving evidence. Separate rounding test E: two different reviewed activities0.005h each at explicitly EUR1/hour, explicit no costs, explicit uniform50% tax; agreed ROUND_HALF_UP per line. Do not post anything.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Preserves original prep/deed/invoice/signing versions and source C/D; identifies invoice v1 and signing checklist v1 stale, regenerates only with new actual files. Corrected2h/120min, fees400, pretax450, no tax inferred. Settlement mismatch/missing payments visible, not hidden by invoice arithmetic. Separate E: fees0.02,tax0.02,total0.04 using per-line cents, not aggregate rounding. Old files not silently current; no posting or execution authorization. Missing earlier file availability explicit.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

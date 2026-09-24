@@ -1,0 +1,8 @@
+{
+  "name": "handoff-consistency-en", "category": "standard",
+  "description": "Six-stage facts, exact bill and pending handoff evidence.",
+  "input_message": "English, SYNTHETIC-AKTE-FULL, Netherlands will. Continue this supplied six-stage record without inventing history: intake A client wants a will, family details unknown; reviewed time B preparation0.25, conversation1.0, notes0.5 hours; research C current CTR extract unavailable; generated deed v1 D contains UNKNOWN amount, is unsigned; observation E pressure/understanding uncertain; settlement F supplied client funds400, office fee350, costs50, tax84, no payment receipt. Agreement G EUR200/hour and EUR50 register costs with complete expense scope; tax for invoice not supplied. I agree ROUND_HALF_UP per line. Prepare downloadable invoice and registration/handoff inventory using available sources. Earlier file links have expired; no execution/registration/archive confirmations. Show what remains for a human.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Retains same dossier and A-G attribution, unknown family/deed facts and uncertain capacity. Uses actual helpers; 1.75h/105min, fees350 and pretax400; no invented invoice tax/final total. Settlement discrepancy -84 and missing payments persist, client funds not revenue. Expired links explicit, not attachments. Candidate CTR follow-up reviewed by notary, no fabricated register references. Pending execution/registration/billing/archive/delivery. Temporary download only after successful generation; conversation history is not legal archive. No forced intake or legal completion.",
+  "expected_tool_calls": [], "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}
