@@ -13,7 +13,6 @@ from app.observability import instrument_fastapi_app, setup_telemetry
 from app.personas import RETIRED_PERSONAS
 from app.routers import (
     admin_analysis,
-    admin_apm,
     admin_mcp,
     admin_prompt,
     admin_skills,
@@ -29,7 +28,6 @@ from app.routers import (
     traces,
     use_cases,
 )
-from app.services.apm_service import ApmError, ApmService
 from app.services.blob_skill_service import BlobSkillService
 from app.services.cosmos_service import CosmosService
 from app.services.eval_service import EvalService
@@ -48,37 +46,6 @@ logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(l
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-
-async def _apm_startup_sync(apm_service: ApmService, use_cases_root: str) -> tuple[int, int]:
-    """Run ``apm install`` for each local use-case that needs syncing.
-
-    Returns a ``(synced, total)`` tuple where ``total`` is the number of
-    use-case directories considered and ``synced`` the number that were
-    successfully installed. APM failures are logged as warnings and never
-    propagate — the app must still boot so local skills remain usable.
-    """
-    root = Path(use_cases_root)
-    if not root.is_dir():
-        logger.info("APM use-cases root %s does not exist — skipping startup sync", root)
-        return (0, 0)
-
-    synced = 0
-    total = 0
-    for entry in sorted(root.iterdir()):
-        if not entry.is_dir() or entry.name in RETIRED_PERSONAS:
-            continue
-        use_case = entry.name
-        total += 1
-        try:
-            if not await apm_service.needs_sync(use_case):
-                continue
-            await apm_service.sync(use_case)
-            synced += 1
-            logger.info("APM sync succeeded for use-case '%s'", use_case)
-        except ApmError as exc:
-            logger.warning("APM sync failed for use-case '%s': %s", use_case, exc)
-    return (synced, total)
 
 
 async def _keep_warm_loop(proxy: FoundryAgentProxy, interval_s: int) -> None:
@@ -126,19 +93,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.cosmos_service = cosmos_service
 
     # Initialize Blob Storage service for skills
-    blob_skill_service = BlobSkillService(settings, local_base_dir=settings.apm_use_cases_root)
+    blob_skill_service = BlobSkillService(settings, local_base_dir=settings.use_cases_root)
     await blob_skill_service.initialize()
     application.state.blob_skill_service = blob_skill_service
-
-    # Initialize APM service (shared across use-cases)
-    apm_service = ApmService(settings, blob_skill_service)
-    application.state.apm_service = apm_service
-
-    # Run APM startup sync for each local use-case directory so that
-    # apm_modules/ is materialised before the skill registries load.
-    if settings.apm_enabled and settings.apm_startup_sync:
-        synced, total = await _apm_startup_sync(apm_service, settings.apm_use_cases_root)
-        logger.info("APM startup sync complete: %d/%d use-cases synced", synced, total)
 
     # Load all use-case registries from blob storage
     registries: dict[str, SkillRegistry] = {}
@@ -156,7 +113,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
                 if uc_name in RETIRED_PERSONAS:
                     continue
                 registry = SkillRegistry()
-                await registry.load(uc_name, blob_skill_service, apm_service=apm_service)
+                await registry.load(uc_name, blob_skill_service)
                 if registry.system_prompt:
                     registries[uc_name] = registry
                 else:
@@ -165,7 +122,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             logger.exception("Failed to load use-cases from blob storage")
 
     # Keep bundled/local personas available when storage is absent or incomplete.
-    local_root = Path(settings.apm_use_cases_root)
+    local_root = Path(settings.use_cases_root)
     if local_root.is_dir():
         for entry in sorted(local_root.iterdir()):
             if entry.name in RETIRED_PERSONAS or entry.name in registries:
@@ -173,12 +130,12 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
             if not (entry / "SYSTEM_PROMPT.md").is_file():
                 continue
             registry = SkillRegistry()
-            await registry.load(entry.name, apm_service=apm_service, local_root=str(local_root))
+            await registry.load(entry.name, local_root=str(local_root))
             registries[entry.name] = registry
 
     application.state.registries = registries
-    # Keep backward compat: skill_registry points to "generic"
-    application.state.skill_registry = registries.get("generic", SkillRegistry())
+    # Backward compatibility for consumers of the single-registry attribute.
+    application.state.skill_registry = registries.get("akte-agent", SkillRegistry())
     logger.info("Loaded %d use-cases: %s", len(registries), list(registries.keys()))
 
     # Initialize Foundry hosted agent proxy (Copilot SDK runs in the hosted agent only)
@@ -203,7 +160,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     application.state.keep_warm_task = keep_warm_task
 
     # Initialize Eval storage + service (per-use-case scenarios, runs, results)
-    eval_storage = EvalStorage(blob_skill_service, local_base_dir=settings.apm_use_cases_root)
+    eval_storage = EvalStorage(blob_skill_service, local_base_dir=settings.use_cases_root)
     application.state.eval_storage = eval_storage
     eval_service = EvalService(settings, eval_storage, registries, foundry_proxy=foundry_proxy)
     application.state.eval_service = eval_service
@@ -261,7 +218,6 @@ app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(admin_skills.router, prefix="/api/admin/skills", tags=["admin"])
 app.include_router(admin_prompt.router, prefix="/api/admin/system-prompt", tags=["admin"])
 app.include_router(admin_mcp.router, prefix="/api/admin/mcp-servers", tags=["admin"])
-app.include_router(admin_apm.router, prefix="/api/admin/use-cases/{use_case}/apm", tags=["admin"])
 app.include_router(admin_analysis.router, prefix="/api/admin/analysis", tags=["admin"])
 app.include_router(use_cases.router, prefix="/api/use-cases", tags=["use-cases"])
 app.include_router(import_persona.router, prefix="/api/use-cases", tags=["import"])

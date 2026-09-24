@@ -7,9 +7,6 @@ core persona files Kratos already understands:
 * ``SYSTEM_PROMPT.md`` — frontmatter (name/description/sampleQuestions/curated)
   plus the manifest ``instructions`` as the body.
 * ``.mcp.json``        — Copilot MCP config built from ``mcpServers``.
-* ``apm.yml``          — APM manifest carrying ``skills`` (→ ``dependencies.apm``)
-  and ``mcpServers`` (→ ``dependencies.mcp``), with ``traits``/``workflow_model``
-  recorded under ``metadata.kratos``.
 
 The persona is persisted (blob + local mirror) and registered live in
 ``app.state.registries`` so it is immediately selectable in the UI.
@@ -122,63 +119,14 @@ def _build_mcp_json(servers: list[ImportMcpServer]) -> str:
     """Render .mcp.json (Copilot MCP config) from the manifest MCP servers.
 
     ``.mcp.json`` is loaded verbatim into the Copilot SDK session config, so every
-    entry must be runnable. A remote (http/sse) server needs a ``url``; a registry
-    reference without one cannot be expressed here deterministically (it would need
-    ``apm install`` to resolve a command/url). Such entries are therefore skipped —
-    they remain recorded in ``apm.yml`` ``dependencies.mcp`` for later resolution —
-    so the imported persona never carries a non-startable MCP server.
+    entry must be directly runnable.
     """
     config: dict[str, dict] = {}
     for server in servers:
         if not server.url:
-            logger.info(
-                "Skipping MCP server '%s' in .mcp.json: no url (registry=%s, transport=%s); "
-                "kept in apm.yml dependencies.mcp for later resolution",
-                server.name,
-                server.registry,
-                server.transport,
-            )
-            continue
+            raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
         config[server.name] = {"type": server.transport, "url": server.url}
     return json.dumps(config, indent=2) + "\n"
-
-
-def _build_apm_yml(manifest: PersonaManifest, slug: str) -> str:
-    """Render apm.yml carrying skill + MCP dependencies and Kratos metadata."""
-    apm_packages = [s.package for s in manifest.skills if s.package]
-    mcp_deps = [
-        {
-            "name": s.name,
-            "registry": s.registry,
-            "transport": s.transport,
-            **({"url": s.url} if s.url else {}),
-        }
-        for s in manifest.mcpServers
-    ]
-
-    dependencies: dict = {}
-    if apm_packages:
-        dependencies["apm"] = apm_packages
-    if mcp_deps:
-        dependencies["mcp"] = mcp_deps
-
-    data: dict = {
-        "name": f"kratos-{slug}",
-        "version": "1.0.0",
-        "description": manifest.description or f"Kratos persona — {slug}",
-        "author": "kratos-import",
-        "license": "MIT",
-        "target": "copilot",
-        "dependencies": dependencies,
-        "metadata": {
-            "kratos": {
-                "traits": list(manifest.traits),
-                "workflow_model": manifest.workflow_model,
-                "skills": [s.name for s in manifest.skills],
-            }
-        },
-    }
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
 # ─── Natural-language (secondary) path ───────────────────────────────────────
@@ -241,6 +189,8 @@ async def import_persona(
         raise HTTPException(status_code=503, detail="Persona storage is not initialised")
 
     manifest = body.manifest or await _expand_prompt_to_manifest(body.prompt or "")
+    if any(skill.package for skill in manifest.skills) or any(server.registry for server in manifest.mcpServers):
+        raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
 
     base_slug = _slugify(body.name or manifest.name)
     require_not_retired(base_slug)
@@ -262,25 +212,21 @@ async def import_persona(
 
     system_prompt_md = _build_system_prompt(manifest, slug)
     mcp_json = _build_mcp_json(manifest.mcpServers)
-    apm_yml = _build_apm_yml(manifest, slug)
 
     try:
         files = await blob_service.create_use_case(
             slug,
             system_prompt_md=system_prompt_md,
             mcp_json=mcp_json,
-            apm_yml=apm_yml,
             overwrite=body.overwrite,
         )
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=f"Persona '{slug}' already exists") from exc
 
-    apm_service = getattr(request.app.state, "apm_service", None)
     registry = SkillRegistry()
     await registry.load(
         slug,
         blob_service,
-        apm_service=apm_service,
         local_root=str(blob_service.local_base_dir),
     )
     registries[slug] = registry

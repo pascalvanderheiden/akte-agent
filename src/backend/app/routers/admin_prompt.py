@@ -34,7 +34,7 @@ def _get_registry(request: Request, use_case: str) -> SkillRegistry:
 
 
 @router.get("", response_model=SystemPromptResponse)
-async def get_system_prompt(request: Request, use_case: str = Query("generic")) -> SystemPromptResponse:
+async def get_system_prompt(request: Request, use_case: str = Query("akte-agent")) -> SystemPromptResponse:
     """Return the system prompt for a use-case."""
     registry = _get_registry(request, use_case)
     if registry.system_prompt:
@@ -44,7 +44,7 @@ async def get_system_prompt(request: Request, use_case: str = Query("generic")) 
 
 @router.put("", response_model=SystemPromptResponse)
 async def update_system_prompt(
-    body: SystemPromptUpdate, request: Request, use_case: str = Query("generic")
+    body: SystemPromptUpdate, request: Request, use_case: str = Query("akte-agent")
 ) -> SystemPromptResponse:
     """Update the system prompt for a use-case. Persists to Blob Storage / local disk."""
     registry = _get_registry(request, use_case)
@@ -85,7 +85,7 @@ async def update_system_prompt(
 
 
 @router.delete("", status_code=204)
-async def reset_system_prompt(request: Request, use_case: str = Query("generic")) -> None:
+async def reset_system_prompt(request: Request, use_case: str = Query("akte-agent")) -> None:
     """Reset the system prompt by re-syncing from blob storage."""
     registry = _get_registry(request, use_case)
 

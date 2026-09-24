@@ -88,8 +88,7 @@ def transport(monkeypatch, tmp_path):
     sdk = SimpleNamespace(create_session=AsyncMock(return_value=session))
     local_root = tmp_path / "use-cases"
     shutil.copytree(Path(__file__).parents[3] / "use-cases/akte-agent", local_root / "akte-agent")
-    shutil.copytree(Path(__file__).parents[3] / "use-cases/generic", local_root / "generic")
-    settings = Settings(local_mode="true", warm_pool_size=0, apm_use_cases_root=str(local_root))
+    settings = Settings(local_mode="true", warm_pool_size=0, persona_assets_root=str(local_root))
     runtime = CopilotAgent(settings)
     runtime._client = sdk
     hosted._copilot_agent = runtime
@@ -145,7 +144,7 @@ def transport(monkeypatch, tmp_path):
     app.include_router(copilot_studio.router, prefix="/api/copilot-studio")
     app.state.cosmos_service = cosmos
     app.state.foundry_proxy = proxy
-    app.state.registries = {name: SimpleNamespace(system_prompt="", skills={}) for name in ("generic", "akte-agent")}
+    app.state.registries = {"akte-agent": SimpleNamespace(system_prompt="", skills={})}
     return SimpleNamespace(
         client=TestClient(app),
         sdk=sdk,
@@ -190,7 +189,7 @@ async def test_hosted_cannot_switch_retired_history_to_generic(transport):
 
 
 @pytest.mark.parametrize("strip_fields", [False, True])
-@pytest.mark.parametrize("use_case", ["generic", "akte-agent"])
+@pytest.mark.parametrize("use_case", ["akte-agent"])
 def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_fields, use_case):
     transport.strip_fields[0] = strip_fields
     for locale, message, reply in [

@@ -406,7 +406,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
               <h2 className="text-sm font-semibold text-text truncate">
                 {conversation.title}
               </h2>
-              {conversation.useCase && conversation.useCase !== "generic" && (
+              {conversation.useCase && (
                 <span className="text-[10px] px-2 py-0.5 bg-accent-soft text-accent rounded-full font-medium shrink-0">
                   {personaDisplayName ?? conversation.useCase}
                 </span>

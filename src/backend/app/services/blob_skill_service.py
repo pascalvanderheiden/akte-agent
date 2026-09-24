@@ -39,12 +39,6 @@ _USE_CASES_PREFIX = "use-cases/"
 # rather than refused and would otherwise stall ~40s in SDK retries here.
 _CONTAINER_INIT_TIMEOUT_S = 10
 
-# Files that live at the root of a use-case directory (alongside SYSTEM_PROMPT.md)
-# and are mirrored between blob and the local filesystem.  APM-managed content
-# under `apm_modules/` and materialised output under `.github/` is NEVER stored
-# in blob — it is regenerated locally by `apm install`.
-_APM_MANIFEST_FILES: frozenset[str] = frozenset({"apm.yml", "apm.lock.yaml"})
-
 
 def _parse_account_name(conn_str: str) -> str:
     """Extract ``AccountName`` from an Azure Storage connection string.
@@ -176,7 +170,7 @@ class BlobSkillService:
             return []
         existing = set(await self.list_use_cases())
         seeded: list[str] = []
-        # APM-materialised output must never leak into blob.
+        # Legacy package material is inert and must never become active content.
         _skip_dir_parts = {"apm_modules", ".github", "__pycache__", ".pytest_cache", "results"}
         for uc_dir in sorted(self.local_base_dir.iterdir()):
             if not uc_dir.is_dir() or uc_dir.name in existing or uc_dir.name in RETIRED_PERSONAS:
@@ -307,19 +301,6 @@ class BlobSkillService:
         blob_path = f"{_USE_CASES_PREFIX}{use_case}/.mcp.json"
         await self.upload_file(blob_path, content)
 
-    async def upload_apm_manifest(self, use_case: str, filename: str, content: bytes) -> None:
-        """Upload an APM manifest (``apm.yml`` or ``apm.lock.yaml``) for a use-case.
-
-        Only the root-level APM manifest files are synced to blob; materialised
-        output under ``apm_modules/`` and ``.github/`` is regenerated locally by
-        ``apm install`` and must never be persisted in blob storage.
-        """
-        require_not_retired(use_case)
-        if filename not in _APM_MANIFEST_FILES:
-            raise ValueError(f"Invalid APM manifest filename '{filename}'. Allowed: {sorted(_APM_MANIFEST_FILES)}")
-        blob_path = f"{_USE_CASES_PREFIX}{use_case}/{filename}"
-        await self.upload_file(blob_path, content)
-
     async def use_case_exists(self, use_case: str) -> bool:
         """Return True if a use-case already exists in blob or on local disk."""
         if self._container_client and use_case in await self.list_use_cases():
@@ -333,12 +314,11 @@ class BlobSkillService:
         *,
         system_prompt_md: str,
         mcp_json: str,
-        apm_yml: str,
         overwrite: bool = False,
     ) -> list[str]:
         """Create a new use-case from its three core persona files.
 
-        Writes ``SYSTEM_PROMPT.md``, ``.mcp.json`` and ``apm.yml`` to blob
+        Writes ``SYSTEM_PROMPT.md`` and ``.mcp.json`` to blob
         storage (when configured) and always mirrors them to the local
         filesystem so a freshly constructed :class:`SkillRegistry` can read
         them immediately — both via the blob→local sync path and the
@@ -348,7 +328,6 @@ class BlobSkillService:
             use_case: The (already validated) use-case slug.
             system_prompt_md: Full SYSTEM_PROMPT.md content incl. frontmatter.
             mcp_json: Serialized ``.mcp.json`` (Copilot MCP config shape).
-            apm_yml: Serialized ``apm.yml`` APM manifest.
             overwrite: When False and the use-case exists, raise FileExistsError.
 
         Returns:
@@ -361,7 +340,6 @@ class BlobSkillService:
         files: dict[str, bytes] = {
             "SYSTEM_PROMPT.md": system_prompt_md.encode("utf-8"),
             ".mcp.json": mcp_json.encode("utf-8"),
-            "apm.yml": apm_yml.encode("utf-8"),
         }
 
         local_dir = self.local_dir(use_case)
@@ -372,7 +350,6 @@ class BlobSkillService:
         if self._container_client:
             await self.upload_file(f"{_USE_CASES_PREFIX}{use_case}/SYSTEM_PROMPT.md", files["SYSTEM_PROMPT.md"])
             await self.upload_mcp_config(use_case, files[".mcp.json"])
-            await self.upload_apm_manifest(use_case, "apm.yml", files["apm.yml"])
 
         logger.info("Created use-case '%s' (%d files, blob=%s)", use_case, len(files), self.is_available)
         return [f"{_USE_CASES_PREFIX}{use_case}/{name}" for name in files]

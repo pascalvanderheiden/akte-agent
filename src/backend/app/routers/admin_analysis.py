@@ -200,7 +200,7 @@ def _build_analysis_content(registry: SkillRegistry, include_disabled: bool) -> 
 async def analyze_consistency(
     request: Request,
     body: AnalysisRequest | None = None,
-    use_case: str = Query("generic"),
+    use_case: str = Query("akte-agent"),
 ) -> AnalysisResponse:
     """Analyze a use-case's system prompt and skills for inconsistencies."""
     t0 = time.monotonic()
@@ -297,7 +297,7 @@ def _reset_sessions(request: Request) -> None:
 async def apply_fix(
     request: Request,
     body: ApplyFixRequest,
-    use_case: str = Query("generic"),
+    use_case: str = Query("akte-agent"),
 ) -> ApplyFixResponse:
     """Apply an AI-generated fix for a specific consistency issue."""
     registry = _get_registry(request, use_case)

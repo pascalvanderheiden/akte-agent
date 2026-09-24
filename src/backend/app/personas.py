@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 RETIRED_PERSONAS = frozenset(
     {
+        "generic",
         "clinician-visit-prep",
         "finance-close",
         "hr-onboarding",

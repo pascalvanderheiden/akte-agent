@@ -42,14 +42,6 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
   const { locale, t, formatRelativeTime, formatDate } = useLocale();
   const [searchQuery, setSearchQuery] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Conversation | null>(null);
-  const [personaFilter, setPersonaFilter] = useState<"curated" | "all">("curated");
-
-  const curatedUseCases = useCases.filter((uc) => uc.curated === true);
-  const effectiveFilter =
-    personaFilter === "curated" && curatedUseCases.length === 0 ? "all" : personaFilter;
-  const visibleUseCases =
-    effectiveFilter === "curated" ? curatedUseCases : useCases;
-
   const personaConversations = conversations.filter((c) =>
     c.useCase === selectedUseCase || !useCases.some((persona) => persona.name === c.useCase)
   );
@@ -159,46 +151,6 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
         <div className="px-3 py-2">
           <label htmlFor="persona-selector" className="block text-[10px] font-semibold text-muted uppercase tracking-wider mb-1.5 px-1">{t("persona")}</label>
 
-          <div
-            role="tablist"
-            aria-label={t("personaFilter")}
-            className="flex items-center gap-0.5 mb-2 p-0.5 bg-surface border border-border-soft rounded-lg"
-          >
-            <button
-              role="tab"
-              aria-selected={effectiveFilter === "curated"}
-              onClick={() => {
-                setPersonaFilter("curated");
-                if (useCases.some((persona) => persona.name === selectedUseCase) &&
-                    !curatedUseCases.some((persona) => persona.name === selectedUseCase)) {
-                  onSelectUseCase(curatedUseCases[0].name);
-                }
-              }}
-              disabled={curatedUseCases.length === 0}
-              title={t(curatedUseCases.length === 0 ? "noCurated" : "showCurated")}
-              className={`flex-1 text-xs font-medium px-2 py-1.5 rounded-md transition-all ${
-                effectiveFilter === "curated"
-                  ? "bg-accent-soft text-accent border border-accent/30"
-                  : "text-muted hover:text-text hover:bg-hover"
-              } disabled:opacity-40 disabled:cursor-not-allowed`}
-            >
-              {t("curated", { count: curatedUseCases.length })}
-            </button>
-            <button
-              role="tab"
-              aria-selected={effectiveFilter === "all"}
-              onClick={() => setPersonaFilter("all")}
-              title={t("showAll")}
-              className={`flex-1 text-xs font-medium px-2 py-1.5 rounded-md transition-all ${
-                effectiveFilter === "all"
-                  ? "bg-accent-soft text-accent border border-accent/30"
-                  : "text-muted hover:text-text hover:bg-hover"
-              }`}
-            >
-              {t("allPersonas", { count: useCases.length })}
-            </button>
-          </div>
-
           <div className="relative">
             <select
               id="persona-selector"
@@ -207,14 +159,14 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               aria-label={t("selectPersona")}
               className="w-full text-sm text-text bg-surface border border-border rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent appearance-none cursor-pointer hover:bg-hover transition-all"
             >
-              {!visibleUseCases.some((persona) => persona.name === selectedUseCase) && (
+              {!useCases.some((persona) => persona.name === selectedUseCase) && (
                 <option value={selectedUseCase} disabled>
                   {useCases.some((persona) => persona.name === selectedUseCase)
                     ? selectedUseCase
                     : `${t("unavailablePersona")}: ${selectedUseCase}`}
                 </option>
               )}
-              {visibleUseCases.map((uc) => (
+              {useCases.map((uc) => (
                 <option key={uc.name} value={uc.name} className="bg-surface text-text">
                   {localizeUseCase(uc, locale).displayName} ({t("skillCount", { count: uc.skillCount })})
                 </option>
@@ -309,7 +261,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
                             {conv.title}
                           </span>
                           <div className="flex items-center gap-2 mt-1">
-                            {conv.useCase && conv.useCase !== "generic" && (
+                            {conv.useCase && (
                               <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${
                                 activeId === conv.id
                                   ? "bg-accent-soft text-accent"

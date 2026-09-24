@@ -20,9 +20,9 @@ One-command deploy (`azd up`) provisions Azure services, builds containers, depl
 
 ## Built-in experience
 
-Generic retains general-purpose tools and downloads. Akte Agent adds bilingual
-notarial working artifacts; see [Akte intake](docs/akte-intake.md).
-Agent Manager manages skills, prompts, MCP connections and APM packages.
+Akte Agent is the built-in notarial persona and the default for new work; see
+[Akte intake](docs/akte-intake.md). Agent Manager manages self-contained
+skills, prompts, files and directly configured MCP connections.
 
 ---
 
@@ -73,8 +73,8 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 ## Bilingual chat foundation
 
-The curated **Akte Agent** persona adds bilingual notarial intake, draft follow-up
-and exact downloadable time records alongside the unchanged Generic default.
+The **Akte Agent** persona provides bilingual notarial intake, draft follow-up
+and exact downloadable time records.
 See [Akte intake and timekeeping](docs/akte-intake.md) for the delivered draft-only
 slice, evidence boundaries, reusable helpers and temporary-download limitations.
 Stage 4/5 [execution preparation and reconciliation](docs/akte-execution.md)
@@ -104,8 +104,8 @@ language. `lib/errors.ts` provides stable application error codes; render
 `localizeUseCase(persona, locale)` overlays optional `localizations.en` / `.nl`
 presentation fields on the existing scalar fields. Missing fields retain the
 original value; explicit empty values are retained. Discovery stays dynamic and
-the chat selector defaults to curated personas. Generic includes both complete
-translations. Authenticated import, prompt editing and ZIP export preserve
+all available personas use one unfiltered list when selection is needed.
+Authenticated import, prompt editing and ZIP export preserve
 metadata; body-only prompt edits retain frontmatter, while full-frontmatter
 edits can intentionally replace the localization map.
 
@@ -119,8 +119,8 @@ precedence, do not change jurisdiction, and follow-up generation is instructed
 to follow the response language (UI locale is only a fallback).
 
 The foundation covers landing, chat, sidebar, files, persona import, prompt
-editing and export. Akte Agent is the application-facing identity; Generic
-Assistant keeps its own persona identity. Runtime/service names, telemetry,
+editing and export. Akte Agent is the application-facing identity. Retired
+Generic conversations remain history and cannot be resumed. Runtime/service names, telemetry,
 environment variables, `kratos.locale` and embedding contracts remain unchanged.
 
 ### Configuration localization inventory
@@ -134,7 +134,6 @@ environment variables, `kratos.locale` and embedding contracts remain unchanged.
 | Agent Manager | Navigation, persona selection, counts, system-prompt and deployment controls; [evaluation and trace journeys](#evals--tracing) |
 | Skills and files | Create/edit/toggle/delete, instructions, text-file editing/upload/delete, confirmations, loading/empty/error/success states and accessible controls |
 | MCP | Local/HTTP/SSE configuration, fields, validation, save/delete confirmations and safe errors |
-| APM | Discovery, install/update/sync/removal, MCP packages, confirmations, status, errors, duration formatting and output controls |
 | Consistency | Controls, category/severity labels, progress, summary counts/durations and safe fix failures; generated analysis text remains source content |
 
 These surfaces use the same typed catalogs and provider. Locale changes do not
@@ -185,7 +184,6 @@ establish live persistence, package installation or successful Entra sign-in.
 | Blob storage | Azure Storage / Azurite (local) | — |
 | PDF rendering | Playwright Chromium | — |
 | Telemetry | OpenTelemetry + Azure Monitor Exporter | — |
-| Package manager | APM CLI (`apm-cli`) | ≥0.5.0 |
 
 ### Frontend
 
@@ -359,7 +357,7 @@ Environment files are local-only and excluded from Git.
 
 **Persistent data:**
 - `.local/backend/kratos.db` — SQLite (conversations, messages, settings, sessions)
-- `.local/azurite/` — Emulated blob storage (skills, APM manifests)
+- `.local/azurite/` — Emulated blob storage (skills and persona assets)
 - `use-cases/` — Bind-mounted; edits on host appear immediately
 
 ### Development Against Azure
@@ -538,11 +536,11 @@ async for event in client.run(message=msg, session_id=conv_id):
 
 ## Use Cases
 
-Kratos ships with two curated agent personas, each with its own system prompt, skills, and APM manifest:
+Kratos bundles Akte Agent. Additional self-contained personas can be discovered
+dynamically after import:
 
 | Use Case | Directory | Description |
 |----------|-----------|-------------|
-| **Generic** | `use-cases/generic/` | General-purpose assistant with web search, code interpreter, file sharing |
 | **Akte Agent** | `use-cases/akte-agent/` | Bilingual notarial intake, exact time calculations and downloadable working artifacts |
 
 The dynamic catalog still supports authenticated custom imports. This is a
@@ -550,7 +548,7 @@ bundled set, not an allowlist for installed personas.
 
 ### Non-destructive retirement
 
-The nine former industry built-ins are retired by identifier in
+Generic and the nine former industry built-ins are retired by identifier in
 `src/backend/app/personas.py`. Startup, blob discovery, local fallback, cached
 registries, hosted lazy loading, chat, admin changes and export ignore or reject
 those identifiers even if old copies remain. Requests return
@@ -576,9 +574,10 @@ no default to a former persona's sample data.
 Each use case has:
 - `SYSTEM_PROMPT.md` — Agent persona and behavior instructions
 - `skills/` — Domain-specific MCP skills (SKILL.md files)
-- `apm.yml` + `apm.lock.yaml` — Remote skill dependencies
+- `.mcp.json` — Direct local, HTTP, or SSE MCP configuration
 
-Switch use cases per conversation via the frontend dropdown or `useCase` field in the API request.
+New work defaults to Akte Agent. The selector is hidden for a single available
+persona and shows one unfiltered list when additional personas are available.
 
 ### Export a use case as a standalone Foundry Hosted Agent
 
@@ -634,13 +633,10 @@ User: "What's my account balance?"
 
 ### Skill Loading Architecture
 
-Skills load from three sources in priority order:
+Skills load from two sources in priority order:
 
 1. **Blob Storage** (primary) — `use-cases/{use-case}/skills/{name}/SKILL.md`
 2. **Local filesystem** (fallback) — Same path, read directly from disk
-3. **APM packages** (supplementary) — Materialised into `.github/skills/` by `apm install`
-
-Local/blob skills always win on name conflict with APM packages.
 
 ### Adding a Custom Skill
 
@@ -651,49 +647,6 @@ Local/blob skills always win on name conflict with APM packages.
 ### MCP Servers
 
 External MCP servers (e.g., `faker-mcp-server`) are configured per use case via `use-cases/{use-case}/.mcp.json` and managed through the admin API at `/api/admin/mcp-servers?use_case={use-case}`.
-
----
-
-## APM — Agent Package Manager
-
-[APM](https://microsoft.github.io/apm/) is a dependency manager for agent primitives — skills, prompts, MCP servers, and plugins. Think `package.json` for agents.
-
-Each use case has a manifest at `use-cases/{name}/apm.yml`:
-
-```yaml
-name: kratos-generic
-version: 1.0.0
-target: copilot
-dependencies:
-  apm:
-    - microsoft/apm-sample-package#v1.0.0
-    - anthropics/skills/skills/frontend-design
-  mcp: []
-```
-
-### Runtime Management
-
-```bash
-# Install a remote plugin (no redeploy needed)
-curl -X POST https://<agent>/api/admin/use-cases/generic/apm/install \
-  -H "Content-Type: application/json" \
-  -d '{"package": "anthropics/skills/skills/frontend-design"}'
-
-# Sync all dependencies from manifest
-curl -X POST https://<agent>/api/admin/use-cases/generic/apm/sync
-```
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET` | `/api/admin/use-cases/{uc}/apm` | List dependencies + lockfile |
-| `POST` | `/api/admin/use-cases/{uc}/apm/install` | Install a package |
-| `DELETE` | `/api/admin/use-cases/{uc}/apm/{package}` | Uninstall a package |
-| `POST` | `/api/admin/use-cases/{uc}/apm/sync` | Full resync from manifest |
-| `POST` | `/api/admin/use-cases/{uc}/apm/update` | Update lockfile to latest refs |
-
-### Security
-
-`apm install` runs a content audit (hidden Unicode detection, known-bad package hashes) before materialising files. Diagnostics are surfaced in the admin API response.
 
 ---
 
@@ -886,7 +839,7 @@ kratos-agent/
 │       ├── obo-entra-app.bicep     # Entra app registrations for the OBO API (server + client)
 │       ├── obo-identity.bicep      # User-assigned MI + federated credential (secret-less OBO)
 │       ├── cosmos-db.bicep         # Cosmos DB serverless (4 containers)
-│       ├── blob-storage.bicep      # Storage Account (skills, APM)
+│       ├── blob-storage.bicep      # Storage Account (skills)
 │       ├── container-apps-env.bicep
 │       ├── container-registry.bicep
 │       ├── static-web-app.bicep
@@ -924,7 +877,6 @@ kratos-agent/
 │   │           ├── skill_tools.py         # @define_tool implementations
 │   │           ├── blob_skill_service.py  # Blob CRUD for skills
 │   │           ├── foundry_agent_proxy.py # Invocations REST API client
-│   │           ├── apm_service.py         # APM CLI wrapper
 │   │           ├── ai_search_tools.py     # AI Search index management
 │   │           └── follow_up_service.py   # Follow-up question generation
 │   │
@@ -942,7 +894,6 @@ kratos-agent/
 │           └── types/              # TypeScript types
 │
 ├── use-cases/                      # Agent personas
-│   ├── generic/                    # General-purpose assistant
 │   └── akte-agent/                 # Notarial working artifacts
 │
 └── hooks/
@@ -989,7 +940,6 @@ kratos-agent/
 | `PUT/DELETE` | `/api/admin/skills/{skill_name}/files/{file_path}` | Write / delete a skill file |
 | `GET/PUT/DELETE` | `/api/admin/system-prompt?use_case=` | System prompt management |
 | `GET/PUT` | `/api/admin/mcp-servers?use_case=` | MCP server configuration |
-| `GET/POST/DELETE` | `/api/admin/use-cases/{use_case}/apm/*` | APM dependency management |
 | `POST` | `/api/admin/analysis/consistency` | Use-case consistency analysis |
 | `POST` | `/api/admin/analysis/apply-fix` | Apply a suggested consistency fix |
 

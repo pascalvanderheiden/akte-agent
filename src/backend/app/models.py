@@ -28,7 +28,7 @@ class ConversationStatus(str, Enum):
 
 class ConversationCreate(BaseModel):
     title: str = "New Conversation"
-    useCase: str = "generic"
+    useCase: str = "akte-agent"
 
 
 class ConversationUpdate(BaseModel):
@@ -39,7 +39,7 @@ class Conversation(BaseModel):
     id: str
     userId: str
     title: str
-    useCase: str = "generic"
+    useCase: str = ""
     status: ConversationStatus = ConversationStatus.ACTIVE
     createdAt: datetime
     updatedAt: datetime
@@ -98,7 +98,7 @@ Attachment = FileAttachment | DirectoryAttachment | SelectionAttachment
 class AgentRequest(BaseModel):
     conversationId: str
     message: str
-    useCase: str = "generic"
+    useCase: str = "akte-agent"
     locale: Locale | None = None
     attachments: list[Attachment] = Field(default_factory=list)
     # Per-MCP-server user access tokens, keyed by MCP server name
@@ -118,7 +118,7 @@ class ToolCallEvent(BaseModel):
     input: str = ""
     output: str = ""
     durationMs: int = 0
-    source: str = ""  # "local" | "blob" | "apm:<package>" — populated best-effort from the registry
+    source: str = ""  # "local" | "blob" — populated best-effort from the registry
 
 
 class ThoughtEvent(BaseModel):
@@ -205,7 +205,7 @@ class CopilotStudioRequest(BaseModel):
         default="",
         description="Optional conversation ID to continue a multi-turn session. Leave empty to start a new conversation.",
     )
-    useCase: str = Field(default="generic", description="Use-case identifier")
+    useCase: str = Field(default="akte-agent", description="Use-case identifier")
     locale: Locale | None = None
 
 
@@ -263,7 +263,7 @@ class SkillResponse(BaseModel):
     instructions: str = ""
     toolName: str = ""
     fileCount: int = 0
-    source: str = "local"  # "local" | "blob" | "apm:<package>"
+    source: str = "local"  # "local" | "blob"
 
 
 class SkillCreate(BaseModel):
@@ -322,7 +322,7 @@ class UseCaseList(BaseModel):
 class ImportSkill(BaseModel):
     """A skill reference in the import manifest.
 
-    Maps to ``apm.yml`` ``dependencies.apm[]`` when ``package`` is given.
+    ``package`` identifies an unsupported package-managed dependency.
     ``implements`` carries threadlight ``BR-XXX`` traceability (metadata only).
     """
 
@@ -333,7 +333,7 @@ class ImportSkill(BaseModel):
 
 
 class ImportMcpServer(BaseModel):
-    """An MCP server reference → ``.mcp.json`` + ``apm.yml`` ``dependencies.mcp[]``."""
+    """A directly configured MCP server reference."""
 
     name: str
     transport: str = "http"

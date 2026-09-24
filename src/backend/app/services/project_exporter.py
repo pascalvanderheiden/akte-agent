@@ -77,7 +77,7 @@ _SKIP_DIRS: frozenset[str] = frozenset(
         ".ruff_cache",
         ".azure",
         "evals",  # Eval scenarios are a Kratos-only authoring tool
-        "apm_modules",  # APM-materialised content — re-installed by `apm install`
+        "apm_modules",  # Legacy package material is never exported.
         ".github",  # APM-managed materialisation
         "dist",  # JS build artefacts
         "build",

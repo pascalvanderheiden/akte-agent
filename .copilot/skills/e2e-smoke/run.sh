@@ -50,14 +50,14 @@ if [[ -z "${SKIP_BROWSER:-}" ]]; then
   fi
 fi
 
-# --- default the use-case list to the deployment's curated personas ---------
+# --- discover all available use-cases ----------------------------------------
 # These are the only personas the frontend selector exposes, so they are the
 # correct target for the UX specs. Discovered at runtime, never hardcoded.
 if [[ -z "${KRATOS_USE_CASES:-}" ]]; then
   CURATED="$(curl -fsS "${KRATOS_BACKEND_URL%/}/api/use-cases" 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{
         const u=JSON.parse(s).useCases||[];
-        const c=u.filter(x=>x.curated===true).map(x=>x.name);
+        const c=u.map(x=>x.name);
         process.stdout.write((c.length?c:u.map(x=>x.name)).join(","));
       }catch{}})' || true)"
   if [[ -n "$CURATED" ]]; then
@@ -67,7 +67,7 @@ fi
 
 echo "[e2e-smoke] frontend  = ${KRATOS_FRONTEND_URL}"
 echo "[e2e-smoke] backend   = ${KRATOS_BACKEND_URL}"
-echo "[e2e-smoke] use-cases = ${KRATOS_USE_CASES:-generic (fallback)}"
+echo "[e2e-smoke] use-cases = ${KRATOS_USE_CASES:-akte-agent (fallback)}"
 echo "[e2e-smoke] skip-browser = ${SKIP_BROWSER:-0}"
 
 exec ./node_modules/.bin/playwright test "$@"

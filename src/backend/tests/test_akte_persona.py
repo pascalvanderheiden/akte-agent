@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.asyncio
-async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
+async def test_clean_catalog_exposes_only_akte_and_defaults_new_work():
     app = FastAPI()
     app.include_router(use_cases.router, prefix="/api/use-cases")
     app.state.registries = {}
@@ -32,17 +32,16 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         await registry.load(directory.name, local_root=str(REPO / "use-cases"))
         app.state.registries[directory.name] = registry
     catalog = TestClient(app).get("/api/use-cases").json()["useCases"]
-    curated = {item["name"]: item for item in catalog if item["curated"]}
-    assert {item["name"] for item in catalog} == curated.keys() == {"akte-agent", "generic"}
-    akte = curated["akte-agent"]
+    assert {item["name"] for item in catalog} == {"akte-agent"}
+    akte = catalog[0]
     assert akte["displayName"] == "Akte Agent"
     for locale in ("en", "nl"):
         presentation = akte["localizations"][locale]
         assert presentation["displayName"] and presentation["description"]
         assert len(presentation["sampleQuestions"]) >= 6
         assert all(presentation["sampleQuestions"])
-    assert AgentRequest(conversationId="synthetic", message="Hello").useCase == "generic"
-    assert ConversationCreate(title="synthetic").useCase == "generic"
+    assert AgentRequest(conversationId="synthetic", message="Hello").useCase == "akte-agent"
+    assert ConversationCreate(title="synthetic").useCase == "akte-agent"
     names = app.state.registries["akte-agent"].get_enabled_tool_names()
     assert {
         "code_interpreter",

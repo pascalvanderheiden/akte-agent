@@ -20,12 +20,12 @@ MODEL_DEPLOYMENT_NAME=gpt-4o-mini
 # KEY_VAULT_URI=https://<kv-name>.vault.azure.net/
 
 # Blob Storage — where the SkillRegistry mirrors use-case content.
-# When unset, the runtime falls back to local disk under APM_USE_CASES_ROOT.
+# When unset, the runtime falls back to local disk under PERSONA_ASSETS_ROOT.
 # BLOB_STORAGE_ENDPOINT=https://<account>.blob.core.windows.net
 # BLOB_SKILLS_CONTAINER=skills
 
 # Local fallback path for the use-case manifest (defaults to ./use-cases)
-APM_USE_CASES_ROOT=./use-cases
+PERSONA_ASSETS_ROOT=./use-cases
 
 # Cosmos DB database (Optional locally — defaults to "kratos-agent")
 COSMOS_DB_DATABASE=kratos-agent-${slug}

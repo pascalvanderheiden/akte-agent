@@ -256,7 +256,7 @@ class FoundryAgentProxy:
         self,
         message: str,
         conversation_id: str,
-        use_case: str = "generic",
+        use_case: str = "akte-agent",
         system_prompt: str | None = None,
         agent_session_id: str | None = None,
         eval_run_id: str | None = None,
@@ -283,7 +283,7 @@ class FoundryAgentProxy:
         # can route to the correct skills even if the Invocations gateway
         # strips custom JSON fields like "useCase" from the payload.
         preamble_parts: list[str] = []
-        if use_case and use_case != "generic":
+        if use_case and use_case != "akte-agent":
             preamble_parts.append(f"<use_case>{use_case}</use_case>")
         if system_prompt:
             preamble_parts.append(f"<system_instructions>\n{system_prompt}\n</system_instructions>")

@@ -29,7 +29,7 @@ export interface ToolCallInfo {
   input?: string;
   output?: string;
   durationMs?: number;
-  source?: string; // "local" | "blob" | "apm:<package>" | ""
+  source?: string; // "local" | "blob" | ""
 }
 
 // SSE Event types from the backend
@@ -154,7 +154,7 @@ export interface Skill {
   instructions: string;
   toolName: string;
   fileCount?: number;
-  source?: string; // "local" | "blob" | "apm:<package>"
+  source?: string; // "local" | "blob"
 }
 
 export interface SkillCreate {
@@ -185,7 +185,7 @@ export interface UseCase {
   description: string;
   skillCount: number;
   sampleQuestions: string[];
-  /** True when the persona has been hand-curated and approved for demos. Defaults to false. */
+  /** Legacy import metadata; availability never depends on this field. */
   curated?: boolean;
   localizations?: Partial<Record<Locale, PersonaLocalization>>;
 }
@@ -255,41 +255,6 @@ export interface ApplyFixResult {
   success: boolean;
   changes: FixChange[];
   error: string;
-}
-
-// ─── APM (Agent Package Manager) Admin ───
-
-export interface ApmDependency {
-  name: string;
-  ref: string | null;
-  resolved: string | null;
-  source: string;
-}
-
-export interface ApmMcpServer {
-  name: string;
-  transport: string;
-  command?: string | null;
-  args?: string[];
-  url?: string | null;
-  env?: Record<string, string>;
-  registry?: boolean;
-}
-
-export interface ApmStatusResponse {
-  dependencies: ApmDependency[];
-  materialised_skill_dirs: string[];
-  mcp_servers?: ApmMcpServer[];
-  version: string;
-}
-
-export interface ApmCommandResponse {
-  success: boolean;
-  returncode: number;
-  stdout: string;
-  stderr: string;
-  duration_ms: number;
-  dependencies: ApmDependency[];
 }
 
 // ─── Evals ───
