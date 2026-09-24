@@ -95,13 +95,13 @@ function VizPersonas() {
     <div className="rounded-xl bg-surface-2 border border-border-soft p-5" role="img" aria-label="Three personas converging on one engine">
       <div className="grid grid-cols-3 gap-2 mb-3">
         {personas.map((p) => (
-          <div key={p.name} className={`rounded-lg bg-gradient-to-br ${p.tint} border ${p.border} px-2.5 py-2.5`}>
+          <div key={p.name} className={`rounded-lg bg-linear-to-br ${p.tint} border ${p.border} px-2.5 py-2.5`}>
             <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1">Persona bundle</div>
             <div className="text-[12px] font-semibold text-text-strong mb-1.5">{p.name}</div>
             <div className="text-[10.5px] text-text leading-snug mb-2">{p.prompt}</div>
             <div className="flex flex-wrap gap-1">
               {['prompt', 'skills', 'MCP'].map((part) => (
-                <span key={part} className="rounded bg-surface/70 border border-border-soft px-1.5 py-0.5 text-[9px] text-muted">
+                <span key={part} className="rounded-sm bg-surface/70 border border-border-soft px-1.5 py-0.5 text-[9px] text-muted">
                   {part}
                 </span>
               ))}
@@ -224,7 +224,7 @@ function VizSession() {
       <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-3">The same conversation, four turns apart</div>
       <div className="relative">
         <div className="absolute left-0 right-0 top-3 h-[2px] bg-border" />
-        <div className="absolute left-0 top-3 h-[2px] bg-gradient-to-r from-violet-500 to-violet-400" style={{ width: "100%" }} />
+        <div className="absolute left-0 top-3 h-[2px] bg-linear-to-r from-violet-500 to-violet-400" style={{ width: "100%" }} />
         <div className="relative flex justify-between">
           {[
             { day: "Mon", label: "First turn" },
@@ -350,11 +350,11 @@ function VizLoop() {
               <div className="rounded-md bg-surface border border-border px-2 py-1 text-[10.5px] text-center text-text truncate">{it.result}</div>
             </div>
             {i < iterations.length - 1 ? (
-              <svg className="w-4 h-4 text-muted flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-muted shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M21.012 4.356v4.992" />
               </svg>
             ) : (
-              <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
               </svg>
             )}
@@ -728,7 +728,7 @@ export default function AgentLoop({ open, onClose }: { open: boolean; onClose: (
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+    <div className="fixed inset-0 z-100 flex items-start justify-center overflow-y-auto bg-black/60 backdrop-blur-xs animate-fade-in" onClick={onClose}>
       <div className="relative w-full max-w-6xl mx-4 my-6 md:my-10 rounded-2xl border border-border bg-surface shadow-card" onClick={(e) => e.stopPropagation()}>
         {/* Close button */}
         <button
@@ -805,7 +805,7 @@ export default function AgentLoop({ open, onClose }: { open: boolean; onClose: (
                     key={s.id}
                     onClick={() => !isPlaying && goTo(i)}
                     disabled={isPlaying}
-                    className="flex flex-col items-center group outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-xl"
+                    className="flex flex-col items-center group outline-hidden focus-visible:ring-2 focus-visible:ring-accent rounded-xl"
                     aria-label={`Step ${s.id}: ${s.title}`}
                     aria-current={isActive ? "step" : undefined}
                   >

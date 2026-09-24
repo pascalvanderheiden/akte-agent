@@ -75,15 +75,20 @@ async def export_use_case(
             project_dir = Path(td) / f"{use_case}-agent"
             project_dir.mkdir()
             exporter.assemble(use_case, project_dir)
+            # Export the active prompt, including edits/localizations that have
+            # been persisted to blob but not yet re-synced to the local mirror.
+            prompt = registries[use_case].system_prompt
+            if prompt:
+                (project_dir / "use-cases" / use_case / "SYSTEM_PROMPT.md").write_text(prompt)
             zip_bytes = ProjectExporter.build_zip(project_dir)
     except FileNotFoundError as exc:
         # Should be rare: registry knows about the use-case but its directory
         # is missing on disk. Treat as a server-side state inconsistency.
         logger.exception("Use-case '%s' directory missing on disk", use_case)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail={"code": "EXPORT_ERROR"}) from exc
     except Exception as exc:  # noqa: BLE001 — surface as 500 with safe message
         logger.exception("Failed to export use-case '%s'", use_case)
-        raise HTTPException(status_code=500, detail=f"Export failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail={"code": "EXPORT_ERROR"}) from exc
 
     filename = f"{use_case}-foundry-agent.zip"
     headers = {

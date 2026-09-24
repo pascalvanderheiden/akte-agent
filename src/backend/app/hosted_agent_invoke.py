@@ -18,7 +18,22 @@ unit-tested without importing the agentserver runtime.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+
+from app.locale import Locale, validate_locale
+
+
+def extract_invoke_locale(data: dict[str, Any], message: str) -> tuple[Locale | None, str]:
+    """Read validated JSON or gateway context after the other preamble tags are removed."""
+    locale = validate_locale(data.get("locale"))
+    match = re.match(r"^\s*<locale>\s*([^<]*?)\s*</locale>", message)
+    if match:
+        tagged_locale = validate_locale(match.group(1))
+        if locale is None:
+            locale = tagged_locale
+        message = message[match.end() :].strip()
+    return locale, message
 
 
 def parse_invoke_payload(raw: bytes) -> dict[str, Any]:

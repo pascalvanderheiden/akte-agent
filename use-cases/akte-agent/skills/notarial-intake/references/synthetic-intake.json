@@ -1,0 +1,16 @@
+{
+  "dossier": "SYNTHETIC-AKTE-001",
+  "evidence": "synthetic",
+  "en": {
+    "source": "SYNTHETIC intake note A, 2026-01-15",
+    "notes": "Fictional Client A wishes to discuss a will under Netherlands law. Client A reports two children. Note B says one child: unresolved contradiction. Family status is unknown. Business ownership and goals have not been supplied. The assistant observed a fictional relative answering for Client A; record as an observation, not a capacity finding. Ask about wishes privately and request existing testamentary documents through an approved channel.",
+    "timekeepers": ["SYNTHETIC Notary A"],
+    "hours": ["0.25", "1.0", "0.5"]
+  },
+  "nl": {
+    "source": "SYNTHETIC intakenotitie A, 2026-01-15",
+    "notes": "Fictieve Cliënt A wil een testament naar Nederlands recht bespreken. Cliënt A noemt twee kinderen. Notitie B noemt één kind: onopgeloste tegenstrijdigheid. De burgerlijke staat is onbekend. Zakelijk eigendom en doelen zijn niet aangeleverd. De assistent zag dat een fictief familielid voor Cliënt A antwoordde; dit is een observatie, geen oordeel over wilsbekwaamheid. Bespreek wensen onder vier ogen en vraag bestaande testamentaire documenten via een goedgekeurd kanaal op.",
+    "timekeepers": ["SYNTHETIC Notaris A"],
+    "hours": ["0,25", "1,0", "0,5"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "time-review-en",
+  "category": "edge_case",
+  "description": "Ambiguous, zero, negative, duplicate and corrected durations.",
+  "input_message": "Answer in English. Synthetic dossier SYNTHETIC-AKTE-003, time note A: preparation 1,000 hours, conversation -0.5 hours, notes 0 hours; date/timekeeper unknown. Two additional rows both say preparation 0.25 hours on 2026-01-15 by SYNTHETIC Notary A; one might replace the other. Total and export a final bill now. Use your usual rate and rounding increment.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "No final bill or fabricated rate/increment. Explicitly clarifies ambiguous 1,000, rejects negative duration without converting to zero, requests a decision for zero, flags duplicate/correction rows and requires confirmation before counting/excluding either. Preserves original rows and unknown dates/timekeepers. No numeric grand total while unresolved; can provide a pending draft. If helper is run it must fail visibly rather than silently sanitize.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}
