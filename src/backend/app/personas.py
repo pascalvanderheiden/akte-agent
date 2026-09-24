@@ -64,9 +64,7 @@ def require_persona_match(requested: str | None, stored: str | None) -> None:
         raise PersonaMismatch()
 
 
-def resolve_use_case(
-    requested: str | None, stored: str | None, default: str = DEFAULT_USE_CASE
-) -> str:
+def resolve_use_case(requested: str | None, stored: str | None, default: str = DEFAULT_USE_CASE) -> str:
     """Derive the persona identity execution must use for this turn.
 
     Continuations of an identified conversation always execute as the

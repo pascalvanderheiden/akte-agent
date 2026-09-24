@@ -681,7 +681,9 @@ def test_legacy_persona_assets_root_alias_is_supported(monkeypatch, tmp_path: Pa
 
 
 @pytest.mark.parametrize("use_legacy_alias", [False, True], ids=["custom-root", "legacy-root-alias"])
-def test_export_endpoint_uses_external_assets_in_container_layout(kratos_repo: Path, monkeypatch, tmp_path, use_legacy_alias):
+def test_export_endpoint_uses_external_assets_in_container_layout(
+    kratos_repo: Path, monkeypatch, tmp_path, use_legacy_alias
+):
     """The route must not derive assets from the code root in the /app container."""
     from app.config import Settings
     from app.main import app

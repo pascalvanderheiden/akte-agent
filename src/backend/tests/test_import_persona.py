@@ -120,7 +120,9 @@ def test_direct_mcp_mapping(client, tmp_path):
 def test_direct_mcp_with_legacy_registry_metadata_is_preserved(client, tmp_path):
     response = client.post(
         "/api/use-cases/import",
-        json={"manifest": _manifest(mcpServers=[{"name": "tools", "registry": True, "url": "https://example.test/mcp"}])},
+        json={
+            "manifest": _manifest(mcpServers=[{"name": "tools", "registry": True, "url": "https://example.test/mcp"}])
+        },
     )
     assert response.status_code == 201, response.text
     mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
