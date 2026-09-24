@@ -60,7 +60,15 @@ from app.models import (
     UserInputRequestEvent,
 )
 from app.observability import setup_telemetry
-from app.personas import RETIRED_PERSONAS, PersonaUnavailable, require_identified_history, require_not_retired
+from app.personas import (
+    RETIRED_PERSONAS,
+    PersonaMismatch,
+    PersonaUnavailable,
+    require_identified_history,
+    require_not_retired,
+    require_persona_match,
+    resolve_use_case,
+)
 from app.services.blob_skill_service import BlobSkillService
 from app.services.copilot_agent import CopilotAgent
 from app.services.cosmos_service import CosmosService
@@ -476,7 +484,7 @@ async def handle_invoke(request: Request) -> Response:
             raise ValueError('missing or empty "message" (or "input") field')
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
-        use_case = data.get("useCase", "akte-agent")
+        use_case = data.get("useCase")
         model_selection = data.get("selectedModelId") or data.get("modelSelection", "auto")
         runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
         runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
@@ -500,7 +508,7 @@ async def handle_invoke(request: Request) -> Response:
             # Parse <use_case> tag (fallback when gateway strips useCase field)
             uc_match = re.search(r"<use_case>\s*(\S+?)\s*</use_case>", message)
             if uc_match:
-                if use_case == "akte-agent":
+                if use_case is None or use_case == "akte-agent":
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
                 message = message[: uc_match.start()] + message[uc_match.end() :]
@@ -577,19 +585,23 @@ async def handle_invoke(request: Request) -> Response:
     # for a given use-case pays a small one-time load instead of every sandbox
     # loading all use-cases up front.
     try:
-        require_not_retired(use_case)
         if runtime_foundry_endpoint and (
             runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
             or runtime_foundry_deployment != _copilot_agent.settings.foundry_model_deployment
         ):
             await _copilot_agent.update_config(runtime_foundry_endpoint, runtime_foundry_deployment)
+        stored_use_case = None
         if _cosmos_service is not None:
             existing = await _cosmos_service.get_conversation(conversation_id, "default-user")
             if existing:
                 require_identified_history(existing.useCase)
                 require_not_retired(existing.useCase)
+                require_persona_match(use_case, existing.useCase)
+                stored_use_case = existing.useCase
+        use_case = resolve_use_case(use_case, stored_use_case)
+        require_not_retired(use_case)
         await _ensure_registry(use_case)
-    except PersonaUnavailable as exc:
+    except (PersonaUnavailable, PersonaMismatch) as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return StreamingResponse(

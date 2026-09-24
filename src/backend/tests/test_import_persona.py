@@ -138,7 +138,23 @@ def test_direct_command_mcp_mapping(client, tmp_path):
     )
     assert response.status_code == 201, response.text
     mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
-    assert mcp["local-tools"] == {"type": "stdio", "command": "python", "args": ["server.py"]}
+    # Command-backed servers always map to the runtime's "local" type — the
+    # manifest's MCP-spec "stdio" transport hint is not a runnable Kratos type.
+    assert mcp["local-tools"] == {"type": "local", "command": "python", "args": ["server.py"]}
+
+
+def test_remote_mcp_with_unsupported_transport_is_rejected(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(
+                mcpServers=[{"name": "tools", "transport": "local", "url": "https://example.test/mcp"}]
+            )
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_MCP_TRANSPORT"
+    assert not (tmp_path / "use-cases" / "synthetic-review-bot").exists()
 
 
 def test_package_dependent_import_is_rejected(client, tmp_path):

@@ -124,19 +124,23 @@ def _build_mcp_json(servers: list[ImportMcpServer]) -> str:
     """Render .mcp.json (Copilot MCP config) from the manifest MCP servers.
 
     ``.mcp.json`` is loaded verbatim into the Copilot SDK session config, so every
-    entry must be directly runnable.
+    entry must be directly runnable and match the runtime's ``MCPServerConfig``
+    shape: command-backed servers always use ``type: "local"`` (the manifest's
+    ``transport`` — e.g. an MCP-spec ``"stdio"`` hint — is not a runnable Kratos
+    type), while URL-backed servers must declare a supported remote transport.
     """
     config: dict[str, dict] = {}
     for server in servers:
-        if not server.url and not server.command:
-            raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
-        entry: dict[str, str | list[str]] = {"type": server.transport}
-        if server.url:
-            entry["url"] = server.url
-        else:
-            entry["command"] = server.command
+        if server.command:
+            entry: dict[str, str | list[str]] = {"type": "local", "command": server.command}
             if server.args:
                 entry["args"] = server.args
+        elif server.url:
+            if server.transport not in ("http", "sse"):
+                raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_MCP_TRANSPORT"})
+            entry = {"type": server.transport, "url": server.url}
+        else:
+            raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
         config[server.name] = entry
     return json.dumps(config, indent=2) + "\n"
 

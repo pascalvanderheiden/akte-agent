@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.models import AgentRequest, ConversationCreate
+from app.personas import resolve_use_case
 from app.routers import use_cases
 from app.services.eval_storage import EvalStorage
 from app.services.project_exporter import ProjectExporter
@@ -40,7 +41,10 @@ async def test_clean_catalog_exposes_only_akte_and_defaults_new_work():
         assert presentation["displayName"] and presentation["description"]
         assert len(presentation["sampleQuestions"]) >= 6
         assert all(presentation["sampleQuestions"])
-    assert AgentRequest(conversationId="synthetic", message="Hello").useCase == "akte-agent"
+    # New work with an omitted persona selection resolves to Akte; existing
+    # conversations must never be silently defaulted onto a different persona.
+    assert AgentRequest(conversationId="synthetic", message="Hello").useCase is None
+    assert resolve_use_case(AgentRequest(conversationId="synthetic", message="Hello").useCase, None) == "akte-agent"
     assert ConversationCreate(title="synthetic").useCase == "akte-agent"
     names = app.state.registries["akte-agent"].get_enabled_tool_names()
     assert {

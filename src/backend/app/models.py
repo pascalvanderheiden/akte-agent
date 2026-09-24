@@ -106,7 +106,11 @@ Attachment = FileAttachment | DirectoryAttachment | SelectionAttachment
 class AgentRequest(BaseModel):
     conversationId: str
     message: str
-    useCase: str = "akte-agent"
+    # None means the client omitted a selection: new work defaults to Akte,
+    # but a continuation must execute as the conversation's stored persona
+    # rather than being silently coerced to this default. See
+    # app.personas.resolve_use_case / require_persona_match.
+    useCase: str | None = None
     locale: Locale | None = None
     modelSelection: str | None = None
     selectedModelId: str | None = None
@@ -222,7 +226,8 @@ class CopilotStudioRequest(BaseModel):
         default="",
         description="Optional conversation ID to continue a multi-turn session. Leave empty to start a new conversation.",
     )
-    useCase: str = Field(default="akte-agent", description="Use-case identifier")
+    # None means the client omitted a selection; see AgentRequest.useCase.
+    useCase: str | None = Field(default=None, description="Use-case identifier")
     locale: Locale | None = None
     modelSelection: str | None = None
     selectedModelId: str | None = None

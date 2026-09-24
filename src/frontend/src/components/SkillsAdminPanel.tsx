@@ -841,8 +841,8 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
                 ) : (
                   <>
                     <div>
-                      <label className="block text-sm font-medium text-text mb-1.5">URL <span className="text-red-500">*</span></label>
-                      <input type="text" aria-label={t("mcp.command")} value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <label className="block text-sm font-medium text-text mb-1.5">{t("mcp.url")} <span className="text-red-500">*</span></label>
+                      <input type="text" aria-label={t("mcp.url")} value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">{t("mcp.headers")}<span className="text-muted text-xs font-normal">{t("mcp.headersHint")}</span></label>
@@ -901,8 +901,8 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
                 ) : (
                   <>
                     <div>
-                      <label className="block text-sm font-medium text-text mb-1.5">URL <span className="text-red-500">*</span></label>
-                      <input type="text" aria-label={t("mcp.command")} value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
+                      <label className="block text-sm font-medium text-text mb-1.5">{t("mcp.url")} <span className="text-red-500">*</span></label>
+                      <input type="text" aria-label={t("mcp.url")} value={mcpUrl} onChange={(e) => setMcpUrl(e.target.value)} placeholder="https://mcp.example.com/sse" className="w-full px-3 py-2 bg-surface-2 border border-border-soft rounded-xl text-sm text-text font-mono focus:outline-hidden focus:ring-2 focus:ring-accent focus:border-accent transition-all" />
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-text mb-1.5">{t("mcp.headers")}<span className="text-muted text-xs font-normal">{t("mcp.headersHint")}</span></label>

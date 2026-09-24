@@ -27,7 +27,8 @@ export function SourceBadge({
 
   const label = kind.toUpperCase();
   const title = t("source", { name: kind });
-  const palette = styles[kind] ?? styles.local;
+  const palette = styles[kind];
+  if (!palette) return null;
   const sizeCls = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-1.5 py-0.5 text-[9px]";
 
   return (
