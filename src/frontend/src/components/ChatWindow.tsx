@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Conversation, ChatMessage, ToolCallInfo, RunStats, Attachment } from "@/types";
+import { useLocale } from "./LocaleProvider";
+import { errorCode, type ErrorCode } from "@/lib/errors";
 import { streamAgentChat, getConversationMessages, updateConversation } from "@/lib/api";
 import { MessageBubble } from "./MessageBubble";
 import { ThoughtChain } from "./ThoughtChain";
@@ -18,9 +20,14 @@ interface Props {
   onTitleChange?: (conversationId: string, title: string) => void;
   initialMessage?: string;
   onOpenSidebar?: () => void;
+  personaDisplayName?: string;
 }
 
-export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar }: Props) {
+export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpenSidebar, personaDisplayName }: Props) {
+  const { locale, t } = useLocale();
+  const [error, setError] = useState<ErrorCode | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [historyRetry, setHistoryRetry] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -67,6 +74,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
     setRunStats(null);
     setMessageStats({});
     setAwaitingResponse(false);
+    setLoading(true);
 
     const applyLoaded = (loaded: ChatMessage[]) => {
       setMessages(loaded);
@@ -108,7 +116,9 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
           pollTimer = setTimeout(load, POLL_INTERVAL_MS);
         }
       } catch {
-        // Non-fatal — new conversation or backend briefly unreachable.
+        if (!cancelled) setError("HISTORY_ERROR");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -118,11 +128,12 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
       cancelled = true;
       if (pollTimer) clearTimeout(pollTimer);
     };
-  }, [conversation.id]);
+  }, [conversation.id, historyRetry]);
 
   const handleSend = async (messageOverride?: string) => {
     const trimmed = (messageOverride ?? input).trim();
     if (!trimmed || isStreaming) return;
+    setError(null);
 
     // Auto-title on the first message of a conversation
     const isFirstMessage = messages.length === 0;
@@ -130,7 +141,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
       titleUpdatedRef.current.add(conversation.id);
       const title = trimmed.slice(0, 60) + (trimmed.length > 60 ? "…" : "");
       onTitleChange?.(conversation.id, title);
-      updateConversation(conversation.id, { title }).catch(() => {/* non-fatal */});
+      updateConversation(conversation.id, { title }).catch(() => setError("TITLE_ERROR"));
     }
 
     // Add user message
@@ -243,16 +254,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             break;
 
           case "error":
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                conversationId: conversation.id,
-                role: "assistant" as const,
-                content: `Error: ${data.message}`,
-                createdAt: new Date().toISOString(),
-              },
-            ]);
+            setError(errorCode(data.code, "AGENT_ERROR"));
             break;
 
           case "done": {
@@ -291,16 +293,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
         }
       },
       (error) => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            conversationId: conversation.id,
-            role: "assistant" as const,
-            content: `Connection error: ${error.message}`,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
+        setError(errorCode(error, "STREAM_ERROR"));
         setIsStreaming(false);
       },
       () => {
@@ -319,7 +312,8 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
         setUserInputPrompt(null);
       },
       currentAttachments,
-      conversation.useCase
+      conversation.useCase,
+      locale
     );
   };
 
@@ -345,25 +339,31 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    const newAttachments: Attachment[] = await Promise.all(
-      Array.from(files).map(
-        (file) =>
-          new Promise<Attachment>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const base64 = (reader.result as string).split(",")[1] || "";
-              resolve({
-                type: "file" as const,
-                path: file.name,
-                displayName: file.name,
-                content: base64,
-              });
-            };
-            reader.readAsDataURL(file);
-          })
-      )
-    );
-    setAttachments((prev) => [...prev, ...newAttachments]);
+    try {
+      const newAttachments: Attachment[] = await Promise.all(
+        Array.from(files).map(
+          (file) =>
+            new Promise<Attachment>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const base64 = (reader.result as string).split(",")[1] || "";
+                resolve({
+                  type: "file" as const,
+                  path: file.name,
+                  displayName: file.name,
+                  content: base64,
+                });
+              };
+              reader.onerror = () => reject(new Error("ATTACHMENT_ERROR"));
+              reader.onabort = () => reject(new Error("ATTACHMENT_ERROR"));
+              reader.readAsDataURL(file);
+            })
+        )
+      );
+      setAttachments((prev) => [...prev, ...newAttachments]);
+    } catch {
+      setError("ATTACHMENT_ERROR");
+    }
     // Reset the input so the same file can be selected again
     e.target.value = "";
   };
@@ -386,13 +386,14 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
   return (
     <div className="flex flex-col h-full bg-bg">
       {/* Header */}
-      <header className="border-b border-border-soft px-4 sm:px-6 py-3 bg-surface backdrop-blur sticky top-0 z-10 shadow-sm">
+      <header className="border-b border-border-soft pl-4 pr-32 py-3 bg-surface backdrop-blur-sm sticky top-0 z-10 shadow-xs">
         <div className="flex items-center gap-3 max-w-5xl mx-auto">
           {/* Mobile hamburger */}
           {onOpenSidebar && (
             <button
               onClick={onOpenSidebar}
-              className="lg:hidden p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all flex-shrink-0"
+              aria-label={t("openSidebar")}
+              className="lg:hidden p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all shrink-0"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
@@ -405,8 +406,8 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                 {conversation.title}
               </h2>
               {conversation.useCase && conversation.useCase !== "generic" && (
-                <span className="text-[10px] px-2 py-0.5 bg-accent-soft text-accent rounded-full font-medium flex-shrink-0">
-                  {conversation.useCase.replace(/-/g, " ")}
+                <span className="text-[10px] px-2 py-0.5 bg-accent-soft text-accent rounded-full font-medium shrink-0">
+                  {personaDisplayName ?? conversation.useCase}
                 </span>
               )}
             </div>
@@ -417,6 +418,14 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-6">
         <div className="max-w-5xl mx-auto space-y-5">
+          {error && (
+            <div role="alert" className="text-sm text-red-600">
+              {t(`error.${error}`)}
+              {error === "HISTORY_ERROR" && <button className="ml-3 underline" onClick={() => { setError(null); setHistoryRetry((n) => n + 1); }}>{t("retry")}</button>}
+            </div>
+          )}
+          {loading && <p role="status" className="text-sm text-muted">{t("chat.loading")}</p>}
+          {!loading && !error && messages.length === 0 && <p className="text-sm text-muted">{t("chat.empty")}</p>}
           {messages.map((msg) => (
             <div key={msg.id}>
               <MessageBubble message={msg} />
@@ -460,7 +469,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              <span>Generating response…</span>
+              <span role="status">{t("generating")}</span>
             </div>
           )}
 
@@ -494,15 +503,16 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                         handleUserInputSubmit(userInputAnswer.trim());
                       }
                     }}
-                    placeholder="Type your answer..."
-                    className="flex-1 text-sm text-text bg-surface border border-border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ask placeholder:text-muted"
+                    placeholder={t("answer")}
+                    aria-label={t("answer")}
+                    className="flex-1 text-sm text-text bg-surface border border-border rounded-lg px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-ask placeholder:text-muted"
                   />
                   <button
                     onClick={() => handleUserInputSubmit(userInputAnswer.trim())}
                     disabled={!userInputAnswer.trim()}
                     className="px-4 py-2 text-sm bg-ask text-accent-fg rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity font-medium"
                   >
-                    Send
+                    {t("send")}
                   </button>
                 </div>
               )}
@@ -518,7 +528,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                     <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
                   </svg>
                 </div>
-                <span className="text-xs font-medium text-muted uppercase tracking-wider">Continue exploring</span>
+                <span className="text-xs font-medium text-muted uppercase tracking-wider">{t("explore")}</span>
               </div>
               <div className="flex flex-col gap-1.5 stagger-children">
                 {followUpQuestions.map((question, idx) => (
@@ -528,9 +538,9 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                       setFollowUpQuestions([]);
                       handleSend(question);
                     }}
-                    className="group flex items-center gap-3 px-3.5 py-2.5 text-[13px] text-left rounded-xl border border-transparent hover:bg-hover hover:border-border hover:shadow-sm transition-all duration-300 animate-slide-up-stagger active:scale-[0.98]"
+                    className="group flex items-center gap-3 px-3.5 py-2.5 text-[13px] text-left rounded-xl border border-transparent hover:bg-hover hover:border-border hover:shadow-xs transition-all duration-300 animate-slide-up-stagger active:scale-[0.98]"
                   >
-                    <svg className="w-4 h-4 text-text-strong group-hover:text-accent transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <svg className="w-4 h-4 text-text-strong group-hover:text-accent transition-colors shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                     </svg>
                     <span className="text-muted group-hover:text-text-strong transition-colors">
@@ -553,7 +563,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             {attachments.map((att, idx) => (
               <span
                 key={idx}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface border border-border-soft rounded-lg shadow-sm animate-fade-in"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface border border-border-soft rounded-lg shadow-xs animate-fade-in"
               >
                 <svg className="w-3.5 h-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -561,6 +571,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
                 <span className="text-text font-medium">{att.displayName || ("path" in att ? att.path : "")}</span>
                 <button
                   onClick={() => removeAttachment(idx)}
+                  aria-label={t("removeAttachment", { name: att.displayName || ("path" in att ? att.path : t("file")) })}
                   className="ml-0.5 text-muted hover:text-red-400 transition-colors"
                 >
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -587,7 +598,8 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isStreaming}
-              title="Attach files"
+              title={t("attach")}
+              aria-label={t("attach")}
               className="p-2 text-muted hover:text-accent rounded-lg hover:bg-hover transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -598,10 +610,11 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask me anything..."
+              placeholder={t("ask")}
+              aria-label={t("ask")}
               rows={1}
               disabled={isStreaming}
-              className="flex-1 resize-none text-sm text-text placeholder:text-muted bg-transparent border-none focus:outline-none focus:ring-0 py-2 px-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 resize-none text-sm text-text placeholder:text-muted bg-transparent border-none focus:outline-hidden focus:ring-0 py-2 px-1 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ minHeight: "36px", maxHeight: "200px" }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
@@ -612,7 +625,7 @@ export function ChatWindow({ conversation, onTitleChange, initialMessage, onOpen
             <button
               onClick={() => handleSend()}
               disabled={isStreaming || !input.trim()}
-              aria-label={isStreaming ? "Sending message" : "Send message"}
+              aria-label={t(isStreaming ? "sendingMessage" : "sendMessage")}
               className="p-2.5 bg-accent text-accent-fg rounded-xl transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed shadow-md hover:shadow-lg active:scale-95"
             >
               {isStreaming ? (

@@ -30,6 +30,22 @@ on:
         description: "Upload use-case skills to blob storage (needs network access to the storage account)"
         type: boolean
         default: false
+      deploy_sre_agent:
+        description: "Provision the opt-in read-only Azure SRE Agent (needs `provision: true` and SRE access in the subscription)"
+        type: boolean
+        default: false
+      sre_connect_telemetry:
+        description: "Configure read-only workload telemetry connectors when provisioning SRE (query verification remains manual)"
+        type: boolean
+        default: true
+      sre_location:
+        description: "Region for the SRE Agent (blank = same region as the application, if supported)"
+        type: string
+        default: ""
+      sre_agent_name:
+        description: "Optional SRE Agent name override (blank = deterministic environment-scoped name)"
+        type: string
+        default: ""
       run_integration_tests:
         description: "Run integration tests after deploying"
         type: boolean
@@ -77,7 +93,7 @@ jobs:
       # v1.0.0 installs from azdrelease.azureedge.net, which no longer resolves
       # (the Azure Edgio CDN was retired). v2.x installs from GitHub releases.
       - name: Install azd
-        uses: Azure/setup-azd@v2.3.0
+        uses: Azure/setup-azd@v2.4.0
 
       - name: Azure Login
         uses: azure/login@v3
@@ -106,6 +122,33 @@ jobs:
               --location "$AZURE_LOCATION" \
               --subscription "$AZURE_SUBSCRIPTION_ID" \
               --no-prompt
+
+      # Nonsecret SRE options, recorded with the supported azd command rather
+      # than by editing .azure/. Deploy-only runs must not change opt-in state.
+      # Disabling does not delete an existing agent — see docs/sre-agent.md.
+      - name: Configure SRE Agent options
+        if: inputs.provision
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          # Passed through env rather than interpolated into the script body,
+          # so a value cannot be executed by the runner.
+          DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
+          SRE_CONNECT_TELEMETRY_INPUT: ${{ inputs.sre_connect_telemetry }}
+          SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
+          SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
+        run: |
+          . ./hooks/sre-lib.sh
+          sre_bool SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-}" true >/dev/null || exit 1
+          azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
+          azd env set SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-true}"
+          # Repository attachment is configured separately.
+          azd env set SRE_CONNECT_GITHUB false
+          # Empty inputs clear old overrides rather than retaining stale values.
+          azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"
+          azd env set SRE_AGENT_NAME_OVERRIDE "$SRE_AGENT_NAME_INPUT"
+          # CI signs in with a federated service principal, so role assignments
+          # must not assume a User principal.
+          azd env set AZURE_PRINCIPAL_TYPE ServicePrincipal
 
       - name: Provision infrastructure
         if: inputs.provision
@@ -145,6 +188,7 @@ jobs:
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Provisioned | ${{ inputs.provision }} |"
             echo "| Skills uploaded | ${{ inputs.upload_use_cases }} |"
+            echo "| SRE core provisioning requested | ${{ inputs.provision && inputs.deploy_sre_agent }} (readiness in SRE_RESULT log) |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:

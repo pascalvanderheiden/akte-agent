@@ -10,7 +10,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from app.models import (
     Conversation,
@@ -66,10 +66,13 @@ async def copilot_studio_chat(
 
     # Invoke hosted agent and collect the full reply
     parts: list[str] = []
+    agent_session_id = await cosmos.get_session_mapping(conversation_id)
     async for event_dict in foundry_proxy.invoke(
         message=body.message,
         conversation_id=conversation_id,
         use_case=body.useCase,
+        locale=body.locale,
+        agent_session_id=agent_session_id,
     ):
         event_name = event_dict.get("event")
         event_data = event_dict.get("data", {})
@@ -77,6 +80,9 @@ async def copilot_studio_chat(
             parts.append(event_data.get("content", ""))
         elif event_name == "error":
             logger.error("Agent error (copilot-studio): %s", event_data.get("message", ""))
+            raise HTTPException(status_code=502, detail={"code": "AGENT_ERROR"})
+        elif event_name == "_gateway_session":
+            await cosmos.upsert_session_mapping(conversation_id, event_data["agentSessionId"])
 
     full_reply = "".join(parts)
 

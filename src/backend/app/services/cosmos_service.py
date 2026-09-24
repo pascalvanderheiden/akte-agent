@@ -123,7 +123,7 @@ class CosmosService:
                 "Cosmos reachable but database read refused (status=%s) — continuing",
                 exc.status_code,
             )
-        except (TimeoutError, asyncio.TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+        except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
             logger.warning(
                 "Cosmos DB at %s unreachable within %ds (%s) — falling back to local persistence. "
                 "Expected when running outside the private endpoint's VNet.",

@@ -29,6 +29,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Pydantic 2.13.5 requires core 2.46.5 exactly. Ignore incompatible
+    # standalone core releases; revisit this range with the grouped parent bump.
+    ignore:
+      - dependency-name: pydantic-core
+        versions: [">=2.47,<2.50"]
     groups:
       obo-security:
         applies-to: security-updates
@@ -68,19 +73,35 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # TypeScript 7 type-checks the app via typescript-native. ESLint still
+    # consumes the TypeScript 6 JavaScript compiler API.
+    ignore:
+      - dependency-name: typescript
+        versions: ["7.x"]
+      # Next.js's Babel parser and React lint plugin do not support ESLint 10.
+      - dependency-name: eslint
+        versions: ["10.x"]
     groups:
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/postcss", "@tailwindcss/typography"]
       # react and react-dom must upgrade together — their peer ranges are
       # locked to each other, so splitting them produces two PRs that each
       # fail on their own (see the React 19 pair, #45 and #50). Listed first
       # because Dependabot assigns a dependency to the first matching group,
       # and this one deliberately has no update-types filter so it also
-      # covers majors.
+      # covers majors. Include Next.js, MSAL, and the native compiler because
+      # their React/compiler compatibility must be validated together.
       react:
         patterns:
           - react
           - react-dom
           - "@types/react"
           - "@types/react-dom"
+          - "@azure/msal-browser"
+          - "@azure/msal-react"
+          - next
+          - eslint-config-next
+          - typescript-native
       frontend-security:
         applies-to: security-updates
         patterns: ["*"]

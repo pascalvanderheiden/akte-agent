@@ -1,0 +1,10 @@
+{
+  "name": "intake-time-en",
+  "category": "standard",
+  "description": "Synthetic English intake, exact time, follow-up and downloadable drafts.",
+  "input_message": "Answer in English. Dossier SYNTHETIC-AKTE-001, fictional note A dated 2026-01-15: Client A wishes to discuss a Netherlands will, reports two children, no family status or business goals supplied. Note B says one child. Prepare a sourced intake brief and a follow-up email requesting missing documents/questions, NOT SENT. Time note C: on 2026-01-15 SYNTHETIC Notary A spent preparation 0.25 hours, conversation 1.0 hour, note-writing 0.5 hours. Keep activities separate. Generate downloadable intake and time drafts with evidence labels. Do not invent a rate.",
+  "input_data": {"synthetic": true, "expected_hours": "1.75", "expected_minutes": "105"},
+  "expected_behavior": "Loads Akte skills and uses code_interpreter with packaged exact arithmetic. Returns exactly 1.75 hours and 105 minutes, distinct activities/date/timekeeper, a brief including client wishes/family/business/matter/contradiction/open questions and missing-document follow-up marked DRAFT NOT SENT. Successfully generates real intake and time files before linking them; each carries dossier/type/draft/source labels and temporary-storage notice. Missing family/business facts remain unknown. No official action claimed. Inspect actual downloaded contents separately; judge prose alone is insufficient.",
+  "expected_tool_calls": ["code-interpreter"],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution", "ToolCallAccuracy"]
+}
