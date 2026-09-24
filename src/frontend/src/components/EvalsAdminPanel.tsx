@@ -616,6 +616,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
   const [latestRun, setLatestRun] = useState<EvalRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
+  const [personaUnavailable, setPersonaUnavailable] = useState(false);
   const [error, setError] = useState<ErrorCode | "">("");
   const [runError, setRunError] = useState<ErrorCode | "">("");
   const [runningValidation, setRunningValidation] = useState(false);
@@ -631,13 +632,21 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
     setLoading(true);
     setLoaded(false);
     setError("");
+    setPersonaUnavailable(false);
     try {
       const [scenarioList, runList, catalog] = await Promise.all([
-        listEvalScenarios(useCase),
+        listEvalScenarios(useCase).catch((err) => {
+          if (errorCode(err, "EVAL_LOAD") !== "PERSONA_UNAVAILABLE") throw err;
+          return null;
+        }),
         listEvalRuns(useCase),
         listUseCases(),
       ]);
-      setScenarios(scenarioList);
+      setScenarios(scenarioList ?? []);
+      if (scenarioList === null) {
+        setPersonaUnavailable(true);
+        setError("PERSONA_UNAVAILABLE");
+      }
       setRuns(runList);
       setPersonas(catalog);
       setLoaded(true);
@@ -765,6 +774,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => setShowGenerateModal(true)}
+          disabled={loading || personaUnavailable}
           className="flex items-center gap-2 px-4 py-2 text-sm text-accent-fg bg-accent rounded-xl transition-all shadow-xs font-medium"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -775,7 +785,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
         <button
           onClick={handleRunValidation}
-          disabled={runningValidation || runningFoundry}
+          disabled={loading || personaUnavailable || runningValidation || runningFoundry}
           className="flex items-center gap-2 px-4 py-2 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {runningValidation ? (
@@ -790,7 +800,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
         <button
           onClick={handleRunFoundry}
-          disabled={runningValidation || runningFoundry || scenarios.length === 0}
+          disabled={loading || personaUnavailable || runningValidation || runningFoundry || scenarios.length === 0}
           className="flex items-center gap-2 px-4 py-2 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           title={scenarios.length === 0 ? t("eval.addFirst") : undefined}
         >
@@ -847,7 +857,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
       {!loading && loaded && (
         <>
           {/* Scenarios section */}
-          <div className="bg-surface border border-border-soft rounded-2xl overflow-hidden">
+          {!personaUnavailable && <div className="bg-surface border border-border-soft rounded-2xl overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border-soft">
               <h3 className="text-sm font-semibold text-text flex items-center gap-2">
                 <svg className="w-4 h-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -926,7 +936,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
                 ))}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Latest run */}
           {latestRun && rollup && (

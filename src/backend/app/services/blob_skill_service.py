@@ -28,6 +28,7 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob.aio import ContainerClient
 
 from app.config import Settings
+from app.personas import RETIRED_PERSONAS, require_not_retired
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ class BlobSkillService:
 
     def local_dir(self, use_case: str) -> Path:
         """Return the local directory for a specific use-case."""
+        require_not_retired(use_case)
         return self.local_base_dir / use_case
 
     # ─── Use-case operations ──────────────────────────────────────────────
@@ -158,7 +160,7 @@ class BlobSkillService:
         names: set[str] = set()
         async for blob in self._container_client.list_blobs(name_starts_with=_USE_CASES_PREFIX):
             parts = blob.name.removeprefix(_USE_CASES_PREFIX).split("/")
-            if parts and parts[0]:
+            if parts and parts[0] and parts[0] not in RETIRED_PERSONAS:
                 names.add(parts[0])
         return sorted(names)
 
@@ -177,7 +179,7 @@ class BlobSkillService:
         # APM-materialised output must never leak into blob.
         _skip_dir_parts = {"apm_modules", ".github", "__pycache__", ".pytest_cache", "results"}
         for uc_dir in sorted(self.local_base_dir.iterdir()):
-            if not uc_dir.is_dir() or uc_dir.name in existing:
+            if not uc_dir.is_dir() or uc_dir.name in existing or uc_dir.name in RETIRED_PERSONAS:
                 continue
             if not (uc_dir / "SYSTEM_PROMPT.md").is_file():
                 continue
@@ -198,6 +200,7 @@ class BlobSkillService:
 
     async def download_system_prompt(self, use_case: str) -> str | None:
         """Download the SYSTEM_PROMPT.md for a use-case."""
+        require_not_retired(use_case)
         content = await self._download_file(f"{_USE_CASES_PREFIX}{use_case}/SYSTEM_PROMPT.md")
         return content.decode() if content else None
 
@@ -205,6 +208,7 @@ class BlobSkillService:
 
     async def list_skill_names(self, use_case: str) -> list[str]:
         """Return skill names for a specific use-case."""
+        require_not_retired(use_case)
         if not self._container_client:
             return []
         prefix = f"{_USE_CASES_PREFIX}{use_case}/skills/"
@@ -222,6 +226,7 @@ class BlobSkillService:
 
     async def sync_to_local(self, use_case: str) -> None:
         """Download all files for a use-case from blob to local filesystem."""
+        require_not_retired(use_case)
         if not self._container_client:
             return
 
@@ -259,11 +264,13 @@ class BlobSkillService:
 
     async def upload_skill_file(self, use_case: str, skill_name: str, relative_path: str, content: bytes) -> None:
         """Upload a single file to a skill folder within a use-case."""
+        require_not_retired(use_case)
         blob_path = f"{_USE_CASES_PREFIX}{use_case}/skills/{skill_name}/{relative_path}"
         await self.upload_file(blob_path, content)
 
     async def upload_skill_folder(self, use_case: str, skill_name: str, local_folder: Path) -> None:
         """Upload an entire local skill folder to blob."""
+        require_not_retired(use_case)
         if not self._container_client:
             return
         for local_path in local_folder.rglob("*"):
@@ -274,6 +281,7 @@ class BlobSkillService:
 
     async def delete_skill(self, use_case: str, skill_name: str) -> None:
         """Delete all blobs for a skill within a use-case."""
+        require_not_retired(use_case)
         if not self._container_client:
             return
         prefix = f"{_USE_CASES_PREFIX}{use_case}/skills/{skill_name}/"
@@ -284,6 +292,7 @@ class BlobSkillService:
 
     async def delete_skill_file(self, use_case: str, skill_name: str, file_path: str) -> None:
         """Delete a single file from a skill folder in blob storage."""
+        require_not_retired(use_case)
         if not self._container_client:
             return
         blob_path = f"{_USE_CASES_PREFIX}{use_case}/skills/{skill_name}/{file_path}"
@@ -294,6 +303,7 @@ class BlobSkillService:
 
     async def upload_mcp_config(self, use_case: str, content: bytes) -> None:
         """Upload the .mcp.json config for a use-case."""
+        require_not_retired(use_case)
         blob_path = f"{_USE_CASES_PREFIX}{use_case}/.mcp.json"
         await self.upload_file(blob_path, content)
 
@@ -304,6 +314,7 @@ class BlobSkillService:
         output under ``apm_modules/`` and ``.github/`` is regenerated locally by
         ``apm install`` and must never be persisted in blob storage.
         """
+        require_not_retired(use_case)
         if filename not in _APM_MANIFEST_FILES:
             raise ValueError(f"Invalid APM manifest filename '{filename}'. Allowed: {sorted(_APM_MANIFEST_FILES)}")
         blob_path = f"{_USE_CASES_PREFIX}{use_case}/{filename}"
@@ -343,6 +354,7 @@ class BlobSkillService:
         Returns:
             The list of relative file paths that were written.
         """
+        require_not_retired(use_case)
         if not overwrite and await self.use_case_exists(use_case):
             raise FileExistsError(use_case)
 

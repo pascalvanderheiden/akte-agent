@@ -21,9 +21,11 @@ from starlette.requests import Request
 
 from app.config import Settings
 from app.models import MessageRole
+from app.personas import RETIRED_PERSONAS
 from app.routers import agent, copilot_studio
 from app.services.copilot_agent import CopilotAgent
 from app.services.foundry_agent_proxy import FoundryAgentProxy
+from app.services.skill_registry import SkillRegistry
 
 
 @pytest.fixture
@@ -52,6 +54,7 @@ def transport(monkeypatch, tmp_path):
         mappings[conversation] = session
 
     cosmos = SimpleNamespace(
+        get_conversation=AsyncMock(return_value=None),
         upsert_message=persist,
         get_session_mapping=AsyncMock(side_effect=lambda conversation: mappings.get(conversation)),
         upsert_session_mapping=save_mapping,
@@ -85,6 +88,7 @@ def transport(monkeypatch, tmp_path):
     sdk = SimpleNamespace(create_session=AsyncMock(return_value=session))
     local_root = tmp_path / "use-cases"
     shutil.copytree(Path(__file__).parents[3] / "use-cases/akte-agent", local_root / "akte-agent")
+    shutil.copytree(Path(__file__).parents[3] / "use-cases/generic", local_root / "generic")
     settings = Settings(local_mode="true", warm_pool_size=0, apm_use_cases_root=str(local_root))
     runtime = CopilotAgent(settings)
     runtime._client = sdk
@@ -141,7 +145,7 @@ def transport(monkeypatch, tmp_path):
     app.include_router(copilot_studio.router, prefix="/api/copilot-studio")
     app.state.cosmos_service = cosmos
     app.state.foundry_proxy = proxy
-    app.state.registries = {}
+    app.state.registries = {name: SimpleNamespace(system_prompt="", skills={}) for name in ("generic", "akte-agent")}
     return SimpleNamespace(
         client=TestClient(app),
         sdk=sdk,
@@ -154,6 +158,35 @@ def transport(monkeypatch, tmp_path):
         invoke=invoke,
         hosted=hosted,
     )
+
+
+@pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))
+@pytest.mark.parametrize("strip_fields", [False, True])
+async def test_hosted_retirement_denies_cached_and_lazy_gateway_paths(transport, name, strip_fields):
+    transport.strip_fields[0] = strip_fields
+    for cached in (False, True):
+        if cached:
+            transport.hosted._registries[name] = SkillRegistry(use_case=name, system_prompt="Stale instructions")
+        response = await transport.invoke(
+            {
+                "message": "No execution",
+                "input": f"<use_case>{name}</use_case>No execution",
+                "useCase": name,
+            }
+        )
+        assert response.status_code == 410
+        assert json.loads(response.body)["detail"]["code"] == "PERSONA_UNAVAILABLE"
+    assert not transport.sent
+    assert not transport.messages
+    transport.sdk.create_session.assert_not_called()
+
+
+async def test_hosted_cannot_switch_retired_history_to_generic(transport):
+    transport.hosted._cosmos_service.get_conversation = AsyncMock(return_value=SimpleNamespace(useCase="insurance"))
+    response = await transport.invoke({"input": "Do not change history", "useCase": "generic"})
+    assert response.status_code == 410
+    assert not transport.messages
+    transport.sdk.create_session.assert_not_called()
 
 
 @pytest.mark.parametrize("strip_fields", [False, True])

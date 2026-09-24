@@ -1,6 +1,6 @@
 {
   "name": "Kratos Agent — Production-Ready AI Agent Reference Architecture on Azure",
-  "description": "Extensible AI agent platform with modular skill system, multi-use-case support (retail banking, insurance, wealth management), and one-command Azure deployment. Built on GitHub Copilot SDK and Microsoft Foundry with a Next.js frontend, FastAPI backend, MCP-based skills, and declarative use-case configuration.",
+  "description": "Extensible AI agent platform with modular skill system, Generic and bilingual Akte Agent personas with authenticated custom imports, and one-command Azure deployment. Built on GitHub Copilot SDK and Microsoft Foundry with a Next.js frontend, FastAPI backend, MCP-based skills, and declarative use-case configuration.",
   "maturity": "Silver",
   "region": "EMEA",
   "industry": "Cross",

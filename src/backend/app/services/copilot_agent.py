@@ -854,6 +854,12 @@ class CopilotAgent:
         locale: Locale | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events."""
+        from app.personas import RETIRED_PERSONAS
+
+        selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
+        if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
+            yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
+            return
 
         # Propagate kratos context into tool spans via ContextVars
         _ctx_conversation_id.set(conversation_id)

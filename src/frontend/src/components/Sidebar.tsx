@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { Conversation, UseCase } from "@/types";
 import { useLocale } from "./LocaleProvider";
@@ -50,15 +50,9 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
   const visibleUseCases =
     effectiveFilter === "curated" ? curatedUseCases : useCases;
 
-  useEffect(() => {
-    if (visibleUseCases.length === 0) return;
-    if (!visibleUseCases.some((uc) => uc.name === selectedUseCase)) {
-      onSelectUseCase(visibleUseCases[0].name);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveFilter, useCases.length]);
-
-  const personaConversations = conversations.filter((c) => c.useCase === selectedUseCase);
+  const personaConversations = conversations.filter((c) =>
+    c.useCase === selectedUseCase || !useCases.some((persona) => persona.name === c.useCase)
+  );
   const filteredConversations = searchQuery.trim()
     ? personaConversations.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : personaConversations;
@@ -173,7 +167,13 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
             <button
               role="tab"
               aria-selected={effectiveFilter === "curated"}
-              onClick={() => setPersonaFilter("curated")}
+              onClick={() => {
+                setPersonaFilter("curated");
+                if (useCases.some((persona) => persona.name === selectedUseCase) &&
+                    !curatedUseCases.some((persona) => persona.name === selectedUseCase)) {
+                  onSelectUseCase(curatedUseCases[0].name);
+                }
+              }}
               disabled={curatedUseCases.length === 0}
               title={t(curatedUseCases.length === 0 ? "noCurated" : "showCurated")}
               className={`flex-1 text-xs font-medium px-2 py-1.5 rounded-md transition-all ${
@@ -207,6 +207,13 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
               aria-label={t("selectPersona")}
               className="w-full text-sm text-text bg-surface border border-border rounded-lg pl-3 pr-9 py-2.5 focus:outline-hidden focus:ring-1 focus:ring-accent appearance-none cursor-pointer hover:bg-hover transition-all"
             >
+              {!visibleUseCases.some((persona) => persona.name === selectedUseCase) && (
+                <option value={selectedUseCase} disabled>
+                  {useCases.some((persona) => persona.name === selectedUseCase)
+                    ? selectedUseCase
+                    : `${t("unavailablePersona")}: ${selectedUseCase}`}
+                </option>
+              )}
               {visibleUseCases.map((uc) => (
                 <option key={uc.name} value={uc.name} className="bg-surface text-text">
                   {localizeUseCase(uc, locale).displayName} ({t("skillCount", { count: uc.skillCount })})

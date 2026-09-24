@@ -110,20 +110,6 @@ updates:
         update-types: [minor, patch]
     labels: [dependencies, javascript]
 
-  - package-ecosystem: npm
-    directory: /mocks
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      mocks-security:
-        applies-to: security-updates
-        patterns: ["*"]
-      mocks-minor-patch:
-        applies-to: version-updates
-        update-types: [minor, patch]
-    labels: [dependencies, javascript]
-
   # --- CI -----------------------------------------------------------------
   - package-ecosystem: github-actions
     directory: /

@@ -17,7 +17,6 @@ import os
 import time
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import openai
@@ -32,6 +31,7 @@ from app.models import (
     FoundryEvalSummary,
     ScenarioResult,
 )
+from app.personas import require_available
 from app.services.eval_storage import EvalStorage
 from app.services.foundry_agent_proxy import FoundryAgentProxy
 from app.services.skill_registry import SkillRegistry
@@ -42,10 +42,6 @@ logger = logging.getLogger(__name__)
 
 _INTERNAL_TOOLS: frozenset[str] = frozenset({"report_intent", "skill", "sql", "ask_user"})
 _MCP_PREFIX = "mcp-tools-"
-
-# Use-case → industry canon mapping (FSI covers insurance/banking/wealth)
-_FSI_USE_CASES = {"insurance", "retail-banking", "wealth-management"}
-_CANON_BASE = Path("/Users/ricchi/Repos/awesome-gbb/skills/threadlight-demo-data-factory/references")
 
 # Warmup parameters (tuned per foundry-evals skill guidance)
 _WARMUP_ATTEMPTS = 6
@@ -67,19 +63,6 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _load_canon(use_case: str) -> str:
-    """Return the industry realism canon text, or empty string if absent."""
-    industry = "fsi" if use_case in _FSI_USE_CASES else None
-    if industry:
-        canon_path = _CANON_BASE / f"{industry}.md"
-        if canon_path.is_file():
-            try:
-                return canon_path.read_text(encoding="utf-8")
-            except Exception as exc:
-                logger.warning("Could not read canon %s: %s", canon_path, exc)
-    return ""
-
-
 def _build_generator_system_prompt(
     use_case: str,
     registry: SkillRegistry,
@@ -90,9 +73,6 @@ def _build_generator_system_prompt(
     skill_bullets = "\n".join(
         f"- **{s.name}** (enabled={s.enabled}): {s.description}" for s in registry.skills.values()
     )
-
-    canon = _load_canon(use_case)
-    canon_section = f"\n\n## Industry Realism Canon\n\n{canon}" if canon else ""
 
     extra = f"\n\n## Extra Instructions\n\n{instructions}" if instructions.strip() else ""
 
@@ -123,7 +103,7 @@ def _build_generator_system_prompt(
 ## Available Skills
 
 {skill_bullets or "(none registered)"}
-{canon_section}{extra}
+{extra}
 
 ## Task
 
@@ -404,6 +384,7 @@ class EvalService:
         instructions: str = "",
     ) -> list[EvalScenario]:
         """Generate ``count`` evaluation scenarios for ``use_case`` via LLM."""
+        require_available(use_case, self._registries)
         count = min(count, _SCENARIO_COUNT_MAX)
         registry = self._registries.get(use_case) or SkillRegistry(use_case=use_case)
         system_prompt = _build_generator_system_prompt(use_case, registry, count, instructions)
@@ -470,6 +451,7 @@ class EvalService:
         started_by: str = "",
     ) -> EvalRun:
         """Create an EvalRun record, persist it, and kick off the background task."""
+        require_available(use_case, self._registries)
         run_id = uuid.uuid4().hex
 
         # Resolve scenario list

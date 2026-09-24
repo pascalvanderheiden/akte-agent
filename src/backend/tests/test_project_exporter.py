@@ -1,7 +1,7 @@
 """Tests for the v2 project exporter — full-clone ZIP packaging.
 
 The v2 exporter mirrors a subset of the Kratos repo into the output tree:
-the hosted-agent runtime + backend modules + chosen use-case + mocks +
+the hosted-agent runtime + backend modules + chosen use-case +
 trimmed infra. Tests build a synthetic Kratos-shaped layout under
 ``tmp_path`` (copying real source dirs from the actual checkout where
 practical) and assert structural + content guarantees.
@@ -36,9 +36,8 @@ REAL_REPO_ROOT = Path(__file__).resolve().parents[3]
 def kratos_repo(tmp_path: Path) -> Path:
     """Build a tmp_path that LOOKS LIKE a Kratos repo root.
 
-    Copies the real ``src/hosted-agent/``, ``src/backend/app/``, ``infra/``,
-    and ``mocks/`` from the actual checkout so the exporter exercises the
-    real file shapes. Then adds a synthetic ``use-cases/finance-close/``
+    Copies the real ``src/hosted-agent/``, ``src/backend/app/``, and ``infra/`` from the actual checkout so the exporter exercises the
+    real file shapes. Then adds a synthetic ``use-cases/synthetic-review/``
     so we don't depend on the real use-case content.
     """
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "node_modules", "dist", "build", ".venv")
@@ -51,24 +50,23 @@ def kratos_repo(tmp_path: Path) -> Path:
     # Also copy src/backend/pyproject.toml so the exporter can bring it.
     shutil.copy2(REAL_REPO_ROOT / "src" / "backend" / "pyproject.toml", tmp_path / "src" / "backend" / "pyproject.toml")
     shutil.copytree(REAL_REPO_ROOT / "infra", tmp_path / "infra", ignore=ignore)
-    shutil.copytree(REAL_REPO_ROOT / "mocks", tmp_path / "mocks", ignore=ignore)
 
-    # Synthetic use-case at use-cases/finance-close/
-    uc = tmp_path / "use-cases" / "finance-close"
-    (uc / "skills" / "sap-s4").mkdir(parents=True)
+    # Synthetic use-case at use-cases/synthetic-review/
+    uc = tmp_path / "use-cases" / "synthetic-review"
+    (uc / "skills" / "synthetic-tool").mkdir(parents=True)
     (uc / "skills" / "policy-ref" / "references").mkdir(parents=True)
 
     (uc / "SYSTEM_PROMPT.md").write_text(
         "---\n"
-        "name: Finance Close Controller\n"
-        "description: AI co-pilot for the controller team running month-end close.\n"
+        "name: Synthetic Review Assistant\n"
+        "description: Assistant for synthetic document review.\n"
         "sampleQuestions:\n  - What is variance vs forecast?\n"
         "---\n\n"
         "You orchestrate the close process.\n",
         encoding="utf-8",
     )
-    (uc / "skills" / "sap-s4" / "SKILL.md").write_text(
-        "---\nname: sap-s4\ndescription: Query the SAP S/4HANA ledger\nenabled: true\n---\n\n# SAP S/4\n",
+    (uc / "skills" / "synthetic-tool" / "SKILL.md").write_text(
+        "---\nname: synthetic-tool\ndescription: Query the synthetic records\nenabled: true\n---\n\n# Synthetic Tool\n",
         encoding="utf-8",
     )
     (uc / "skills" / "policy-ref" / "SKILL.md").write_text(
@@ -78,17 +76,17 @@ def kratos_repo(tmp_path: Path) -> Path:
     (uc / "skills" / "policy-ref" / "references" / "policy.md").write_text("# Close policy\n", encoding="utf-8")
 
     # Junk that MUST NOT be exported.
-    (uc / "skills" / "sap-s4" / "__pycache__").mkdir()
-    (uc / "skills" / "sap-s4" / "__pycache__" / "blob.pyc").write_text("noise")
+    (uc / "skills" / "synthetic-tool" / "__pycache__").mkdir()
+    (uc / "skills" / "synthetic-tool" / "__pycache__" / "blob.pyc").write_text("noise")
     (uc / "evals").mkdir()
     (uc / "evals" / "scenario.yaml").write_text("name: blah")
 
     (uc / ".mcp.json").write_text(
         json.dumps(
             {
-                "sap-s4": {
+                "synthetic-tool": {
                     "type": "local",
-                    "command": "sap-s4-mcp-server",
+                    "command": "synthetic-tool-mcp-server",
                     "args": [],
                     "tools": ["*"],
                 },
@@ -116,7 +114,7 @@ def exporter(kratos_repo: Path) -> ProjectExporter:
 
 
 def test_slugify_normalises():
-    assert _slugify("Finance Close") == "finance-close"
+    assert _slugify("Synthetic Review") == "synthetic-review"
     assert _slugify("foo!@#bar") == "foo-bar"
     assert _slugify("") == "agent"
 
@@ -124,7 +122,7 @@ def test_slugify_normalises():
 def test_assemble_copies_hosted_agent_verbatim(exporter: ProjectExporter, kratos_repo: Path, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     # main.py, pyproject.toml, Dockerfile are byte-identical to the source.
     for name in ("main.py", "pyproject.toml", "Dockerfile"):
@@ -136,30 +134,30 @@ def test_assemble_copies_hosted_agent_verbatim(exporter: ProjectExporter, kratos
 def test_assemble_renders_agent_yaml_with_persona(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     agent_yaml = (out / "src" / "hosted-agent" / "agent.yaml").read_text()
-    assert "name: finance-close" in agent_yaml
-    assert "Finance Close Controller" in agent_yaml
+    assert "name: synthetic-review" in agent_yaml
+    assert "Synthetic Review Assistant" in agent_yaml
     assert "kind: hosted" in agent_yaml
     assert "protocols:" in agent_yaml
     assert "environment_variables:" in agent_yaml
     # Cosmos DB database is per-export to avoid collisions.
-    assert "kratos-agent-finance-close" in agent_yaml
+    assert "kratos-agent-synthetic-review" in agent_yaml
 
     manifest = (out / "src" / "hosted-agent" / "agent.manifest.yaml").read_text()
-    assert "name: finance-close" in manifest
-    assert "Finance Close Controller" in manifest
+    assert "name: synthetic-review" in manifest
+    assert "Synthetic Review Assistant" in manifest
 
 
 def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     azure_yaml = (out / "azure.yaml").read_text()
-    assert "name: finance-close" in azure_yaml
-    assert "finance-close:" in azure_yaml  # service block
+    assert "name: synthetic-review" in azure_yaml
+    assert "synthetic-review:" in azure_yaml  # service block
     assert "project: ./src/hosted-agent" in azure_yaml
     assert "language: docker" in azure_yaml
     assert "context: ../.." in azure_yaml
@@ -169,7 +167,7 @@ def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_pa
 def test_assemble_copies_backend_app_recursively(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     # Key files exist (sanity check — real Kratos has 36+ .py files here).
     assert (out / "src" / "backend" / "app" / "__init__.py").is_file()
@@ -189,35 +187,28 @@ def test_assemble_copies_backend_app_recursively(exporter: ProjectExporter, tmp_
 def test_assemble_includes_only_chosen_use_case(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     use_cases = sorted(p.name for p in (out / "use-cases").iterdir() if p.is_dir())
-    assert use_cases == ["finance-close"]
+    assert use_cases == ["synthetic-review"]
 
     # System prompt + skills land where main.py expects them.
-    assert (out / "use-cases" / "finance-close" / "SYSTEM_PROMPT.md").is_file()
-    assert (out / "use-cases" / "finance-close" / "skills" / "sap-s4" / "SKILL.md").is_file()
+    assert (out / "use-cases" / "synthetic-review" / "SYSTEM_PROMPT.md").is_file()
+    assert (out / "use-cases" / "synthetic-review" / "skills" / "synthetic-tool" / "SKILL.md").is_file()
 
 
-def test_assemble_bundles_full_mocks_workspace(exporter: ProjectExporter, kratos_repo: Path, tmp_path: Path):
+def test_assemble_does_not_bundle_retired_mocks(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
-
-    assert (out / "mocks" / "package.json").is_file()
-    pkg_json = json.loads((out / "mocks" / "package.json").read_text())
-    assert "workspaces" in pkg_json
-
-    # All workspace packages from the real Kratos mocks/ are bundled.
-    src_pkgs = sorted(p.name for p in (kratos_repo / "mocks" / "packages").iterdir() if p.is_dir())
-    dst_pkgs = sorted(p.name for p in (out / "mocks" / "packages").iterdir() if p.is_dir())
-    assert dst_pkgs == src_pkgs
+    exporter.assemble("synthetic-review", out)
+    assert not (out / "mocks").exists()
+    assert "COPY mocks/" not in (out / "src/hosted-agent/Dockerfile").read_text()
 
 
 def test_assemble_writes_trimmed_infra(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     assert (out / "infra" / "main.bicep").is_file()
     assert (out / "infra" / "main.parameters.json").is_file()
@@ -260,7 +251,7 @@ def test_assemble_writes_trimmed_infra(exporter: ProjectExporter, tmp_path: Path
 def test_assemble_writes_root_files(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     assert (out / "azure.yaml").is_file()
     assert (out / "README.md").is_file()
@@ -269,7 +260,7 @@ def test_assemble_writes_root_files(exporter: ProjectExporter, tmp_path: Path):
     assert (out / ".dockerignore").is_file()
 
     readme = (out / "README.md").read_text()
-    assert "Finance Close Controller" in readme
+    assert "Synthetic Review Assistant" in readme
     assert "azd up" in readme
 
 
@@ -277,7 +268,7 @@ def test_assemble_writes_postdeploy_hook_with_exec_bit(exporter: ProjectExporter
     """The RBAC-fixup hook must be rendered, marked executable, and survive zipping."""
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     hook = out / "hooks" / "postdeploy.sh"
     assert hook.is_file(), "hooks/postdeploy.sh must be rendered"
@@ -308,7 +299,7 @@ def test_assemble_azure_yaml_hooks_are_cross_platform(exporter: ProjectExporter,
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     doc = yaml.safe_load((out / "azure.yaml").read_text())
     hooks = doc["hooks"]
@@ -330,7 +321,7 @@ def test_assemble_writes_windows_postdeploy_hook(exporter: ProjectExporter, tmp_
     """A PowerShell RBAC hook must ship so ``azd up`` works on Windows."""
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     hook = out / "hooks" / "postdeploy.ps1"
     assert hook.is_file(), "hooks/postdeploy.ps1 must be rendered for Windows"
@@ -345,7 +336,7 @@ def test_assemble_writes_windows_postdeploy_hook(exporter: ProjectExporter, tmp_
     assert "53ca6127-db72-4b80-b1b0-d745d6d5456d" in content  # Foundry User
 
     # Persona name substituted; no leftover azure.yaml ``$$`` escapes.
-    assert "Finance Close Controller" in content
+    assert "Synthetic Review Assistant" in content
     assert "$$" not in content, "ps1 should be plain PowerShell (no $$ azure.yaml escapes)"
 
 
@@ -362,7 +353,7 @@ def test_assemble_infra_has_no_private_networking(exporter: ProjectExporter, tmp
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     modules_dir = out / "infra" / "modules"
     main_bicep = (out / "infra" / "main.bicep").read_text()
@@ -416,7 +407,7 @@ def test_assemble_missing_hosted_agent_raises(tmp_path: Path):
 def test_build_zip_includes_all_expected_paths(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     blob = ProjectExporter.build_zip(out)
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
@@ -431,9 +422,9 @@ def test_build_zip_includes_all_expected_paths(exporter: ProjectExporter, tmp_pa
     assert "src/hosted-agent/agent.yaml" in names
     # Backend app
     assert "src/backend/app/services/copilot_agent.py" in names
-    # Use case + mocks + infra
-    assert "use-cases/finance-close/SYSTEM_PROMPT.md" in names
-    assert "mocks/package.json" in names
+    # Use case + infra
+    assert "use-cases/synthetic-review/SYSTEM_PROMPT.md" in names
+    assert "mocks/package.json" not in names
     assert "infra/main.bicep" in names
     assert "infra/modules/role-assignments.bicep" in names
 
@@ -447,7 +438,7 @@ def test_build_zip_includes_windows_hook(exporter: ProjectExporter, tmp_path: Pa
     """Both the POSIX and Windows postdeploy hooks must land in the zip."""
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
     blob = ProjectExporter.build_zip(out)
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         names = set(zf.namelist())
@@ -458,7 +449,7 @@ def test_build_zip_includes_windows_hook(exporter: ProjectExporter, tmp_path: Pa
 def test_build_zip_skips_other_use_cases(exporter: ProjectExporter, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
     blob = ProjectExporter.build_zip(out)
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         names = zf.namelist()
@@ -473,7 +464,7 @@ def test_build_zip_preserves_exec_bit_on_hooks(exporter: ProjectExporter, tmp_pa
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
     blob = ProjectExporter.build_zip(out)
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         info = zf.getinfo("hooks/postdeploy.sh")
@@ -496,7 +487,7 @@ def export_client(kratos_repo: Path, monkeypatch: pytest.MonkeyPatch):
     # Bypass lifespan — set the bits the export router actually uses.
     registry_stub = MagicMock()
     registry_stub.system_prompt = ""
-    app.state.registries = {"finance-close": registry_stub}
+    app.state.registries = {"synthetic-review": registry_stub}
 
     blob_stub = MagicMock()
     blob_stub.local_base_dir = kratos_repo / "use-cases"
@@ -506,10 +497,10 @@ def export_client(kratos_repo: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_export_endpoint_streams_zip(export_client: TestClient):
-    response = export_client.get("/api/use-cases/finance-close/export")
+    response = export_client.get("/api/use-cases/synthetic-review/export")
     assert response.status_code == 200, response.text
     assert response.headers["content-type"].startswith("application/zip")
-    assert 'filename="finance-close-foundry-agent.zip"' in response.headers["content-disposition"]
+    assert 'filename="synthetic-review-foundry-agent.zip"' in response.headers["content-disposition"]
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
         names = set(zf.namelist())
@@ -620,10 +611,10 @@ def test_assemble_azure_yaml_wires_app_insights(exporter: ProjectExporter, tmp_p
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     doc = yaml.safe_load((out / "azure.yaml").read_text())
-    env = doc["services"]["finance-close"]["config"]["env"]
+    env = doc["services"]["synthetic-review"]["config"]["env"]
     assert env.get("APPLICATIONINSIGHTS_CONNECTION_STRING") == "${AZURE_APP_INSIGHTS_CONNECTION_STRING}"
 
 
@@ -639,7 +630,7 @@ def test_postdeploy_grants_dataplane_roles_to_instance_identity(exporter: Projec
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     sh = (out / "hooks" / "postdeploy.sh").read_text()
     ps = (out / "hooks" / "postdeploy.ps1").read_text()
@@ -669,7 +660,7 @@ def test_postdeploy_surfaces_real_grant_failures(exporter: ProjectExporter, tmp_
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     sh = (out / "hooks" / "postdeploy.sh").read_text()
     ps = (out / "hooks" / "postdeploy.ps1").read_text()
@@ -694,7 +685,7 @@ def test_postdeploy_ps1_does_not_throw_on_nonzero_az_exit(exporter: ProjectExpor
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     ps = (out / "hooks" / "postdeploy.ps1").read_text()
     assert "$PSNativeCommandUseErrorActionPreference = $false" in ps
@@ -709,7 +700,7 @@ def test_readme_warns_about_hosted_agent_regions(exporter: ProjectExporter, tmp_
     """
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
 
     readme = (out / "README.md").read_text().lower()
     assert "region" in readme
@@ -720,7 +711,7 @@ def test_build_zip_includes_invoke_parser_module(exporter: ProjectExporter, tmp_
     """The new invoke-parsing helper must ship with the backend app."""
     out = tmp_path / "out"
     out.mkdir()
-    exporter.assemble("finance-close", out)
+    exporter.assemble("synthetic-review", out)
     blob = ProjectExporter.build_zip(out)
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         names = set(zf.namelist())

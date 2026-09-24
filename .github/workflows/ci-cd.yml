@@ -92,7 +92,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # Build backend Docker image
-      # Context must be the repo root: the Dockerfile copies from mocks/,
+      # Context must be the repo root: the Dockerfile copies from infra/,
       # use-cases/, and src/backend/ (matches docker-compose.yml / azure.yaml).
       - name: Build backend Docker image
         run: docker build -f src/backend/Dockerfile -t kratos-agent-service:${{ github.sha }} .

@@ -3,7 +3,7 @@
 
 Usage:
     python scripts/fetch_traces.py                                 # list recent ops
-    python scripts/fetch_traces.py --use-case insurance --hours 24
+    python scripts/fetch_traces.py --use-case akte-agent --hours 24
     python scripts/fetch_traces.py --conversation-id abc123
     python scripts/fetch_traces.py --run-id 20260101T120000Z
     python scripts/fetch_traces.py --operation-id 9fe9...           # full waterfall

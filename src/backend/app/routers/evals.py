@@ -26,6 +26,7 @@ from app.models import (
     GenerateScenariosRequest,
     GenerateScenariosResponse,
 )
+from app.personas import require_available
 from app.services.eval_service import EvalService
 from app.services.eval_storage import EvalStorage
 
@@ -50,8 +51,7 @@ def _get_service(request: Request) -> EvalService:
 
 def _ensure_use_case(request: Request, use_case: str) -> None:
     registries = getattr(request.app.state, "registries", {})
-    if use_case not in registries:
-        raise HTTPException(status_code=404, detail=f"Use-case '{use_case}' not found")
+    require_available(use_case, registries)
 
 
 # ── Scenarios ────────────────────────────────────────────────────────────────
@@ -146,7 +146,6 @@ async def start_run(
 
 @router.get("/{use_case}/evals/runs", response_model=EvalRunList)
 async def list_runs(use_case: str, request: Request, limit: int = 50) -> EvalRunList:
-    _ensure_use_case(request, use_case)
     service = _get_service(request)
     runs = await service.list_runs(use_case, limit=limit)
     return EvalRunList(runs=runs)
@@ -154,7 +153,6 @@ async def list_runs(use_case: str, request: Request, limit: int = 50) -> EvalRun
 
 @router.get("/{use_case}/evals/runs/{run_id}", response_model=EvalRun)
 async def get_run(use_case: str, run_id: str, request: Request) -> EvalRun:
-    _ensure_use_case(request, use_case)
     service = _get_service(request)
     run = await service.get_run(use_case, run_id)
     if run is None:

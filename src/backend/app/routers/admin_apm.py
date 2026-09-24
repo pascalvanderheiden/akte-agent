@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from app.personas import require_not_retired
 from app.services.apm_service import ApmCommandResult, ApmDependency, ApmError, ApmMcpServer, ApmService
 from app.services.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_not_retired)])
 
 
 # ─── Request / response models ────────────────────────────────────────────────

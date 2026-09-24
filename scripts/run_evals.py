@@ -3,13 +3,13 @@
 
 Usage:
     # Validation mode (in-process invoke + score, fast):
-    python scripts/run_evals.py --use-case insurance --mode validation
+    python scripts/run_evals.py --use-case akte-agent --mode validation
 
     # Foundry mode (cloud eval, slower):
-    python scripts/run_evals.py --use-case insurance --mode foundry
+    python scripts/run_evals.py --use-case akte-agent --mode foundry
 
     # Run only specific scenarios:
-    python scripts/run_evals.py --use-case insurance --scenarios load-customer-profile,policy-wording-lookup
+    python scripts/run_evals.py --use-case akte-agent --scenarios intake-time-en,intake-time-nl
 
 Polls until the run completes and prints a summary table.
 """
