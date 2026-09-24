@@ -17,7 +17,7 @@ param orchestratorDeploymentName string = 'gpt-6-luna'
 param orchestratorModelName string = 'gpt-6-luna'
 
 @description('Model version for the orchestrator deployment')
-param orchestratorModelVersion string = '2026-09-01'
+param orchestratorModelVersion string = '2026-09-22'
 
 @description('Orchestrator deployment SKU capacity (thousands of tokens per minute)')
 param orchestratorModelCapacity int = 350
@@ -29,7 +29,7 @@ param deepReasoningDeploymentName string = 'gpt-6-sol'
 param deepReasoningModelName string = 'gpt-6-sol'
 
 @description('Model version for the deep-reasoning deployment')
-param deepReasoningModelVersion string = '2026-09-01'
+param deepReasoningModelVersion string = '2026-09-22'
 
 @description('Deep-reasoning deployment SKU capacity (thousands of tokens per minute)')
 param deepReasoningModelCapacity int = 350
@@ -41,7 +41,7 @@ param fastDeploymentName string = 'gpt-6-astra'
 param fastModelName string = 'gpt-6-astra'
 
 @description('Model version for the fast deployment')
-param fastModelVersion string = '2026-09-01'
+param fastModelVersion string = '2026-09-03'
 
 @description('Fast deployment SKU capacity (thousands of tokens per minute)')
 param fastModelCapacity int = 350

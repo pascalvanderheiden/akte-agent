@@ -922,6 +922,38 @@ def test_telemetry_readback_verifies_target_and_identity(
     assert "read-back differs" in proc.stderr
 
 
+def redacted_connector(source: str) -> dict[str, Any]:
+    # Shape the live service returns: target fields are never echoed back.
+    response = connector(source)
+    response["properties"]["provisioningState"] = "Succeeded"
+    response["properties"]["dataSource"] = None
+    response["properties"]["extendedProperties"] = {
+        "armResourceId": None,
+        "resource": None,
+        **({"appId": None} if source == "app-insights" else {}),
+    }
+    return response
+
+
+def test_telemetry_readback_accepts_unechoed_service_fields(fake_bin: Path, log: Path) -> None:
+    env = telemetry_env(
+        FAKE_CONNECTOR_APP=json.dumps(redacted_connector("app-insights")),
+        FAKE_CONNECTOR_LOG=json.dumps(redacted_connector("log-analytics")),
+    )
+    proc = run_hook(SETUP, fake_bin, log, env)
+    assert "read-back differs" not in proc.stderr
+    assert "app_insights=pending log_analytics=pending" in proc.stdout
+    assert "did not echo the connector target" in proc.stdout
+
+
+def test_telemetry_readback_rejects_failed_provisioning(fake_bin: Path, log: Path) -> None:
+    response = redacted_connector("app-insights")
+    response["properties"]["provisioningState"] = "Failed"
+    proc = run_hook(SETUP, fake_bin, log, telemetry_env(FAKE_CONNECTOR_APP=json.dumps(response)))
+    assert proc.returncode == 1
+    assert "provisioning state" in proc.stderr
+
+
 @pytest.mark.parametrize("key", ["SRE_APP_INSIGHTS_ID", "SRE_LOG_ANALYTICS_ID"])
 @pytest.mark.parametrize("value", ["", "foreign", f"{RG_ID}/providers/Microsoft.Insights/components/../../foreign"])
 def test_telemetry_missing_or_foreign_monitoring_outputs_are_isolated(

@@ -140,17 +140,24 @@ sre_telemetry_source() {
   sre_telemetry_call connector az resource show --ids "$connector_id" --subscription "$AZURE_SUBSCRIPTION_ID" \
     --api-version "$SRE_API_VERSION" --only-show-errors --output json \
     --query '{id:id,properties:properties}' || return $?
+  # The live service returns dataSource/extendedProperties as null on GET (and
+  # even in the PUT response) on 2025-05-01-preview and 2026-01-01. Null means
+  # "not echoed", not "different": accept it, but reject any echoed mismatch.
   jq -e --arg id "$connector_id" --arg resource "$resource_id" --arg source "$TELEMETRY_SOURCE" \
     --arg app "$SRE_APP_INSIGHTS_APP_ID" '
+    def same_id($v; $want): $v == null or ($v | ascii_downcase) == ($want | ascii_downcase);
+    def same($v; $want): $v == null or $v == $want;
     (.id | ascii_downcase) == ($id | ascii_downcase) and
     .properties.identity == "system" and
     .properties.dataConnectorType == (if $source == "app-insights" then "AppInsights" else "LogAnalytics" end) and
-    (.properties.dataSource | ascii_downcase) == ($resource | ascii_downcase) and
-    (.properties.extendedProperties.armResourceId | ascii_downcase) == ($resource | ascii_downcase) and
-    .properties.extendedProperties.resource.name == ($resource | split("/") | last) and
-    ($source != "app-insights" or .properties.extendedProperties.appId == $app)
+    same_id(.properties.dataSource; $resource) and
+    same_id(.properties.extendedProperties.armResourceId; $resource) and
+    same(.properties.extendedProperties.resource.name; $resource | split("/") | last) and
+    ($source != "app-insights" or same(.properties.extendedProperties.appId; $app))
   ' <<<"$TELEMETRY_RESPONSE" >/dev/null 2>&1 ||
     { sre_error "Telemetry $TELEMETRY_SOURCE: connector read-back differs from requested identity/target/AppId."; return 1; }
+  jq -e '.properties.dataSource == null' <<<"$TELEMETRY_RESPONSE" >/dev/null 2>&1 &&
+    echo "Telemetry $TELEMETRY_SOURCE: service did not echo the connector target; relying on the Succeeded deployment."
   TELEMETRY_SOURCE_STATE=pending
   echo "Telemetry $TELEMETRY_SOURCE configured/read back; pending connector-identity query verification (not ready)."
 }

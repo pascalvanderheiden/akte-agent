@@ -74,6 +74,11 @@ as `pending`, **not `ready`**: ARM success cannot prove query access. The pinned
 public connector contract does not document a headless identity-bound query
 verification API. No endpoint or success evidence is invented.
 
+The live connector API (both `2025-05-01-preview` and `2026-01-01`) returns
+`dataSource` and `extendedProperties` as `null` on GET and in the PUT response.
+Read-back therefore treats a `null` target field as "not echoed" and relies on
+the Succeeded deployment; any echoed value that differs still fails.
+
 The shared `sre_result core telemetry github [app_insights] [log_analytics]`
 helper in `hooks/sre-lib.sh` preserves the original three-argument interface.
 Telemetry supplies per-source states in arguments 4/5 and an aggregate in
