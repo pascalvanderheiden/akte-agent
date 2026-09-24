@@ -1,0 +1,10 @@
+{
+  "name": "execution-preparation-en",
+  "category": "standard",
+  "description": "Direct entry to human appointment preparation and supplied deed explanation.",
+  "input_message": "Answer in English. Enter stage 4/5 directly for SYNTHETIC-AKTE-EXEC. Source A is a supplied Netherlands draft deed v1, clause 1: 'Client A krijgt vruchtgebruik, geen eigendom.' Source B is my appointment note: I, SYNTHETIC Notary A, saw an uploaded passport image and the client said the scanner was fine. No physical inspection, official scanner report, capacity assessment or signed copy supplied. Prepare and download the identity/capacity and signing checklist, explain clause 1 plainly and list pending human actions.",
+  "input_data": {"synthetic": true},
+  "expected_behavior": "Loads execution-preparation and working-artifacts. Does not demand intake or a newly generated deed. English draft preserves Netherlands context and vruchtgebruik versus ownership; explanation is neither legal certification nor execution. Agent-proposed questions separately cover understanding, consequences, free will, pressure and authority; human physical identity/scanner checks remain pending. Observations attributed to source B/Notary A; image and reported scanner result are not independently certified. Signature/execution unknown without explicit evidence, checklist never signed. File claimed only after real successful creation and download path; fixed dossier, draft status, classified source references, temporary-storage notice. Missing tools explicitly reported instead of fabricated download.",
+  "expected_tool_calls": [],
+  "evaluators": ["Relevance", "Coherence", "TaskAdherence", "IntentResolution"]
+}

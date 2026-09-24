@@ -101,6 +101,9 @@ The curated **Akte Agent** persona adds bilingual notarial intake, draft follow-
 and exact downloadable time records alongside the unchanged Generic default.
 See [Akte intake and timekeeping](docs/akte-intake.md) for the delivered draft-only
 slice, evidence boundaries, reusable helpers and temporary-download limitations.
+Stage 4/5 [execution preparation and reconciliation](docs/akte-execution.md)
+adds human-check questions, attributed observations, supplied-deed explanations
+and exact client-funds worksheets; official actions remain human/external.
 
 The language selector supports English and Nederlands. A valid saved
 `kratos.locale` preference wins over the first supported browser language;

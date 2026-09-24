@@ -68,3 +68,11 @@ an exclusion that masks invalid input.
 The result includes all entries, review flags, decisions and `review_status`.
 Only `ready` results have `total_hours`/`total_minutes` and localized display.
 `ready` means arithmetic resolved for a draft, not approval to bill.
+
+## Execution and settlement drafts
+
+For identity/capacity checklists, supplied-deed explanations and execution
+evidence read `execution-contract.md`. For client-funds reconciliation, explicit
+taxes/fees, payment gaps and cent rounding read `reconciliation-contract.md`.
+Both use this common artifact header and preserve source evidence; neither
+performs or certifies an official action.
