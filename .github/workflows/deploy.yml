@@ -46,6 +46,18 @@ on:
         description: "Optional SRE Agent name override (blank = deterministic environment-scoped name)"
         type: string
         default: ""
+      sre_connect_github:
+        description: "Attach GitHub Code Access when SRE is enabled (authorization may remain pending)"
+        type: boolean
+        default: true
+      sre_github_repository_url:
+        description: "GitHub repository URL (blank = pascalvanderheiden/akte-agent)"
+        type: string
+        default: ""
+      sre_github_branch:
+        description: "GitHub branch (blank = discover the target repository default branch)"
+        type: string
+        default: ""
       run_integration_tests:
         description: "Run integration tests after deploying"
         type: boolean
@@ -136,13 +148,18 @@ jobs:
           SRE_CONNECT_TELEMETRY_INPUT: ${{ inputs.sre_connect_telemetry }}
           SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
           SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
+          SRE_CONNECT_GITHUB_INPUT: ${{ inputs.sre_connect_github }}
+          SRE_GITHUB_REPOSITORY_URL_INPUT: ${{ inputs.sre_github_repository_url }}
+          SRE_GITHUB_BRANCH_INPUT: ${{ inputs.sre_github_branch }}
         run: |
-          . ./hooks/sre-lib.sh
+          source ./hooks/sre-lib.sh
+          sre_bool SRE_CONNECT_GITHUB "${SRE_CONNECT_GITHUB_INPUT:-}" true >/dev/null || exit 1
           sre_bool SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-}" true >/dev/null || exit 1
           azd env set DEPLOY_SRE_AGENT "$DEPLOY_SRE_AGENT_INPUT"
           azd env set SRE_CONNECT_TELEMETRY "${SRE_CONNECT_TELEMETRY_INPUT:-true}"
-          # Repository attachment is configured separately.
-          azd env set SRE_CONNECT_GITHUB false
+          azd env set SRE_CONNECT_GITHUB "${SRE_CONNECT_GITHUB_INPUT:-true}"
+          azd env set SRE_GITHUB_REPOSITORY_URL "$SRE_GITHUB_REPOSITORY_URL_INPUT"
+          azd env set SRE_GITHUB_BRANCH "$SRE_GITHUB_BRANCH_INPUT"
           # Empty inputs clear old overrides rather than retaining stale values.
           azd env set SRE_LOCATION "$SRE_LOCATION_INPUT"
           azd env set SRE_AGENT_NAME_OVERRIDE "$SRE_AGENT_NAME_INPUT"
@@ -167,6 +184,15 @@ jobs:
           # Hydrate endpoints/resource names from the already-provisioned infra;
           # `azd deploy` needs these and a fresh runner has none.
           azd env refresh --no-prompt
+
+      # This is the only step allowed to receive the optional dedicated PAT.
+      # The same entry point rechecks an existing core; it never provisions one.
+      - name: Set up SRE GitHub access
+        if: inputs.sre_connect_github
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment }}
+          SRE_GITHUB_PAT: ${{ secrets.SRE_GITHUB_PAT }}
+        run: ./hooks/sre-setup.sh --environment "$AZURE_ENV_NAME"
 
       - name: Deploy
         env:

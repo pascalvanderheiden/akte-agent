@@ -302,7 +302,8 @@ An environment can opt into a read-only [Azure SRE Agent](https://learn.microsof
 that observes that environment's resources and reuses its Application Insights and Log Analytics.
 It is off by default: environments never opted in create no billable SRE resource.
 Workload telemetry connectors and their read-only permissions are configured
-after core provisioning by default; query access remains `pending` until verified
+after core provisioning by default, alongside optional GitHub Code Access
+registration. Query and current source access remain `pending` until verified
 through SRE. For an explicit **core-only** deployment:
 
 ```bash
