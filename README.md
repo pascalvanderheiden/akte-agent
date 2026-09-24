@@ -97,6 +97,11 @@ The backend proxies all chat requests to the Foundry hosted agent via the Invoca
 
 ## Bilingual chat foundation
 
+The curated **Akte Agent** persona adds bilingual notarial intake, draft follow-up
+and exact downloadable time records alongside the unchanged Generic default.
+See [Akte intake and timekeeping](docs/akte-intake.md) for the delivered draft-only
+slice, evidence boundaries, reusable helpers and temporary-download limitations.
+
 The language selector supports English and Nederlands. A valid saved
 `kratos.locale` preference wins over the first supported browser language;
 otherwise English is used. Storage is optional. Changing language keeps the
