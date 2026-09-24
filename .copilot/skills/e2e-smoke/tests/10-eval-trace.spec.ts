@@ -21,7 +21,7 @@ const scenario: EvalScenario = {
   input_data: { amount: "0,25" }, expected_tool_calls: ["synthetic_tool"], evaluators: ["task_adherence"],
 };
 const completedRun: EvalRun = {
-  run_id: "synthetic-run", use_case: "generic", mode: "validation", status: "completed",
+  run_id: "synthetic-run", use_case: "akte-agent", mode: "validation", status: "completed",
   scenarios: [scenario.name], created_at: "2026-03-21T12:00:00Z", updated_at: "2026-03-21T12:01:00Z",
   started_by: "synthetic-operator", progress: "SYNTHETIC raw progress", error: "", foundry: null,
   results: [{
@@ -36,7 +36,7 @@ const completedRun: EvalRun = {
 };
 const operation: TraceOperation = {
   operation_id: "synthetic-operation", timestamp: "2026-03-21T12:00:00Z", total_duration_ms: 1250,
-  span_count: 2, use_case: "generic", conversation_id: "synthetic-conversation", eval_run_id: "synthetic-run",
+  span_count: 2, use_case: "akte-agent", conversation_id: "synthetic-conversation", eval_run_id: "synthetic-run",
   spans: [
     { id: "synthetic-llm", parent_id: "", name: "synthetic_model_call", duration_ms: 1250, offset_ms: 0,
       timestamp: "2026-03-21T12:00:00Z", success: true, result_code: "200", type: "dependency",
@@ -52,12 +52,12 @@ const operation: TraceOperation = {
 
 async function fixture(page: Page) {
   const catalog: UseCase[] = [{
-    name: "generic", displayName: "Synthetic assistant", description: "Synthetic", sampleQuestions: [],
+    name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", sampleQuestions: [],
     skillCount: 0, curated: true,
-    localizations: { en: { displayName: "Synthetic assistant" }, nl: { displayName: "Synthetische assistent" } },
+    localizations: { en: { displayName: "Akte Agent" }, nl: { displayName: "Akte Agent" } },
   }, {
     name: "synthetic-import", displayName: "Imported source label", description: "Synthetic imported metadata",
-    sampleQuestions: [], skillCount: 0, curated: true,
+    sampleQuestions: [], skillCount: 0, curated: false,
   }];
   const state = {
     catalog, scenarios: [] as EvalScenario[], runs: [] as EvalRun[],
@@ -277,7 +277,7 @@ for (const locale of ["en", "nl"] as const) {
     await expect(page.getByText(sourceText, { exact: true })).toBeVisible();
     await expect(page.getByText(other === "nl" ? "1.290" : "1,290", { exact: true })).toBeVisible();
     expect(Object.fromEntries(state.traceQueries.at(-1)!)).toEqual({
-      use_case: "generic", conversation_id: "synthetic-conversation", eval_run_id: "synthetic-run", hours: "48",
+      use_case: "akte-agent", conversation_id: "synthetic-conversation", eval_run_id: "synthetic-run", hours: "48",
     });
     expect(state.detailQueries[0].get("hours")).toBe("48");
     expect(state.paths.every((path) => path.startsWith(`${mount}/api/`))).toBe(true);

@@ -188,6 +188,24 @@ async def test_hosted_cannot_switch_retired_history_to_generic(transport):
     transport.sdk.create_session.assert_not_called()
 
 
+@pytest.mark.parametrize("route", ["/api/agent/chat", "/api/copilot-studio/chat"])
+@pytest.mark.parametrize("use_case", [None, "akte-agent"])
+def test_unidentified_history_cannot_be_continued(transport, route, use_case):
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(return_value=SimpleNamespace(useCase=""))
+    payload = {"conversationId": "metadata-less-history", "message": "Do not append"}
+    if use_case is not None:
+        payload["useCase"] = use_case
+
+    response = transport.client.post(route, json=payload)
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["code"] == "PERSONA_UNAVAILABLE"
+    assert not transport.captured
+    assert not transport.messages
+    assert not transport.sent
+    transport.sdk.create_session.assert_not_called()
+
+
 @pytest.mark.parametrize("strip_fields", [False, True])
 @pytest.mark.parametrize("use_case", ["akte-agent"])
 def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_fields, use_case):

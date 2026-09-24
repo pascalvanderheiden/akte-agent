@@ -30,6 +30,12 @@ def require_not_retired(use_case: str) -> None:
         raise PersonaUnavailable()
 
 
+def require_identified_history(use_case: str) -> None:
+    """Reject continuations whose historical persona identity was never stored."""
+    if not use_case.strip():
+        raise PersonaUnavailable()
+
+
 def require_available(use_case: str, registries: Mapping[str, object]) -> None:
     require_not_retired(use_case)
     if use_case not in registries:

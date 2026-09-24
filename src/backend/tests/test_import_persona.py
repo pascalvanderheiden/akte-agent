@@ -76,6 +76,9 @@ def test_system_prompt_frontmatter_mapping(client, tmp_path):
     assert fm["description"].startswith("Reviews synthetic documents")
     assert fm["curated"] is True
     assert "Review synthetic document 12345" in fm["sampleQuestions"]
+    assert fm["traits"] == ["analysis", "validation"]
+    assert fm["workflow_model"] == "agent"
+    assert fm["skills"] == _manifest()["skills"]
     # Instructions become the body
     assert "synthetic document assistant" in text.split("---\n", 2)[2]
 
@@ -112,6 +115,30 @@ def test_direct_mcp_mapping(client, tmp_path):
     mcp = json.loads((uc_dir / ".mcp.json").read_text())
     assert mcp["microsoft-learn"]["url"] == "https://learn.microsoft.com/api/mcp"
     assert mcp["microsoft-learn"]["type"] == "http"
+
+
+def test_direct_mcp_with_legacy_registry_metadata_is_preserved(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={"manifest": _manifest(mcpServers=[{"name": "tools", "registry": True, "url": "https://example.test/mcp"}])},
+    )
+    assert response.status_code == 201, response.text
+    mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
+    assert mcp["tools"] == {"type": "http", "url": "https://example.test/mcp"}
+
+
+def test_direct_command_mcp_mapping(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(
+                mcpServers=[{"name": "local-tools", "transport": "stdio", "command": "python", "args": ["server.py"]}]
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
+    assert mcp["local-tools"] == {"type": "stdio", "command": "python", "args": ["server.py"]}
 
 
 def test_package_dependent_import_is_rejected(client, tmp_path):

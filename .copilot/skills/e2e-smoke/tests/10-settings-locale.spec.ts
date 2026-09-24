@@ -1,12 +1,12 @@
 /**
  * #20 acceptance: real UI, controlled synthetic API responses. Not live
- * settings, MCP, APM or identity-provider integrations. Runs at root or mount
+ * settings, MCP or identity-provider integrations. Runs at root or mount
  * using the existing smoke runner; all external requests are blocked.
  */
 import { test, expect, type Page } from "@playwright/test";
 import { createRequire } from "node:module";
 import { FRONTEND_URL } from "./helpers";
-import type { ApmDependency, Locale, MCPConfig, Skill, SkillFile } from "../../../../src/frontend/src/types";
+import type { Locale, MCPConfig, Skill, SkillFile } from "../../../../src/frontend/src/types";
 
 const { en, nl }: typeof import("../../../../src/frontend/src/lib/i18n") =
   createRequire(import.meta.url)("../../../../src/frontend/src/lib/i18n.ts");
@@ -22,8 +22,6 @@ async function fixture(page: Page) {
     skills: [] as Skill[],
     files: [{ path: "notes.txt", name: "notes.txt", content: "User-authored source. Niet vertalen." }] as SkillFile[],
     servers: {} as MCPConfig["servers"],
-    dependencies: [] as ApmDependency[],
-    apmServers: [] as { name: string; transport: string; command?: string; url?: string }[],
     prompt: "User-authored system prompt.",
     writes: [] as { path: string; body: unknown; method: string }[],
     fail: "",
@@ -45,8 +43,8 @@ async function fixture(page: Page) {
     if (method !== "GET") state.writes.push({ path, method, body: request.postData() ? request.postDataJSON() : null });
     if (state.fail && path.includes(state.fail)) return route.fulfill({ status: state.status, json: { detail: "SENSITIVE_SYNTHETIC_DIAGNOSTIC", stderr: "SENSITIVE_SYNTHETIC_DIAGNOSTIC" } });
     if (path === "/api/use-cases") return route.fulfill({ json: { useCases: [
-      { name: "generic", displayName: "Generic fixture", description: "Synthetic", curated: true, sampleQuestions: [], skillCount: 0 },
-      { name: "synthetic-custom", displayName: "Synthetic custom", description: "Synthetic", curated: true, sampleQuestions: [], skillCount: 0 },
+      { name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", curated: true, sampleQuestions: [], skillCount: 0 },
+      { name: "synthetic-custom", displayName: "Synthetic custom", description: "Synthetic", curated: false, sampleQuestions: [], skillCount: 0 },
     ] } });
     if (path === "/api/conversations") return route.fulfill({ json: { conversations: [] } });
     if (path === "/api/settings") {
@@ -86,24 +84,6 @@ async function fixture(page: Page) {
         return route.fulfill({ json: skill });
       }
       return route.fulfill({ json: {} });
-    }
-    if (path.includes("/apm")) {
-      if (method === "GET") return route.fulfill({ json: { version: "synthetic-version", dependencies: state.dependencies, mcp_servers: state.apmServers, materialised_skill_dirs: [] } });
-      if (!state.logicalFailure) {
-        if (path.endsWith("/install")) {
-          const body = request.postDataJSON();
-          state.dependencies.push({ name: body.package, ref: body.ref ?? null, resolved: "synthetic-sha", source: "github" });
-        } else if (path.endsWith("/mcp")) state.apmServers.push(request.postDataJSON());
-        else if (method === "DELETE") {
-          if (path.includes("/mcp/")) state.apmServers = state.apmServers.filter((s) => s.name !== path.split("/mcp/")[1]);
-          else state.dependencies = [];
-        }
-      }
-      return route.fulfill({ json: {
-        success: !state.logicalFailure, returncode: state.logicalFailure ? 1 : 0, duration_ms: 1250,
-        stdout: "RAW_SYNTHETIC_LOG: unchanged", stderr: state.logicalFailure ? "SENSITIVE_SYNTHETIC_DIAGNOSTIC" : "",
-        dependencies: state.dependencies,
-      } });
     }
     if (path.includes("/analysis/consistency")) return route.fulfill({ json: {
       overallScore: 85, summary: "Synthetic model summary", durationMs: 1250,
@@ -279,7 +259,7 @@ for (const locale of ["en", "nl"] as const) {
     expect(state.servers["synthetic-mcp"]).toMatchObject({ type: "local", command: "synthetic-command", env: { SYNTHETIC: "value" } });
     await page.getByRole("button", { name: ui[other]["skills.edit"], exact: true }).click();
     await page.getByRole("combobox", { name: ui[other]["mcp.type"] }).selectOption("http");
-    await page.getByRole("textbox", { name: ui[other]["apm.commandUrl"] }).fill("https://synthetic.example.test/mcp");
+    await page.getByRole("textbox", { name: ui[other]["mcp.command"] }).fill("https://synthetic.example.test/mcp");
     await page.getByRole("spinbutton", { name: ui[other]["mcp.timeout"] }).fill("-1");
     await page.getByRole("button", { name: ui[other]["settings.save"], exact: true }).click();
     await expect(alert(page)).toHaveText(ui[other]["error.MCP_TIMEOUT_INVALID"]);
@@ -301,53 +281,6 @@ for (const locale of ["en", "nl"] as const) {
     await expect(page.getByText(ui[other]["mcp.empty"], { exact: true })).toBeVisible();
   });
 
-  test(`${locale}: package install, logical failure, sync, raw output and removal`, async ({ page }) => {
-    const state = await fixture(page);
-    await open(page, locale);
-    await manager(page, locale);
-    await page.getByRole("button", { name: "APM", exact: true }).click();
-    await expect(page.getByText(text["apm.empty"], { exact: true })).toBeVisible();
-    await page.getByRole("textbox", { name: text["apm.package"], exact: true }).fill("synthetic-owner/synthetic-package");
-    await page.getByRole("textbox", { name: text["apm.ref"], exact: true }).fill("synthetic-ref");
-    await selector(page).selectOption(other);
-    await expect(page.getByRole("textbox", { name: ui[other]["apm.package"], exact: true })).toHaveValue("synthetic-owner/synthetic-package");
-    expect(state.writes).toHaveLength(0);
-    state.logicalFailure = true;
-    const install = page.locator("form").filter({ has: page.getByRole("textbox", { name: ui[other]["apm.package"], exact: true }) }).getByRole("button", { name: ui[other]["apm.install"], exact: true });
-    await install.click();
-    await expect(alert(page)).toContainText(ui[other]["error.APM_ERROR"]);
-    await expect(page.getByRole("textbox", { name: ui[other]["apm.ref"], exact: true })).toHaveValue("synthetic-ref");
-    await expect(page.getByText("SENSITIVE_SYNTHETIC_DIAGNOSTIC")).toHaveCount(0);
-    await expect(page.getByText(ui[other]["apm.success"], { exact: true })).toHaveCount(0);
-    state.logicalFailure = false;
-    await install.click();
-    await expect(page.getByRole("cell", { name: "synthetic-owner/synthetic-package", exact: true })).toBeVisible();
-    await expect(page.getByText("RAW_SYNTHETIC_LOG: unchanged", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: new RegExp(ui[other]["apm.output"]) })).toContainText(other === "nl" ? "1,3" : "1.3");
-    await page.getByRole("button", { name: ui[other]["apm.sync"], exact: true }).click();
-    await expect(page.getByText(ui[other]["apm.success"], { exact: true })).toBeVisible();
-    page.once("dialog", (dialog) => dialog.dismiss());
-    const before = state.writes.length;
-    await page.getByRole("button", { name: ui[other].delete, exact: true }).click();
-    expect(state.writes).toHaveLength(before);
-    page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: ui[other].delete, exact: true }).click();
-    await expect(page.getByText(ui[other]["apm.empty"], { exact: true })).toBeVisible();
-    await page.getByRole("textbox", { name: ui[other]["mcp.name"] }).fill("synthetic-apm-mcp");
-    await page.getByRole("textbox", { name: ui[other]["mcp.command"], exact: true }).fill("synthetic-command");
-    await page.getByRole("button", { name: ui[other]["apm.installMcp"], exact: true }).click();
-    await expect(page.getByRole("cell", { name: "synthetic-apm-mcp", exact: true })).toBeVisible();
-    page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: ui[other].delete, exact: true }).click();
-    await expect(page.getByText(ui[other]["apm.noMcp"], { exact: true })).toBeVisible();
-    await page.locator("div").filter({ has: page.getByText("APM sample package", { exact: true }) })
-      .filter({ has: page.getByRole("button", { name: ui[other]["apm.install"], exact: true }) })
-      .last().getByRole("button", { name: ui[other]["apm.install"], exact: true }).click();
-    await expect(page.getByRole("cell", { name: "microsoft/apm-sample-package", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: ui[other]["apm.update"], exact: true }).click();
-    await expect(page.getByText(ui[other]["apm.success"], { exact: true })).toBeVisible();
-  });
-
   test(`${locale}: load failures are visible, not empty success; OBO remains optional`, async ({ page }) => {
     const state = await fixture(page);
     await open(page, locale);
@@ -362,11 +295,7 @@ for (const locale of ["en", "nl"] as const) {
     await page.getByRole("button", { name: text["mcp.title"], exact: true }).click();
     await expect(alert(page)).toContainText(text["error.MCP_ERROR"]);
     await expect(page.getByText(text["mcp.empty"], { exact: true })).toHaveCount(0);
-    state.fail = "/apm";
-    state.status = 503;
-    await page.getByRole("button", { name: "APM", exact: true }).click();
-    await expect(page.getByText(text["apm.disabled"], { exact: true })).toBeVisible();
-    await expect(page.getByText("SENSITIVE_SYNTHETIC_DIAGNOSTIC")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "APM", exact: true })).toHaveCount(0);
   });
 
   test(`${locale}: configured OBO control reports denied sign-in without provider details`, async ({ page }) => {

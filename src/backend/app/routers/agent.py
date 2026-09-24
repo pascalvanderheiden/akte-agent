@@ -26,7 +26,7 @@ from app.models import (
     Message,
     MessageRole,
 )
-from app.personas import require_available, require_not_retired
+from app.personas import require_available, require_identified_history, require_not_retired
 from app.services.follow_up_service import generate_follow_ups
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     require_available(body.useCase, request.app.state.registries)
     conversation = await cosmos.get_conversation(body.conversationId, "default-user")
     if conversation:
+        require_identified_history(conversation.useCase)
         require_not_retired(conversation.useCase)
 
     # Stamp kratos attributes on the current (HTTP) span so every request is

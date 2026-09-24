@@ -4,7 +4,7 @@
 manifest (the primary, deterministic path — no LLM) and maps it onto the three
 core persona files Kratos already understands:
 
-* ``SYSTEM_PROMPT.md`` — frontmatter (name/description/sampleQuestions/curated)
+* ``SYSTEM_PROMPT.md`` — frontmatter (including supported manifest metadata)
   plus the manifest ``instructions`` as the body.
 * ``.mcp.json``        — Copilot MCP config built from ``mcpServers``.
 
@@ -104,6 +104,9 @@ def _build_system_prompt(manifest: PersonaManifest, slug: str) -> str:
         "description": manifest.description,
         "sampleQuestions": list(manifest.sampleQuestions),
         "curated": True,
+        "traits": list(manifest.traits),
+        "workflow_model": manifest.workflow_model,
+        "skills": [skill.model_dump(exclude_none=True, exclude_defaults=True) for skill in manifest.skills],
     }
     if manifest.localizations:
         frontmatter["localizations"] = {
@@ -123,9 +126,16 @@ def _build_mcp_json(servers: list[ImportMcpServer]) -> str:
     """
     config: dict[str, dict] = {}
     for server in servers:
-        if not server.url:
+        if not server.url and not server.command:
             raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
-        config[server.name] = {"type": server.transport, "url": server.url}
+        entry: dict[str, str | list[str]] = {"type": server.transport}
+        if server.url:
+            entry["url"] = server.url
+        else:
+            entry["command"] = server.command
+            if server.args:
+                entry["args"] = server.args
+        config[server.name] = entry
     return json.dumps(config, indent=2) + "\n"
 
 
@@ -189,7 +199,9 @@ async def import_persona(
         raise HTTPException(status_code=503, detail="Persona storage is not initialised")
 
     manifest = body.manifest or await _expand_prompt_to_manifest(body.prompt or "")
-    if any(skill.package for skill in manifest.skills) or any(server.registry for server in manifest.mcpServers):
+    if any(skill.package for skill in manifest.skills) or any(
+        server.registry and not (server.url or server.command) for server in manifest.mcpServers
+    ):
         raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_PACKAGE_DEPENDENCY"})
 
     base_slug = _slugify(body.name or manifest.name)

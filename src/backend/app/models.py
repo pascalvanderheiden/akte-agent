@@ -340,6 +340,8 @@ class ImportMcpServer(BaseModel):
     name: str
     transport: str = "http"
     url: str | None = None
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
     registry: bool = False
 
 

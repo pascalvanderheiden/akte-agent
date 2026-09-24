@@ -595,6 +595,32 @@ def test_authenticated_localizations_survive_import_edit_and_export(kratos_repo,
     assert client.get(f"/api/use-cases/{slug}/export").status_code == 401
 
 
+def test_export_uses_configured_persona_assets_root(kratos_repo: Path, tmp_path: Path):
+    custom_root = tmp_path / "custom-personas"
+    source = custom_root / "synthetic-review"
+    source.mkdir(parents=True)
+    prompt = "---\nname: Custom review\ntraits:\n- custom\nworkflow_model: workflow\nskills:\n- name: metadata-only\n  description: Kept\n---\n\nCustom instructions.\n"
+    (source / "SYSTEM_PROMPT.md").write_text(prompt)
+    (source / ".mcp.json").write_text("{}\n")
+    # A matching bundled name must not win when custom storage is configured.
+    bundled = kratos_repo / "use-cases" / "synthetic-review" / "SYSTEM_PROMPT.md"
+    bundled.write_text("---\nname: Bundled review\n---\n\nWrong instructions.\n")
+
+    output = tmp_path / "export"
+    output.mkdir()
+    ProjectExporter(kratos_repo, persona_assets_root=custom_root).assemble("synthetic-review", output)
+
+    assert (output / "use-cases" / "synthetic-review" / "SYSTEM_PROMPT.md").read_text() == prompt
+
+
+def test_legacy_persona_assets_root_alias_is_supported(monkeypatch, tmp_path: Path):
+    from app.config import Settings
+
+    monkeypatch.delenv("PERSONA_ASSETS_ROOT", raising=False)
+    monkeypatch.setenv("APM_USE_CASES_ROOT", str(tmp_path / "custom-personas"))
+    assert Settings().use_cases_root == str(tmp_path / "custom-personas")
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — runtime correctness fixes (RBAC, telemetry, region docs)
 # ---------------------------------------------------------------------------

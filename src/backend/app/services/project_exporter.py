@@ -179,7 +179,7 @@ class ExportContext:
 class ProjectExporter:
     """Assemble a Kratos use-case into a Foundry-Hosted-Agent project tree."""
 
-    def __init__(self, repo_root: Path | str = ".") -> None:
+    def __init__(self, repo_root: Path | str = ".", persona_assets_root: Path | str | None = None) -> None:
         """Construct an exporter rooted at a Kratos checkout.
 
         Args:
@@ -191,7 +191,9 @@ class ProjectExporter:
         self.repo_root = Path(repo_root).resolve()
         self.hosted_agent_dir = self.repo_root / "src" / "hosted-agent"
         self.backend_app_dir = self.repo_root / "src" / "backend" / "app"
-        self.use_cases_dir = self.repo_root / "use-cases"
+        self.use_cases_dir = (
+            Path(persona_assets_root).resolve() if persona_assets_root is not None else self.repo_root / "use-cases"
+        )
         self.infra_dir = self.repo_root / "infra"
 
     # ------------------------------------------------------------------

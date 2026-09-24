@@ -21,16 +21,16 @@ function persona(name: string, curated = true): UseCase {
 }
 
 async function fixture(page: Page) {
-  const generic: UseCase = {
-    ...persona("generic"),
-    displayName: "Generic fixture",
+  const akte: UseCase = {
+    ...persona("akte-agent"),
+    displayName: "Akte Agent",
     localizations: {
-      en: { displayName: "Generic fixture", description: "Synthetic English assistant", sampleQuestions: ["Start a synthetic task"] },
-      nl: { displayName: "Algemene testassistent", description: "Synthetische Nederlandse assistent", sampleQuestions: ["Begin een synthetische taak"] },
+      en: { displayName: "Akte Agent", description: "Synthetic English assistant", sampleQuestions: ["Start a synthetic task"] },
+      nl: { displayName: "Akte Agent", description: "Synthetische Nederlandse assistent", sampleQuestions: ["Begin een synthetische taak"] },
     },
   };
   const state = {
-    catalog: [generic, persona("synthetic-custom"), persona("synthetic-experimental", false)],
+    catalog: [akte, persona("synthetic-custom"), persona("synthetic-experimental", false)],
     conversations: [] as Conversation[],
     messages: [] as ChatMessage[],
     calls: [] as { conversationId: string; message: string; locale: Locale; useCase: string; attachments?: unknown[] }[],
@@ -154,7 +154,7 @@ for (const locale of ["en", "nl"] as const) {
   test(`${locale}: stored conversation dates use the selected locale`, async ({ page }) => {
     const state = await fixture(page);
     state.conversations.push({
-      id: "synthetic-old", title: "Synthetic older conversation", useCase: "generic",
+      id: "synthetic-old", title: "Synthetic older conversation", useCase: "akte-agent",
       status: "active", createdAt: "2020-03-21T12:00:00Z", updatedAt: "2020-03-21T12:00:00Z",
     });
     await open(page, locale);
@@ -170,10 +170,10 @@ for (const locale of ["en", "nl"] as const) {
     await expect(page.getByRole("heading", { name: state.catalog[0].localizations![locale]!.displayName! })).toBeVisible();
     const select = page.getByRole("combobox", { name: ui[locale].selectPersona });
     expect(await select.locator("option").evaluateAll((nodes) => nodes.map((n) => (n as HTMLOptionElement).value)))
-      .toEqual(state.catalog.filter((p) => p.curated).map((p) => p.name));
+      .toEqual(state.catalog.map((p) => p.name));
     await select.selectOption("synthetic-custom");
     await expect(page.getByRole("heading", { name: "synthetic-custom" })).toBeVisible();
-    await select.selectOption("generic");
+    await select.selectOption("akte-agent");
     await page.getByRole("textbox", { name: ui[locale].ask }).fill("Synthetic first message");
     await page.getByRole("button", { name: ui[locale].sendMessage, exact: true }).click();
     await expect(page.getByText(locale === "nl" ? "Synthetisch antwoord." : "Synthetic response.", { exact: true })).toBeVisible();
@@ -207,7 +207,7 @@ for (const locale of ["en", "nl"] as const) {
     await expect(editor).toHaveValue("My unsaved draft");
     state.fail = "export";
     await page.getByRole("button", { name: ui[locale]["export.deploy"], exact: true }).click();
-    await page.getByRole("button", { name: /generic-foundry-agent.zip/ }).click();
+    await page.getByRole("button", { name: /akte-agent-foundry-agent.zip/ }).click();
     await expect(page.getByRole("alert").filter({ hasText: ui[locale]["error.EXPORT_ERROR"] })).toBeVisible();
     await expect(page.locator("body")).not.toContainText("SENSITIVE_SYNTHETIC_DIAGNOSTIC");
     expect(state.paths.every((path) => path.startsWith(`${mount}/api/`))).toBe(true);
@@ -262,11 +262,11 @@ test("switching preserves conversation, history, draft, attachments, persona and
   await expect(page.getByRole("textbox", { name: nl.ask })).toHaveValue("Unsent source text");
   await expect(page.getByRole("button", { name: "Bijlage verwijderen: synthetic-source.txt" })).toBeVisible();
   await expect(page.getByText("Synthetic response.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: nl.selectPersona })).toHaveValue("generic");
+  await expect(page.getByRole("combobox", { name: nl.selectPersona })).toHaveValue("akte-agent");
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme!);
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();
   await expect(page.getByText("Synthetisch antwoord.", { exact: true })).toBeVisible();
-  expect(state.calls[1]).toMatchObject({ conversationId: state.calls[0].conversationId, locale: "nl", message: "Unsent source text", useCase: "generic" });
+  expect(state.calls[1]).toMatchObject({ conversationId: state.calls[0].conversationId, locale: "nl", message: "Unsent source text", useCase: "akte-agent" });
   expect(state.calls[1].attachments).toEqual([expect.objectContaining({ displayName: "synthetic-source.txt", content: Buffer.from("SYNTHETIC SOURCE - unchanged").toString("base64") })]);
   await page.getByRole("textbox", { name: nl.ask }).fill("Write this output in English");
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();
@@ -295,7 +295,7 @@ test("explicit preference persists across reload; catalog failure never invents 
   await expect(page.getByRole("button", { name: nl.sendMessage, exact: true })).toBeDisabled();
   state.fail = "";
   await page.getByRole("button", { name: nl.retry }).click();
-  await expect(page.getByRole("heading", { name: "Algemene testassistent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Akte Agent" })).toBeVisible();
   state.fail = "create";
   await page.getByRole("textbox", { name: nl.ask }).fill("Retain this draft");
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();

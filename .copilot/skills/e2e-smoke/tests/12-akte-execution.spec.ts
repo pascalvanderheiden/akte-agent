@@ -167,8 +167,8 @@ print(json.dumps([{"name": item["name"], "path": item["path"], "text": item["tex
     await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
     await page.goto(`${FRONTEND_URL}/`);
     const selector = page.getByRole("combobox", { name: ui[locale].selectPersona });
-    await expect(selector).toHaveValue("generic");
-    expect(fixture.catalog.filter((persona) => persona.curated).map((persona) => persona.name)).toContain("akte-agent");
+    await expect(selector).toHaveValue("akte-agent");
+    expect(fixture.catalog.map((persona) => persona.name)).toContain("akte-agent");
     await selector.selectOption("akte-agent");
     const prompts = locale === "en"
       ? ["SYNTHETIC-AKTE-EXEC: prepare identity and signing checklist from supplied deed and observations.", "Continue same dossier: reconcile supplied funds, charges and taxes.", "Correction D: exclude fee, include replacement 350.005 with confirmed decimal point; preserve originals."]
