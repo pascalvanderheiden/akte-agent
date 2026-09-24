@@ -109,7 +109,8 @@ except ValueError as error:
   });
   await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
   await page.goto(`${FRONTEND_URL}/`);
-  await page.getByRole("combobox", { name: ui[locale].selectPersona }).selectOption("akte-agent");
+  await expect(page.getByRole("heading", { name: "Akte Agent", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
   return { state, input };
 }
 

@@ -54,7 +54,7 @@ async function fixture(page: Page) {
   const catalog: UseCase[] = [{
     name: "akte-agent", displayName: "Akte Agent", description: "Synthetic", sampleQuestions: [],
     skillCount: 0, curated: true,
-    localizations: { en: { displayName: "Akte Agent" }, nl: { displayName: "Akte Agent" } },
+    localizations: { en: { displayName: "Akte Agent EN" }, nl: { displayName: "Akte Agent NL" } },
   }, {
     name: "synthetic-import", displayName: "Imported source label", description: "Synthetic imported metadata",
     sampleQuestions: [], skillCount: 0, curated: false,
@@ -192,7 +192,7 @@ for (const locale of ["en", "nl"] as const) {
     dialog = page.getByRole("dialog", { name: ui[other]["eval.generate"] });
     await expect(dialog.getByRole("textbox", { name: ui[other]["eval.instructions"], exact: true })).toHaveValue(sourceText);
     await expect(dialog.getByRole("spinbutton", { name: ui[other]["eval.count"] })).toHaveValue("2");
-    await expect(dialog).toContainText(other === "nl" ? "Synthetische assistent" : "Synthetic assistant");
+    await expect(dialog).toContainText(state.catalog[0].localizations![other]!.displayName!);
     let release!: () => void;
     state.pauseGeneration = new Promise<void>((resolve) => { release = resolve; });
     await dialog.getByRole("button", { name: ui[other]["eval.generateDraft"] }).click();
