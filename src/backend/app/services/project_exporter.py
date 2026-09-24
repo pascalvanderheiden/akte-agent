@@ -24,7 +24,6 @@ ZIP layout
     │   └── backend/app/                 ← copied recursively (no exporter_templates,
     │                                       no __pycache__, no *.pyc)
     ├── use-cases/<chosen>/              ← the chosen use-case ONLY
-    ├── mocks/                           ← copied verbatim (package.json + packages/*)
     └── infra/                           (vendored trimmed Bicep + Kratos modules)
         ├── main.bicep                   ← vendored trimmed copy (no VNet)
         ├── main.parameters.json         ← vendored
@@ -60,6 +59,8 @@ from importlib import resources
 from pathlib import Path
 
 import yaml
+
+from app.personas import require_not_retired
 
 logger = logging.getLogger(__name__)
 
@@ -184,14 +185,13 @@ class ProjectExporter:
         Args:
             repo_root: Path to the Kratos repo (the directory containing
                 ``src/hosted-agent/``, ``src/backend/``, ``use-cases/``,
-                ``mocks/``, and ``infra/``). Defaults to the current
+                and ``infra/``). Defaults to the current
                 working directory.
         """
         self.repo_root = Path(repo_root).resolve()
         self.hosted_agent_dir = self.repo_root / "src" / "hosted-agent"
         self.backend_app_dir = self.repo_root / "src" / "backend" / "app"
         self.use_cases_dir = self.repo_root / "use-cases"
-        self.mocks_dir = self.repo_root / "mocks"
         self.infra_dir = self.repo_root / "infra"
 
     # ------------------------------------------------------------------
@@ -202,13 +202,14 @@ class ProjectExporter:
         """Materialise the exported project tree.
 
         Args:
-            use_case: The use-case folder name (e.g. ``"finance-close"``).
+            use_case: The use-case folder name (e.g. ``"akte-agent"``).
             output_dir: An EMPTY directory that will receive the project tree.
                 Caller is responsible for creating/cleaning it.
 
         Returns:
             The path to the populated project directory (== ``output_dir``).
         """
+        require_not_retired(use_case)
         src_use_case = self.use_cases_dir / use_case
         if not src_use_case.is_dir():
             raise FileNotFoundError(f"Use-case directory not found: {src_use_case}")
@@ -226,13 +227,11 @@ class ProjectExporter:
         self._copy_backend_app(output_dir)
         # 3. The chosen use-case
         self._copy_use_case(use_case, output_dir)
-        # 4. Mocks (npm workspaces with all stdio MCP servers)
-        self._copy_mocks(output_dir)
-        # 5. Trimmed infra (Bicep)
+        # 4. Trimmed infra (Bicep)
         self._copy_infra(output_dir)
-        # 6. Root files: azure.yaml, README, .env.template, .gitignore, .dockerignore
+        # 5. Root files: azure.yaml, README, .env.template, .gitignore, .dockerignore
         self._render_root_templates(ctx, output_dir)
-        # 7. azd lifecycle hooks (hooks/postdeploy.sh — grants RBAC to
+        # 6. azd lifecycle hooks (hooks/postdeploy.sh — grants RBAC to
         #    hosted-agent managed identities that Foundry creates AFTER bicep)
         self._render_hooks(ctx, output_dir)
         return output_dir
@@ -289,7 +288,7 @@ class ProjectExporter:
         Three files (main.py, pyproject.toml, Dockerfile) are copied verbatim
         — these are the runtime entry point + dependencies + container build,
         and they assume the repo-root layout (Dockerfile uses ``COPY src/``,
-        ``COPY mocks/``, ``COPY use-cases/``) which the export mirrors.
+        ``COPY use-cases/``) which the export mirrors.
 
         Two files (agent.yaml, agent.manifest.yaml) are rendered from
         templates so the persona name / slug / Cosmos DB scope reflect the
@@ -330,19 +329,6 @@ class ProjectExporter:
         src = self.use_cases_dir / use_case
         dst = dst_dir / "use-cases" / use_case
         _copy_tree(src, dst)
-
-    def _copy_mocks(self, dst_dir: Path) -> None:
-        """Copy the whole ``mocks/`` tree (workspaces + all stdio servers).
-
-        Even mocks that the chosen use-case doesn't reference are bundled —
-        the npm workspace install is fast, and shipping the full set lets
-        the user extend the persona without re-exporting.
-        """
-        if not self.mocks_dir.is_dir():
-            logger.info("No mocks/ directory at %s — skipping", self.mocks_dir)
-            return
-        dst = dst_dir / "mocks"
-        _copy_tree(self.mocks_dir, dst)
 
     def _copy_infra(self, dst_dir: Path) -> None:
         """Copy the trimmed infra/ subtree.

@@ -198,7 +198,7 @@ for (const locale of ["en", "nl"] as const) {
     await expect(editor).toHaveValue(state.prompt);
     await editor.fill("My unchanged custom instructions.");
     await page.getByRole("button", { name: ui[locale]["prompt.save"] }).click();
-    await expect(page.getByRole("status")).toContainText(ui[locale]["prompt.saved"]);
+    await expect(page.getByRole("status").filter({ hasText: ui[locale]["prompt.saved"] })).toBeVisible();
     expect(state.prompt).toBe("My unchanged custom instructions.");
     state.fail = "prompt";
     await editor.fill("My unsaved draft");

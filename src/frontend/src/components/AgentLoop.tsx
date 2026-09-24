@@ -87,9 +87,9 @@ function VizSdkStack() {
 
 function VizPersonas() {
   const personas = [
-    { name: "Wealth advisor", prompt: "Portfolio review, market data, email drafting", tint: "from-emerald-500/15 to-emerald-500/5", border: "border-emerald-500/30" },
-    { name: "Retail banker",  prompt: "Customer lookup, account support, next best action", tint: "from-cyan-500/15 to-cyan-500/5",       border: "border-cyan-500/30" },
-    { name: "Clinician",      prompt: "Patient context, FHIR data, visit preparation", tint: "from-violet-500/15 to-violet-500/5",   border: "border-violet-500/30" },
+    { name: "Generic", prompt: "Search, document summaries, code and downloads", tint: "from-emerald-500/15 to-emerald-500/5", border: "border-emerald-500/30" },
+    { name: "Akte Agent", prompt: "Bilingual notarial intake and working artifacts", tint: "from-cyan-500/15 to-cyan-500/5", border: "border-cyan-500/30" },
+    { name: "Custom import", prompt: "Your authenticated persona, skills and instructions", tint: "from-violet-500/15 to-violet-500/5", border: "border-violet-500/30" },
   ];
   return (
     <div className="rounded-xl bg-surface-2 border border-border-soft p-5" role="img" aria-label="Three personas converging on one engine">
@@ -132,7 +132,7 @@ function VizSkillsMenu() {
     { name: "rag-search",      desc: "search company docs" },
     { name: "data-analysis",   desc: "run Python on data", active: true },
     { name: "email-draft",     desc: "draft an email" },
-    { name: "portfolio-review", desc: "pull a client's holdings" },
+    { name: "document-summary", desc: "summarise a supplied document" },
     { name: "pdf-report",      desc: "generate a PDF" },
   ];
   return (
@@ -171,13 +171,13 @@ function VizSkillsMenu() {
 }
 
 function VizConnectors() {
-  const systems = ["Salesforce", "SAP S/4", "Epic", "ServiceNow", "Workday"];
+  const systems = ["Documents", "Search", "Calendar", "Files", "Custom API"];
   return (
     <div className="rounded-xl bg-surface-2 border border-border-soft p-5" role="img" aria-label="MCP connectors to enterprise systems">
       <div className="flex justify-center mb-2">
         <div className="rounded-lg bg-accent-soft border border-accent/30 px-3 py-1.5 text-center">
           <div className="text-[10px] uppercase tracking-wider text-accent font-semibold">A skill</div>
-          <div className="text-[11px] text-text">portfolio-review</div>
+          <div className="text-[11px] text-text">document-summary</div>
         </div>
       </div>
       <div className="flex justify-center text-muted text-base leading-none mb-2">↓</div>
@@ -202,12 +202,12 @@ function VizAskInput() {
   return (
     <div className="rounded-xl bg-surface-2 border border-border-soft p-5" role="img" aria-label="Chat input with attachment">
       <div className="rounded-xl bg-surface border border-border p-3">
-        <div className="text-[13px] text-text-strong mb-2">Review my client&rsquo;s Q4 portfolio and draft an email summarising it for them.</div>
+        <div className="text-[13px] text-text-strong mb-2">Review this synthetic document and draft an email summarising its open questions.</div>
         <div className="inline-flex items-center gap-1.5 rounded-md bg-surface-2 border border-border-soft px-2 py-1 text-[11px] text-text">
           <svg className="w-3 h-3 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
           </svg>
-          <span className="text-muted">portfolio_q4.xlsx</span>
+          <span className="text-muted">synthetic-notes.txt</span>
         </div>
       </div>
       <div className="mt-3 flex items-center gap-2 text-[11px] text-muted">
@@ -259,14 +259,14 @@ function VizPlan() {
       <div className="flex items-center justify-center mb-3">
         <div className="rounded-lg bg-violet-500/10 border border-violet-500/30 px-3 py-1.5">
           <div className="text-[10px] uppercase tracking-wider text-violet-600 dark:text-violet-400 font-semibold">Plan</div>
-          <div className="text-[11px] text-text">&ldquo;I&rsquo;ll need real portfolio data for this.&rdquo;</div>
+          <div className="text-[11px] text-text">&ldquo;I&rsquo;ll need the supplied document for this.&rdquo;</div>
         </div>
       </div>
       <div className="flex justify-center text-muted text-base leading-none mb-2">↓</div>
       <div className="grid grid-cols-3 gap-1.5">
         {[
           { name: "web-search",       active: false },
-          { name: "portfolio-review", active: true },
+          { name: "document-summary", active: true },
           { name: "email-draft",      active: false },
         ].map((s) => (
           <div
@@ -285,7 +285,7 @@ function VizPlan() {
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        Calling portfolio-review
+        Calling document-summary
       </div>
     </div>
   );
@@ -298,41 +298,41 @@ function VizAct() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-[11px] font-semibold text-text-strong">portfolio-review</span>
+            <span className="text-[11px] font-semibold text-text-strong">document-summary</span>
           </div>
           <span className="text-[10px] text-muted">running</span>
         </div>
         <div className="h-1.5 bg-surface-2 rounded-full overflow-hidden">
           <div className="h-full bg-accent rounded-full" style={{ width: "100%" }} />
         </div>
-        <div className="mt-2 text-[10.5px] text-muted">Fetching positions from the wealth platform…</div>
+        <div className="mt-2 text-[10.5px] text-muted">Summarising the supplied synthetic document…</div>
       </div>
       <div className="rounded-lg bg-surface border border-border p-3">
         <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-2">Returned</div>
         <div className="grid grid-cols-3 gap-2 text-center">
           <div>
-            <div className="text-[10px] text-muted">Return</div>
-            <div className="text-[13px] font-semibold text-emerald-600 dark:text-emerald-400">+12.4%</div>
+            <div className="text-[10px] text-muted">Pages</div>
+            <div className="text-[13px] font-semibold text-emerald-600 dark:text-emerald-400">3</div>
           </div>
           <div>
-            <div className="text-[10px] text-muted">Sharpe</div>
-            <div className="text-[13px] font-semibold text-text-strong">1.82</div>
+            <div className="text-[10px] text-muted">Sources</div>
+            <div className="text-[13px] font-semibold text-text-strong">2</div>
           </div>
           <div>
-            <div className="text-[10px] text-muted">Drawdown</div>
-            <div className="text-[13px] font-semibold text-danger-500">−6.1%</div>
+            <div className="text-[10px] text-muted">Open questions</div>
+            <div className="text-[13px] font-semibold text-danger-500">4</div>
           </div>
         </div>
       </div>
-      <div className="mt-2 text-[10px] text-muted text-center">Real call · traced in Azure Monitor · 1.2s</div>
+      <div className="mt-2 text-[10px] text-muted text-center">Example call · traced in Azure Monitor · 1.2s</div>
     </div>
   );
 }
 
 function VizLoop() {
   const iterations = [
-    { n: 1, action: "portfolio-review",  result: "Got the positions" },
-    { n: 2, action: "web-search",        result: "Got the benchmark" },
+    { n: 1, action: "document-summary",  result: "Summarised the document" },
+    { n: 2, action: "web-search",        result: "Found supporting sources" },
     { n: 3, action: "email-draft",       result: "Drafted the email" },
   ];
   return (
@@ -373,8 +373,8 @@ function VizAnswer() {
     <div className="rounded-xl bg-surface-2 border border-border-soft p-5" role="img" aria-label="Live event stream and answer">
       <div className="space-y-1.5 mb-3">
         {[
-          { type: "thought",  text: "Checking the portfolio data…",       tone: "text-violet-600 dark:text-violet-400 bg-violet-500/5" },
-          { type: "tool",     text: "portfolio-review · done in 1.2s",    tone: "text-accent bg-accent-soft" },
+          { type: "thought",  text: "Checking the source document…",       tone: "text-violet-600 dark:text-violet-400 bg-violet-500/5" },
+          { type: "tool",     text: "document-summary · done in 1.2s",    tone: "text-accent bg-accent-soft" },
           { type: "thought",  text: "Comparing against the benchmark…",   tone: "text-violet-600 dark:text-violet-400 bg-violet-500/5" },
           { type: "tool",     text: "web-search · done in 0.8s",          tone: "text-accent bg-accent-soft" },
           { type: "content",  text: "Drafting the email now…",            tone: "text-cyan-600 dark:text-cyan-400 bg-cyan-500/5" },
@@ -387,9 +387,9 @@ function VizAnswer() {
       </div>
       <div className="rounded-lg bg-surface border border-border p-3">
         <div className="text-[10px] uppercase tracking-wider text-muted font-semibold mb-1.5">The answer, rendering live</div>
-        <div className="text-[12px] text-text-strong font-semibold mb-1">Q4 portfolio summary</div>
+        <div className="text-[12px] text-text-strong font-semibold mb-1">Synthetic document summary</div>
         <div className="text-[11.5px] text-text leading-relaxed">
-          Your portfolio returned <span className="font-semibold text-emerald-600 dark:text-emerald-400">+12.4%</span> in Q4, beating the benchmark by 2.1 points…
+          The document contains <span className="font-semibold text-emerald-600 dark:text-emerald-400">3</span> pages, with four open questions for review…
         </div>
       </div>
     </div>
@@ -536,7 +536,7 @@ const STEPS: Step[] = [
     layer: "kratos",
     visualization: <VizSkillsMenu />,
     description:
-      "A skill is a thing the agent knows how to do: search the web, run code, summarise a document, draft an email, look up a customer's portfolio.",
+      "A skill is a thing the agent knows how to do: search the web, run code, summarise a document, draft an email, summarise supplied evidence.",
     detail:
       "Every skill is a small markdown file that describes when to use it, plus a backing function that does the work. The model never sees all of them at once. It sees a short menu of skill names and one-line descriptions and picks which one to load. Only the chosen skill's full instructions and code are pulled into the conversation. This matters for two reasons. The model stays focused, because it is not drowning in capabilities it does not need this turn. And the bill stays sensible, because you only pay for the context you actually use.",
   },
@@ -544,14 +544,14 @@ const STEPS: Step[] = [
     id: 4,
     label: "MCP",
     title: "MCP connectors",
-    source: "MCP servers in front of Salesforce, SAP, Epic, ServiceNow, Workday",
+    source: "Optional authenticated MCP connections to external services",
     icon: Icons.connect,
     layer: "kratos",
     visualization: <VizConnectors />,
     description:
       "Skills can reach into the systems your business actually runs on: CRM, ERP, EHR, core banking, ticketing, HR.",
     detail:
-      "The mechanism is MCP, the Model Context Protocol. It is an open standard for letting an agent talk to a backend system in a structured way. Kratos ships with mocks for the big ones (Salesforce, SAP S/4, Epic FHIR, ServiceNow, Workday, a core banking sample) so the demo runs without real credentials. In production you swap the mock for the real connector and the agent does not know the difference.",
+      "The mechanism is MCP, the Model Context Protocol. It is an open standard for letting an agent talk to a backend system in a structured way. Generic and Akte use shared tools and supplied documents. Administrators can add optional authenticated connectors; access is never implied by a demo.",
   },
   {
     id: 5,
@@ -591,7 +591,7 @@ const STEPS: Step[] = [
     description:
       "The model reads your question, scans the skill menu, and plans the next move: answer directly, call a skill, or ask for more information.",
     detail:
-      "Ask \"what is a Sharpe ratio\" and the model can answer directly. Ask \"what is the Sharpe ratio of my Q4 portfolio\" and it cannot guess. It needs data. So it selects the skill that fits (portfolio-review, data-analysis, web-search, whichever is right for the task) and asks the SDK to run it. This is the moment where \"chat with an LLM\" turns into \"agent doing work\".",
+      "Ask \"what is a document summary\" and the model can answer directly. Ask \"summarise this document\" and it needs the source. It needs data. So it selects the skill that fits (document-summary, data-analysis, web-search, whichever is right for the task) and asks the SDK to run it. This is the moment where \"chat with an LLM\" turns into \"agent doing work\".",
   },
   {
     id: 8,
@@ -605,7 +605,7 @@ const STEPS: Step[] = [
     description:
       "The chosen skill executes: querying a system, running Python, retrieving a document, calling an API.",
     detail:
-      "This is where Kratos does the real work. If the skill is portfolio-review, it pulls the customer's positions from the wealth platform. If it is code-interpreter, it runs Python in a sandbox. If it is web-search, it goes out to Bing. Every call is traced. We know which skill ran, how long it took, what it returned, whether it failed. That trace shows up in Azure Monitor and in the live thought stream you see on the left of the chat.",
+      "This is where Kratos does the real work. If the skill is document-summary, it summarises a supplied document. If it is code-interpreter, it runs Python in a sandbox. If it is web-search, it goes out to Bing. Every call is traced. We know which skill ran, how long it took, what it returned, whether it failed. That trace shows up in Azure Monitor and in the live thought stream you see on the left of the chat.",
   },
   {
     id: 9,
@@ -619,7 +619,7 @@ const STEPS: Step[] = [
     description:
       "The model reads the skill's result, thinks again, and decides what to do next: call another skill, refine the query, or write the final answer.",
     detail:
-      "This is the agent loop. It is what makes Kratos an agent rather than a chatbot. A chatbot answers in one shot. An agent keeps going. Pull the portfolio. Look at it. Notice it underperformed the benchmark. Pull the benchmark data to confirm. Draft an email explaining the gap. Each step uses the result of the previous one. The loop ends when the model decides it has enough and writes a final answer for you. Most turns take two or three iterations. Hard ones take more.",
+      "This is the agent loop. It is what makes Kratos an agent rather than a chatbot. A chatbot answers in one shot. An agent keeps going. Read the document. Identify missing evidence. Look up supporting sources. Draft an email listing the open questions. Each step uses the result of the previous one. The loop ends when the model decides it has enough and writes a final answer for you. Most turns take two or three iterations. Hard ones take more.",
   },
   {
     id: 10,
@@ -632,7 +632,7 @@ const STEPS: Step[] = [
     description:
       "You see the agent's reasoning, the skills it calls, and its final answer as they happen, not after the whole turn is done.",
     detail:
-      "Every event from inside the loop flows down the same open connection to your browser: a thought (\"checking the portfolio data\"), a tool call (\"portfolio-review started\"), a result (\"done in 1.2 seconds\"), the words of the answer as they are written. The thought chain on the left of the chat is not a replay. It is the live trace of what the agent is doing right now. If a skill takes 4 seconds, you watch it take 4 seconds. There is nowhere for the agent to hide.",
+      "Every event from inside the loop flows down the same open connection to your browser: a thought (\"checking the source document\"), a tool call (\"document-summary started\"), a result (\"done in 1.2 seconds\"), the words of the answer as they are written. The thought chain on the left of the chat is not a replay. It is the live trace of what the agent is doing right now. If a skill takes 4 seconds, you watch it take 4 seconds. There is nowhere for the agent to hide.",
   },
   {
     id: 11,

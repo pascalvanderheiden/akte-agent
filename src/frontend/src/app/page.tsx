@@ -57,6 +57,8 @@ export default function Home() {
     [locale, selectedUseCase, useCases],
   );
   const conversationPersona = useCases.find((persona) => persona.name === activeConversation?.useCase);
+  const personaUnavailable = !catalogLoading && !catalogFailed &&
+    (activeConversation ? !conversationPersona : !activeUseCase);
 
   // Read embed args from the URL once on mount (client-only static export).
   useEffect(() => {
@@ -87,13 +89,16 @@ export default function Home() {
 
   // Fetch skills whenever the selected use-case changes (only after config is loaded)
   useEffect(() => {
-    if (!configReady) return;
+    if (!configReady || catalogLoading || catalogFailed || !activeUseCase) {
+      setSkills([]);
+      return;
+    }
     let cancelled = false;
     listSkills(selectedUseCase)
       .then((s) => { if (!cancelled) setSkills(s); })
       .catch(() => { if (!cancelled) { setSkills([]); setError("SKILLS_ERROR"); } });
     return () => { cancelled = true; };
-  }, [selectedUseCase, configReady]);
+  }, [selectedUseCase, configReady, catalogLoading, catalogFailed, activeUseCase]);
 
   const handleNewConversation = () => {
     // Navigate to the landing page for the current use case
@@ -101,6 +106,11 @@ export default function Home() {
     setPendingMessage(null);
     setSidebarOpen(false);
     setSkillsOpen(false);
+    if (!useCases.some((persona) => persona.name === selectedUseCase)) {
+      setSelectedUseCase(useCases.find((persona) => persona.name === "generic")?.name ??
+        useCases.find((persona) => persona.curated)?.name ?? "");
+    }
+    setError(null);
   };
 
   // Create a conversation and optionally pre-fill a message
@@ -192,7 +202,7 @@ export default function Home() {
   useEffect(() => {
     if (!configReady || !localeReady || catalogLoading || bootstrappedRef.current) return;
     const params = readEmbedParams();
-    if (!params.embed) return;
+    if (!params.embed && !params.persona) return;
     bootstrappedRef.current = true;
 
     // Sync theme: accept a light/dark mode or a named Kratos theme, plus an
@@ -216,7 +226,9 @@ export default function Home() {
     }
     if (params.persona) {
       setSelectedUseCase(params.persona);
-      if (params.prompt) startConversation(params.prompt, params.persona);
+      if (params.prompt && useCases.some((persona) => persona.name === params.persona)) {
+        startConversation(params.prompt, params.persona);
+      }
       return;
     }
     if (params.prompt) {
@@ -286,6 +298,14 @@ export default function Home() {
             {t("error.CATALOG_ERROR")} <button className="underline" onClick={refreshCatalog}>{t("retry")}</button>
           </div>
         )}
+        {personaUnavailable && (
+          <div role="status" className="p-4 pr-32 text-sm bg-surface border-b border-border-soft">
+            <p>{t("error.PERSONA_UNAVAILABLE")}</p>
+            <button className="mt-2 underline" onClick={handleNewConversation}>
+              {t("startAvailableConversation")}
+            </button>
+          </div>
+        )}
         {activeConversation ? (
           <ChatWindow
             key={activeConversation.id}
@@ -294,6 +314,7 @@ export default function Home() {
             onTitleChange={handleTitleChange}
             initialMessage={pendingMessage ?? undefined}
             onOpenSidebar={() => setSidebarOpen(true)}
+            readOnly={catalogLoading || catalogFailed || !conversationPersona}
           />
         ) : (
           <div className="flex-1 flex flex-col">

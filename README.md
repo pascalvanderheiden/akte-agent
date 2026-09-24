@@ -18,31 +18,11 @@ One-command deploy (`azd up`) provisions Azure services, builds containers, depl
 
 ---
 
-## Screenshots
+## Built-in experience
 
-<div align="center">
-
-### Chat Interface
-Conversational UI with persona switching, suggested prompts, and live skill indicators.
-
-<img src="docs/static/img/chat-ui.png" alt="Chat Interface" width="800">
-
-### Agent Manager — Skills
-Configure, toggle, and manage MCP skills per agent persona — no redeploy needed.
-
-<img src="docs/static/img/agent-manager-skills.png" alt="Agent Manager — Skills" width="800">
-
-### Agent Manager — APM Packages
-Install remote skill packages and MCP servers from the curated registry with one click.
-
-<img src="docs/static/img/agent-manager-apm.png" alt="Agent Manager — APM Packages" width="800">
-
-### PDF Wealth Report Generation *(example)*
-One example of what the agent can produce: the wealth management persona generates branded, multi-page PDF reports with charts — rendered via Playwright and served as downloadable files.
-
-<img src="docs/static/img/wealth-report.png" alt="PDF Wealth Report Generation" width="800">
-
-</div>
+Generic retains general-purpose tools and downloads. Akte Agent adds bilingual
+notarial working artifacts; see [Akte intake](docs/akte-intake.md).
+Agent Manager manages skills, prompts, MCP connections and APM packages.
 
 ---
 
@@ -51,10 +31,6 @@ One example of what the agent can produce: the wealth management persona generat
 ### Why This Architecture — One Agent, N Skills
 
 Instead of orchestrating handoffs between multiple specialized agents, Kratos uses a single agent backed by N swappable MCP skills — simpler to reason about, debug, and extend.
-
-<div align="center">
-<img src="docs/static/img/accelerator-approach.png" alt="Single agent with N skills vs. multi-agent handoffs" width="800">
-</div>
 
 ### Agentic Loop — Reason, Act, Observe
 
@@ -513,18 +489,40 @@ async for event in client.run(message=msg, session_id=conv_id):
 
 ## Use Cases
 
-Kratos ships with four configurable agent personas, each with its own system prompt, skills, and APM manifest:
+Kratos ships with two curated agent personas, each with its own system prompt, skills, and APM manifest:
 
 | Use Case | Directory | Description |
 |----------|-----------|-------------|
 | **Generic** | `use-cases/generic/` | General-purpose assistant with web search, code interpreter, file sharing |
-| **Retail Banking** | `use-cases/retail-banking/` | Account lookup, transaction history, mortgage calculator, spending analysis |
-| **Wealth Management** | `use-cases/wealth-management/` | Portfolio review, tax analysis, PDF wealth reports with charts |
-| **Insurance** | `use-cases/insurance/` | Policy information, claims processing, coverage analysis |
-| **Sales Account Review** | `use-cases/sales-account-review/` | AE/CSM co-pilot — account briefings, pipeline review, at-risk signals against the in-repo `salesforce-mcp-server` mock |
-| **HR Onboarding** | `use-cases/hr-onboarding/` | People-team co-pilot — drafts pre-hire records, briefs managers on their teams, approves PTO with explicit user confirmation on every write, against the in-repo `workday-mcp-server` mock |
-| **IT Service Desk L1** | `use-cases/it-service-desk/` | L1 support co-pilot — triages tickets, searches the KB, surfaces VIP queues, and resolves/reassigns tickets with explicit user confirmation on every write, against the in-repo `servicenow-mcp-server` mock |
-| **Clinician Visit Prep** | `use-cases/clinician-visit-prep/` | Outpatient-clinic co-pilot — daily schedule briefings, pre-visit summaries with derived clinical focus, lab trends, and med-problem reconciliation against the in-repo `epic-fhir-mcp-server` mock (FHIR R4 resources) |
+| **Akte Agent** | `use-cases/akte-agent/` | Bilingual notarial intake, exact time calculations and downloadable working artifacts |
+
+The dynamic catalog still supports authenticated custom imports. This is a
+bundled set, not an allowlist for installed personas.
+
+### Non-destructive retirement
+
+The nine former industry built-ins are retired by identifier in
+`src/backend/app/personas.py`. Startup, blob discovery, local fallback, cached
+registries, hosted lazy loading, chat, admin changes and export ignore or reject
+those identifiers even if old copies remain. Requests return
+`PERSONA_UNAVAILABLE` (HTTP 410 for retired identifiers); no Generic substitution
+occurs. Unknown identifiers return the same code with HTTP 404.
+
+Historical conversations remain readable, including stored messages and existing
+file links. The UI explains unavailability in English or Dutch and offers an
+explicit new-conversation action. Existing evaluation run/results and trace reads
+remain available; new runs and scenario generation for retired personas do not.
+No migration rewrites or deletes stored conversations, messages, files or evals.
+Downloads remain temporary, not archival storage.
+
+This is runtime retirement, **not physical cloud cleanup**. Old blobs may remain
+and cannot reactivate a built-in. Deleting cloud copies requires separate approval;
+no cleanup or deployment runs automatically. Update both runtime images together
+when deployment is separately authorized. Imported personas with unrelated names,
+curation, auth, remote builds and optional services retain their existing behavior.
+
+Search ingestion requires an explicit `PDF_INGEST_FOLDER` or `--folder`; there is
+no default to a former persona's sample data.
 
 Each use case has:
 - `SYSTEM_PROMPT.md` — Agent persona and behavior instructions
@@ -542,7 +540,6 @@ needed to deploy the *same* agent into a different Azure subscription as a
 * `copilot-instructions.md` — the persona's system prompt
 * `skills/` — every SKILL.md and supporting script/asset
 * `mcp-config.json` — the persona's MCP server map
-* `mocks/packages/` — referenced local stdio mock servers, ready for `npm install -g`
 * `main.py` — a ~300-LoC single-tenant runtime (Copilot SDK + Foundry `InvocationAgentServerHost`)
 * `Dockerfile`, `pyproject.toml`, `agent.yaml`, `azure.yaml`, `infra/` (Bicep)
 
@@ -550,11 +547,11 @@ Trigger from the UI ("Download as Foundry Agent" under the persona picker)
 or directly via the API:
 
 ```bash
-curl -OJ http://localhost:8000/api/use-cases/finance-close/export
-# → finance-close-foundry-agent.zip
+curl -OJ http://localhost:8000/api/use-cases/akte-agent/export
+# → akte-agent-foundry-agent.zip
 
-unzip finance-close-foundry-agent.zip && cd finance-close-agent
-azd auth login && azd env new my-finance-close && azd up
+unzip akte-agent-foundry-agent.zip && cd akte-agent-agent
+azd auth login && azd env new my-akte-agent && azd up
 ```
 
 The exported agent surfaces in the target Foundry project alongside any
@@ -715,7 +712,7 @@ Per-use-case evaluation harness and an App-Insights waterfall trace inspector �
 Each use-case carries its own eval suite under `use-cases/<name>/evals/`:
 
 ```
-use-cases/insurance/evals/
+use-cases/akte-agent/evals/
   eval_config.json          ← evaluator list + judge model
   scenarios/                ← committed JSON scenarios
     load-customer-profile.json
@@ -737,7 +734,7 @@ Both modes follow the **two-phase invoke + score** pattern from the `foundry-eva
 
 ### LLM-Generated Scenarios
 
-The "Generate Scenarios" modal (or `POST /api/use-cases/{uc}/evals/scenarios/generate`) reads the use-case `SYSTEM_PROMPT.md` and the loaded skill catalog and asks the judge model to draft realistic conversations that exercise the agent. Each draft is hand-reviewable before commit. Industry-realism canons from `threadlight-demo-data-factory` are injected for FSI-shaped use-cases (`insurance`, `retail-banking`, `wealth-management`) so generated data feels plausible.
+The "Generate Scenarios" modal (or `POST /api/use-cases/{uc}/evals/scenarios/generate`) reads the use-case `SYSTEM_PROMPT.md` and the loaded skill catalog and asks the judge model to draft realistic conversations that exercise the agent. Each draft is hand-reviewable before commit. Generation uses the selected persona and optional administrator instructions, with no retired-industry canon.
 
 ### Traces Panel
 
@@ -758,13 +755,13 @@ For CI / scripting:
 ```bash
 # Generate (and optionally save) scenarios
 BACKEND_URL=https://kratos-be.example.com \
-  python scripts/generate_evals.py --use-case insurance --count 5 --save
+  python scripts/generate_evals.py --use-case akte-agent --count 5 --save
 
 # Run validation evals
-python scripts/run_evals.py --use-case insurance --mode validation
+python scripts/run_evals.py --use-case akte-agent --mode validation
 
 # Run hosted Foundry evals
-python scripts/run_evals.py --use-case insurance --mode foundry
+python scripts/run_evals.py --use-case akte-agent --mode foundry
 
 # Inspect traces
 python scripts/fetch_traces.py --conversation-id abc123
@@ -875,9 +872,7 @@ kratos-agent/
 │
 ├── use-cases/                      # Agent personas
 │   ├── generic/                    # General-purpose assistant
-│   ├── retail-banking/             # Banking agent
-│   ├── wealth-management/          # Wealth advisor
-│   └── insurance/                  # Insurance agent
+│   └── akte-agent/                 # Notarial working artifacts
 │
 └── hooks/
     ├── assign-agent-roles.sh       # Grants the hosted agent its data-plane roles
@@ -1124,7 +1119,7 @@ To choose without being prompted:
 
 ```bash
 KRATOS_UPLOAD_USE_CASES=all azd up                      # every use-case
-KRATOS_UPLOAD_USE_CASES=retail-banking,insurance azd up # just these
+KRATOS_UPLOAD_USE_CASES=generic,akte-agent azd up # just these
 KRATOS_UPLOAD_USE_CASES=none azd up                     # skip
 ```
 

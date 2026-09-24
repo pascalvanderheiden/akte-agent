@@ -11,6 +11,7 @@
 #
 # Never fails the deploy: any problem here just means "upload nothing".
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/personas.sh"
 
 USE_CASES_DIR="use-cases"
 
@@ -32,6 +33,8 @@ USE_CASES=()
 for dir in "$USE_CASES_DIR"/*/; do
   name="$(basename "$dir")"
   [ "$name" = "*" ] && continue
+  persona_is_available "$name" || continue
+  [ -f "$dir/SYSTEM_PROMPT.md" ] || continue
   USE_CASES+=("$name")
 done
 [ ${#USE_CASES[@]} -gt 0 ] || { write_selection "none"; exit 0; }

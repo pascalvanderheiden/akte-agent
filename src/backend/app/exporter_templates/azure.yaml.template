@@ -22,7 +22,7 @@ services:
         language: docker
         docker:
             path: ./Dockerfile
-            # Docker build context is the repo root so we can COPY src/, mocks/,
+            # Docker build context is the repo root so we can COPY src/,
             # and use-cases/ in the bundled Dockerfile (verbatim from Kratos).
             context: ../..
         config:

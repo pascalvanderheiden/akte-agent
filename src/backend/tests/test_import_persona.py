@@ -27,12 +27,16 @@ def client(tmp_path: Path):
 
 def _manifest(**overrides) -> dict:
     base = {
-        "name": "Claims Triage Bot",
-        "description": "Triages insurance claims and flags fraud signals.",
-        "instructions": "You are a claims triage assistant. Be precise and cite policy rules.",
-        "sampleQuestions": ["Triage claim 12345", "What is the fraud score for claim 999?"],
+        "name": "Synthetic Review Bot",
+        "description": "Reviews synthetic documents and flags missing evidence.",
+        "instructions": "You are a synthetic document assistant. Be precise and cite supplied sources.",
+        "sampleQuestions": ["Review synthetic document 12345", "What is missing from synthetic document 999?"],
         "skills": [
-            {"name": "fraud-check", "description": "Score fraud risk", "package": "acme/skills/skills/fraud-check"},
+            {
+                "name": "evidence-check",
+                "description": "Check supplied evidence",
+                "package": "acme/skills/skills/evidence-check",
+            },
             {"name": "no-package-skill", "description": "metadata only"},
         ],
         "mcpServers": [{"name": "microsoft-learn", "transport": "http", "url": "https://learn.microsoft.com/api/mcp"}],
@@ -47,18 +51,18 @@ def test_import_manifest_creates_persona(client, tmp_path):
     resp = client.post("/api/use-cases/import", json={"manifest": _manifest()})
     assert resp.status_code == 201, resp.text
     data = resp.json()
-    assert data["name"] == "claims-triage-bot"
-    assert data["displayName"] == "Claims Triage Bot"
+    assert data["name"] == "synthetic-review-bot"
+    assert data["displayName"] == "Synthetic Review Bot"
     assert data["created"] is True
     assert data["files"]
 
     # Persona registered live
     from app.main import app
 
-    assert "claims-triage-bot" in app.state.registries
+    assert "synthetic-review-bot" in app.state.registries
 
     # Files written to the local mirror
-    uc_dir = tmp_path / "use-cases" / "claims-triage-bot"
+    uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
     assert (uc_dir / "SYSTEM_PROMPT.md").exists()
     assert (uc_dir / ".mcp.json").exists()
     assert (uc_dir / "apm.yml").exists()
@@ -66,49 +70,49 @@ def test_import_manifest_creates_persona(client, tmp_path):
 
 def test_system_prompt_frontmatter_mapping(client, tmp_path):
     client.post("/api/use-cases/import", json={"manifest": _manifest()})
-    text = (tmp_path / "use-cases" / "claims-triage-bot" / "SYSTEM_PROMPT.md").read_text()
+    text = (tmp_path / "use-cases" / "synthetic-review-bot" / "SYSTEM_PROMPT.md").read_text()
     assert text.startswith("---\n")
     fm_block = text.split("---\n", 2)[1]
     fm = yaml.safe_load(fm_block)
-    assert fm["name"] == "Claims Triage Bot"
-    assert fm["description"].startswith("Triages insurance claims")
+    assert fm["name"] == "Synthetic Review Bot"
+    assert fm["description"].startswith("Reviews synthetic documents")
     assert fm["curated"] is True
-    assert "Triage claim 12345" in fm["sampleQuestions"]
+    assert "Review synthetic document 12345" in fm["sampleQuestions"]
     # Instructions become the body
-    assert "claims triage assistant" in text.split("---\n", 2)[2]
+    assert "synthetic document assistant" in text.split("---\n", 2)[2]
 
 
 def test_import_preserves_localized_persona_metadata(client, tmp_path):
     manifest = _manifest(
         localizations={
             "en": {
-                "displayName": "Claims Triage Bot",
-                "description": "Triages insurance claims.",
-                "sampleQuestions": ["Triage claim 12345"],
+                "displayName": "Synthetic Review Bot",
+                "description": "Reviews synthetic documents.",
+                "sampleQuestions": ["Review synthetic document 12345"],
             },
             "nl": {
-                "displayName": "Schadebeoordelaar",
-                "description": "Beoordeelt verzekeringsclaims.",
-                "sampleQuestions": ["Beoordeel claim 12345"],
+                "displayName": "Documentbeoordelaar",
+                "description": "Beoordeelt synthetische documenten.",
+                "sampleQuestions": ["Beoordeel synthetisch document 12345"],
             },
         }
     )
     response = client.post("/api/use-cases/import", json={"manifest": manifest})
     assert response.status_code == 201, response.text
 
-    text = (tmp_path / "use-cases" / "claims-triage-bot" / "SYSTEM_PROMPT.md").read_text()
+    text = (tmp_path / "use-cases" / "synthetic-review-bot" / "SYSTEM_PROMPT.md").read_text()
     frontmatter = yaml.safe_load(text.split("---\n", 2)[1])
-    assert frontmatter["localizations"]["nl"]["displayName"] == "Schadebeoordelaar"
-    assert frontmatter["localizations"]["en"]["sampleQuestions"] == ["Triage claim 12345"]
+    assert frontmatter["localizations"]["nl"]["displayName"] == "Documentbeoordelaar"
+    assert frontmatter["localizations"]["en"]["sampleQuestions"] == ["Review synthetic document 12345"]
 
 
 def test_apm_and_mcp_mapping(client, tmp_path):
     client.post("/api/use-cases/import", json={"manifest": _manifest()})
-    uc_dir = tmp_path / "use-cases" / "claims-triage-bot"
+    uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
 
     apm = yaml.safe_load((uc_dir / "apm.yml").read_text())
-    assert apm["name"] == "kratos-claims-triage-bot"
-    assert apm["dependencies"]["apm"] == ["acme/skills/skills/fraud-check"]
+    assert apm["name"] == "kratos-synthetic-review-bot"
+    assert apm["dependencies"]["apm"] == ["acme/skills/skills/evidence-check"]
     assert apm["dependencies"]["mcp"][0]["name"] == "microsoft-learn"
     assert apm["metadata"]["kratos"]["traits"] == ["analysis", "validation"]
     assert apm["metadata"]["kratos"]["workflow_model"] == "agent"
@@ -131,7 +135,7 @@ def test_url_less_mcp_server_skipped_in_mcp_json(client, tmp_path):
     )
     resp = client.post("/api/use-cases/import", json={"manifest": manifest})
     assert resp.status_code == 201, resp.text
-    uc_dir = tmp_path / "use-cases" / "claims-triage-bot"
+    uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
 
     mcp = json.loads((uc_dir / ".mcp.json").read_text())
     assert "tools" not in mcp  # url-less → skipped, no broken entry
@@ -146,9 +150,9 @@ def test_url_less_mcp_server_skipped_in_mcp_json(client, tmp_path):
 def test_import_dedupes_slug(client):
     first = client.post("/api/use-cases/import", json={"manifest": _manifest()})
     second = client.post("/api/use-cases/import", json={"manifest": _manifest()})
-    assert first.json()["name"] == "claims-triage-bot"
+    assert first.json()["name"] == "synthetic-review-bot"
     assert second.status_code == 201
-    assert second.json()["name"] == "claims-triage-bot-2"
+    assert second.json()["name"] == "synthetic-review-bot-2"
 
 
 def test_import_overwrite_replaces(client):
@@ -158,7 +162,7 @@ def test_import_overwrite_replaces(client):
         json={"manifest": _manifest(description="updated"), "overwrite": True},
     )
     assert resp.status_code == 201
-    assert resp.json()["name"] == "claims-triage-bot"
+    assert resp.json()["name"] == "synthetic-review-bot"
     assert resp.json()["created"] is False
 
 

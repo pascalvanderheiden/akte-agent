@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.auth import require_authenticated_user
+from app.personas import require_available
 from app.services.project_exporter import ProjectExporter
 from app.services.skill_registry import SkillRegistry
 
@@ -47,20 +48,18 @@ async def export_use_case(
     The returned file contains everything required to run the persona as
     a standalone hosted agent in someone else's Azure subscription via
     ``azd up``: a structural clone of Kratos's ``src/hosted-agent/`` and
-    ``src/backend/app/``, only the chosen ``use-cases/<name>/``, the full
-    ``mocks/`` workspace, and a trimmed ``infra/`` Bicep subset that
+    ``src/backend/app/``, only the chosen ``use-cases/<name>/``, a trimmed ``infra/`` Bicep subset that
     drops the multi-tenant frontend + APIM modules.
     """
     if not _USE_CASE_NAME_RE.match(use_case):
         raise HTTPException(status_code=400, detail="Invalid use-case name")
 
     registries: dict[str, SkillRegistry] = request.app.state.registries
-    if use_case not in registries:
-        raise HTTPException(status_code=404, detail=f"Use-case '{use_case}' not found")
+    require_available(use_case, registries)
 
     blob_service = getattr(request.app.state, "blob_skill_service", None)
     # Resolve the Kratos repo root — we need it to find src/hosted-agent/,
-    # src/backend/app/, mocks/, and infra/ at export time. Prefer the
+    # src/backend/app/, and infra/ at export time. Prefer the
     # parent of blob_service.local_base_dir (which is ``<repo>/use-cases/``);
     # fall back to cwd so tests don't need to wire up Blob.
     if blob_service is not None and getattr(blob_service, "local_base_dir", None):

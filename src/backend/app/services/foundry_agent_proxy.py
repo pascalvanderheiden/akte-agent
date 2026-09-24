@@ -274,6 +274,11 @@ class FoundryAgentProxy:
             {"event": "done", "data": {...}}
             {"event": "error", "data": {...}}
         """
+        from app.personas import RETIRED_PERSONAS
+
+        if use_case in RETIRED_PERSONAS:
+            yield {"event": "error", "data": {"message": "This persona is unavailable", "code": "PERSONA_UNAVAILABLE"}}
+            return
         # Prepend use-case metadata and system prompt so the hosted agent
         # can route to the correct skills even if the Invocations gateway
         # strips custom JSON fields like "useCase" from the payload.
@@ -366,7 +371,10 @@ class FoundryAgentProxy:
                             continue
                         yield {
                             "event": "error",
-                            "data": {"message": f"Hosted agent error: HTTP {resp.status}", "code": "PROXY_ERROR"},
+                            "data": {
+                                "message": f"Hosted agent error: HTTP {resp.status}",
+                                "code": "PERSONA_UNAVAILABLE" if resp.status == 410 else "PROXY_ERROR",
+                            },
                         }
                         return
 

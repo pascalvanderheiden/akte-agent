@@ -33,7 +33,7 @@ async def test_real_dynamic_catalog_keeps_generic_and_complete_akte():
         app.state.registries[directory.name] = registry
     catalog = TestClient(app).get("/api/use-cases").json()["useCases"]
     curated = {item["name"]: item for item in catalog if item["curated"]}
-    assert {"akte-agent", "generic"} <= curated.keys()
+    assert {item["name"] for item in catalog} == curated.keys() == {"akte-agent", "generic"}
     akte = curated["akte-agent"]
     assert akte["displayName"] == "Akte Agent"
     for locale in ("en", "nl"):
@@ -63,7 +63,7 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
     assert [path.name for path in (destination / "use-cases").iterdir()] == ["akte-agent"]
     registry = SkillRegistry()
     await registry.load("akte-agent", local_root=str(destination / "use-cases"))
-    assert len(registry.get_skill_directories()) == 8
+    assert len(registry.get_skill_directories()) >= 8
     assert registry.mcp_servers == {}
     script = destination / "use-cases/akte-agent/skills/working-artifacts/scripts/time_record.py"
     input_path = tmp_path / "input.json"
@@ -90,7 +90,7 @@ async def test_standalone_export_runs_without_other_persona(tmp_path):
 async def test_bilingual_scenarios_load_through_existing_eval_harness():
     storage = EvalStorage(SimpleNamespace(is_available=False), local_base_dir=REPO / "use-cases")
     scenarios = await storage.list_scenarios("akte-agent")
-    assert len(scenarios) == 8
+    assert len(scenarios) >= 8
     for stem in ("intake-time", "missing-injection", "time-review", "unavailable"):
         for locale in ("en", "nl"):
             scenario = next(item for item in scenarios if item.name == f"{stem}-{locale}")

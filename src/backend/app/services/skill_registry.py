@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from app.personas import require_not_retired
+
 if TYPE_CHECKING:
     from app.services.apm_service import ApmService
     from app.services.blob_skill_service import BlobSkillService
@@ -110,6 +112,7 @@ class SkillRegistry:
         directories (if any) are merged in via ``_load_apm_skills``.
         Local/blob skills win on name collisions.
         """
+        require_not_retired(use_case)
         self.use_case = use_case
         self._blob_service = blob_service
         self.mcp_sources = {}
@@ -158,6 +161,7 @@ class SkillRegistry:
 
     async def _load_from_local(self, use_case: str, local_root: str = "use-cases") -> None:
         """Load a use-case from the baked-in use-cases/ directory (local dev fallback)."""
+        require_not_retired(use_case)
         uc_dir = Path(local_root) / use_case
         if not uc_dir.exists():
             logger.warning("No local use-case directory found: %s", uc_dir)

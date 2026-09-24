@@ -1,5 +1,5 @@
 # Root .dockerignore — both agent-service and hosted-agent build with context: ../.. (repo root)
-# Dockerfiles only COPY: mocks/, src/backend/, src/hosted-agent/, use-cases/
+# Dockerfiles only COPY: src/backend/, src/hosted-agent/, use-cases/
 # Keep the build context small to avoid huge transfers and "no space left on device".
 
 # Virtual environments (src/backend/.venv ~536MB)
@@ -7,7 +7,7 @@
 **/venv
 **/.virtualenv
 
-# Node modules (src/frontend ~347MB, mocks build output is reinstalled in image)
+# Node modules (dependencies are reinstalled in image)
 **/node_modules
 
 # Python caches / build artifacts
@@ -25,7 +25,7 @@
 src/frontend/
 
 # Docs site, scripts not needed at build context root.
-# NOTE: infra/ and mocks/ are NOT excluded — the backend's project-exporter
+# NOTE: infra/ is NOT excluded — the backend's project-exporter
 # service reads them at request time to assemble Foundry Hosted Agent ZIPs.
 docs/
 scripts/

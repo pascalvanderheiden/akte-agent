@@ -20,7 +20,6 @@ ${slug}-agent/
 │   │   └── pyproject.toml
 │   └── backend/app/          # Kratos backend modules (CopilotAgent, SkillRegistry…)
 ├── use-cases/${use_case}/    # ONLY the chosen persona
-├── mocks/                    # Bundled stdio MCP mock servers
 └── infra/                    # Bicep — AI Foundry + Cosmos + Blob + KV + ACR
     ├── main.bicep
     ├── main.parameters.json
@@ -108,7 +107,6 @@ in `.env` and `az login` — `DefaultAzureCredential` does the rest.
 | `src/hosted-agent/main.py`        | Single-tenant entry point (`InvocationAgentServerHost` on port 8088) |
 | `src/backend/app/services/`       | `CopilotAgent`, `SkillRegistry`, `CosmosService`, `ApmService`, …    |
 | `use-cases/${use_case}/`          | The persona: `SYSTEM_PROMPT.md`, `skills/`, `.mcp.json`, `apm.yml`    |
-| `mocks/packages/`                 | npm-installed stdio MCP mock servers                                  |
 | `infra/main.bicep`                | Trimmed Kratos infra — drops Container App backend, APIM, Static Web |
 
 ## Customizing the persona

@@ -37,13 +37,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-# Folder where PDFs to ingest are located — override via env var
-# Default resolves to <repo-root>/use-cases/insurance/sample-data
-# CHANGE the folder name to ingest sample-data accordingly
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-PDF_INGEST_FOLDER = os.environ.get(
-    "PDF_INGEST_FOLDER", str(_REPO_ROOT / "use-cases" / "wealth-management" / "sample-data")
-)
+# Ingestion is opt-in; never ingest a bundled persona's data implicitly.
+PDF_INGEST_FOLDER = os.environ.get("PDF_INGEST_FOLDER", "")
 
 # Embedding model deployment name on Foundry/OpenAI (set to empty to skip vectors)
 EMBEDDING_DEPLOYMENT = os.environ.get("EMBEDDING_DEPLOYMENT", "text-embedding-ada-002")
@@ -260,7 +255,10 @@ def ingest_pdfs(index_name: str, pdf_folder: str | None = None) -> dict:
     if not index_name or not index_name.strip():
         return {"status": "error", "message": "index_name is required"}
 
-    folder = Path(pdf_folder) if pdf_folder else Path(PDF_INGEST_FOLDER)
+    source = pdf_folder or PDF_INGEST_FOLDER
+    if not source:
+        return {"status": "error", "message": "Set PDF_INGEST_FOLDER or supply --folder"}
+    folder = Path(source)
     if not folder.exists():
         return {"status": "error", "message": f"PDF folder does not exist: {folder}"}
 

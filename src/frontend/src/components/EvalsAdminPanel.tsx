@@ -22,14 +22,6 @@ const FOUNDRY_PORTAL_URL =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_FOUNDRY_PORTAL_URL) ||
   "https://ai.azure.com";
 
-const PERSONA_LABELS: Record<string, string> = {
-  generic: "Generalist",
-  insurance: "Insurance Claim Specialist",
-  "retail-banking": "Retail Banking Advisor",
-  "wealth-management": "Wealth Management Advisor",
-  "sales-account-review": "Sales Account Reviewer",
-};
-
 const categoryColors: Record<string, string> = {
   standard: "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/20",
   edge_case: "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20",
@@ -722,7 +714,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
   const foundryUrl = latestRun?.foundry?.report_url || FOUNDRY_PORTAL_URL;
   const rollup = latestRun ? rollupRun(latestRun) : null;
-  const personaLabel = PERSONA_LABELS[useCase] ?? useCase;
+  const personaLabel = useCase;
 
   return (
     <div className="max-w-4xl space-y-6">

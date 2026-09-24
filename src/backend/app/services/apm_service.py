@@ -160,6 +160,9 @@ class ApmService:
 
     def _use_case_dir(self, use_case: str) -> Path:
         """Return absolute path to the use-case working dir, raising if missing."""
+        from app.personas import require_not_retired
+
+        require_not_retired(use_case)
         path = (Path(self.settings.apm_use_cases_root) / use_case).resolve()
         if not path.is_dir():
             raise ApmError(f"Use case '{use_case}' not found at {path}")

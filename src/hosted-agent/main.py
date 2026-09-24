@@ -48,6 +48,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 from app.config import Settings, get_settings
 from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
 from app.locale import Locale
+from app.personas import PersonaUnavailable, RETIRED_PERSONAS, require_not_retired
 from app.models import (
     ContentEvent,
     DoneEvent,
@@ -84,7 +85,7 @@ _registries: dict[str, SkillRegistry] = {}
 _settings: Settings | None = None
 
 # Lazy per-use-case loading. A pre-warmed sandbox is unclaimed, so at warm time
-# we don't yet know which use-case it will serve — loading all 9 use-cases up
+# we don't yet know which use-case it will serve — loading all use-cases up
 # front (each does a serial blob sync + skill parse + ``apm install``) is the
 # dominant cold-start cost. Instead we warm only the shared core (Cosmos, blob,
 # Copilot agent) and load a single use-case's skills the first time it is
@@ -108,7 +109,7 @@ async def _startup() -> None:
     Only use-case-agnostic services are initialised here (telemetry, Cosmos,
     blob, the Copilot SDK agent). Individual use-case skill registries are
     loaded lazily by :func:`_ensure_registry` on first use, so a pre-warmed
-    sandbox becomes ready without paying to load all 9 use-cases up front.
+    sandbox becomes ready without paying to load all use-cases up front.
     """
     global _copilot_agent, _cosmos_service, _blob_service, _apm_service, _settings
     global _startup_total_ms, _startup_phases
@@ -183,6 +184,7 @@ async def _ensure_registry(use_case: str) -> None:
     repeat requests for the same use-case load it only once. Falls back to the
     baked-in local ``use-cases/`` directory when blob is unavailable.
     """
+    require_not_retired(use_case)
     if use_case in _registries:
         return
 
@@ -232,8 +234,10 @@ async def _ensure_registry(use_case: str) -> None:
                 registry = candidate
             except Exception:
                 logger.exception("Failed to lazy-load use-case '%s' from local disk", use_case)
-                return
+                raise
 
+        if not registry.system_prompt:
+            raise PersonaUnavailable(status_code=404)
         _registries[use_case] = registry
         logger.info(
             "Lazy-loaded use-case '%s' (%d skills, prompt=%s) in %.0fms",
@@ -462,7 +466,7 @@ async def handle_invoke(request: Request) -> Response:
                 "ready": _copilot_agent is not None,
                 "startup_ms": _startup_total_ms,
                 "phases": _startup_phases,
-                "loaded_use_cases": list(_registries.keys()),
+                "loaded_use_cases": sorted(set(_registries) - RETIRED_PERSONAS),
             },
         )
 
@@ -564,8 +568,16 @@ async def handle_invoke(request: Request) -> Response:
     # Lazy-load this conversation's use-case (cached after first use). A
     # pre-warmed sandbox warms only the shared core, so the first real request
     # for a given use-case pays a small one-time load instead of every sandbox
-    # loading all 9 use-cases up front.
-    await _ensure_registry(use_case)
+    # loading all use-cases up front.
+    try:
+        require_not_retired(use_case)
+        if _cosmos_service is not None:
+            existing = await _cosmos_service.get_conversation(conversation_id, "default-user")
+            if existing:
+                require_not_retired(existing.useCase)
+        await _ensure_registry(use_case)
+    except PersonaUnavailable as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return StreamingResponse(
         _stream_response(

@@ -4,13 +4,11 @@ Each function here corresponds to one skill in skills.yaml.
 The SDK calls these when the agent decides to invoke a skill.
 """
 
-import json
 import logging
 import os
 import subprocess
 import time
 from contextvars import ContextVar
-from pathlib import Path
 
 import httpx
 from azure.identity.aio import DefaultAzureCredential
@@ -156,7 +154,7 @@ class RAGSearchParams(BaseModel):
     query: str = Field(description="The query to search in the knowledge base")
     index_name: str = Field(
         default="",
-        description="The Azure AI Search index name to query. Each use case has its own index (e.g. 'wm-knowledge-base' for wealth management, 'ins-knowledge-base' for insurance).",
+        description="The configured Azure AI Search index name to query.",
     )
     top: int = Field(default=5, description="Number of results to return")
 
@@ -172,7 +170,7 @@ async def rag_search(params: RAGSearchParams) -> dict:
 
         index_name = params.index_name.strip() if params.index_name else os.environ.get("AI_SEARCH_INDEX", "")
         if not index_name:
-            return {"error": "index_name must be provided (e.g. 'wm-knowledge-base')"}
+            return {"error": "Provide index_name or configure AI_SEARCH_INDEX"}
         credential = _get_credential()
         async with SearchClient(
             endpoint=ai_search_endpoint,
@@ -260,284 +258,10 @@ async def foundry_agent(params: FoundryAgentParams) -> dict:
         return response.json()
 
 
-# ─── CRM — Client Relationship Management ────────────────────────────────────
-
-# Lazy-loaded CRM data
-_wealth_crm_clients: list[dict] | None = None
-_insurance_crm_clients: list[dict] | None = None
-
-
-def _load_crm_json(relative_path: str) -> list[dict]:
-    """Load CRM data from JSON, searching workspace-relative and repo-root paths."""
-    candidates = [
-        Path(relative_path),
-        Path(__file__).resolve().parent.parent.parent.parent / relative_path,
-    ]
-    for path in candidates:
-        if path.exists():
-            clients = json.loads(path.read_text(encoding="utf-8"))
-            logger.info("CRM data loaded from %s (%d clients)", path, len(clients))
-            return clients
-
-    logger.warning("CRM data file not found in any candidate path: %s", [str(path) for path in candidates])
-    return []
-
-
-def _load_wealth_crm_clients() -> list[dict]:
-    """Load wealth-management CRM client data."""
-    global _wealth_crm_clients
-    if _wealth_crm_clients is None:
-        _wealth_crm_clients = _load_crm_json("use-cases/wealth-management/skills/crm/data/customer-banking.json")
-    return _wealth_crm_clients
-
-
-def _load_insurance_crm_clients() -> list[dict]:
-    """Load insurance CRM customer data."""
-    global _insurance_crm_clients
-    if _insurance_crm_clients is None:
-        _insurance_crm_clients = _load_crm_json("use-cases/insurance/skills/crm/data/customer-insurance.json")
-    return _insurance_crm_clients
-
-
-def _sanitize_crm_client(client: dict) -> dict:
-    """Return client dict with portfolio summary (without full positions list)."""
-    result = {}
-    for key in (
-        "clientID",
-        "status",
-        "fullName",
-        "firstName",
-        "lastName",
-        "dateOfBirth",
-        "nationality",
-        "contactDetails",
-        "address",
-        "financialInformation",
-        "investmentProfile",
-        "pep_status",
-        "documents_provided",
-        "name_screening_result",
-    ):
-        if key in client:
-            result[key] = client[key]
-    if "portfolio" in client:
-        p = client["portfolio"]
-        result["portfolio"] = {
-            "strategy": p.get("strategy", ""),
-            "riskProfile": p.get("riskProfile", ""),
-            "performanceYTD": p.get("performanceYTD", ""),
-            "performanceSinceInception": p.get("performanceSinceInception", ""),
-            "inceptionDate": p.get("inceptionDate", ""),
-            "positionCount": len(p.get("positions", [])),
-        }
-    return result
-
-
-def _sanitize_insurance_client(client: dict) -> dict:
-    """Return insurance customer dict with a compact policy summary."""
-    result = {}
-    for key in (
-        "id",
-        "clientID",
-        "fullName",
-        "firstName",
-        "lastName",
-        "dateOfBirth",
-        "nationality",
-        "contactDetails",
-        "address",
-    ):
-        if key in client:
-            result[key] = client[key]
-
-    policies = client.get("policies", [])
-    result["policySummary"] = {
-        "policyCount": len(policies),
-        "activePolicyCount": sum(1 for policy in policies if str(policy.get("PolicyStatus", "")).lower() == "active"),
-        "policies": [
-            {
-                "PolicyNo": policy.get("PolicyNo", ""),
-                "ProductType": policy.get("ProductType", ""),
-                "PolicyStatus": policy.get("PolicyStatus", ""),
-                "EffectiveDate": policy.get("EffectiveDate", ""),
-                "ExpiryDate": policy.get("ExpiryDate", ""),
-            }
-            for policy in policies
-        ],
-    }
-    return result
-
-
-class CRMParams(BaseModel):
-    domain: str = Field(
-        default="wealth-management",
-        description="CRM domain to query: 'wealth-management' or 'insurance'.",
-    )
-    action: str = Field(
-        description=(
-            "Action to perform: "
-            "'search_name' (search client by name), "
-            "'search_id' (lookup client by ID), "
-            "'portfolio' (get full portfolio by client ID), "
-            "'policies' (get full insurance policies by client ID), "
-            "'list' (list all clients)"
-        )
-    )
-    query: str = Field(
-        default="",
-        description="Client full name for search_name, or client ID for search_id/portfolio/policies. Leave empty for list.",
-    )
-
-
-@define_tool(
-    description="Search and retrieve wealth-management or insurance customer profiles and holdings from the CRM system"
-)
-async def crm(params: CRMParams) -> dict:
-    """CRM lookup for wealth-management clients or insurance customers."""
-    with tracer.start_as_current_span("skill.crm") as span:
-        _set_kratos_attrs(span)
-        domain = params.domain.strip().lower()
-        action = params.action.strip().lower()
-        query = params.query.strip()
-
-        if domain in {"wealth", "wealth-management", "wealth_management", "wm"}:
-            clients = _load_wealth_crm_clients()
-            if action == "list":
-                summaries = [
-                    {
-                        "clientID": client.get("clientID"),
-                        "fullName": client.get("fullName"),
-                        "status": client.get("status"),
-                        "riskProfile": client.get("investmentProfile", {}).get("riskProfile", ""),
-                    }
-                    for client in clients
-                ]
-                return {
-                    "status": "success",
-                    "domain": "wealth-management",
-                    "count": len(summaries),
-                    "clients": summaries,
-                }
-
-            if action == "search_name":
-                if not query:
-                    return {"status": "error", "message": "query (client name) is required for search_name"}
-                normalized_query = query.lower()
-                matches = [
-                    _sanitize_crm_client(client)
-                    for client in clients
-                    if normalized_query in client.get("fullName", "").lower()
-                    or normalized_query in client.get("firstName", "").lower()
-                    or normalized_query in client.get("lastName", "").lower()
-                ]
-                if not matches:
-                    return {"status": "not_found", "message": f"No clients found matching '{query}'"}
-                return {"status": "success", "domain": "wealth-management", "count": len(matches), "clients": matches}
-
-            if action == "search_id":
-                if not query:
-                    return {"status": "error", "message": "query (client ID) is required for search_id"}
-                for client in clients:
-                    if client.get("clientID") == query or client.get("id") == query:
-                        return {
-                            "status": "success",
-                            "domain": "wealth-management",
-                            "client": _sanitize_crm_client(client),
-                        }
-                return {"status": "not_found", "message": f"No client found with ID '{query}'"}
-
-            if action == "portfolio":
-                if not query:
-                    return {"status": "error", "message": "query (client ID) is required for portfolio"}
-                for client in clients:
-                    if client.get("clientID") == query or client.get("id") == query:
-                        return {
-                            "status": "success",
-                            "domain": "wealth-management",
-                            "clientID": client.get("clientID"),
-                            "fullName": client.get("fullName"),
-                            "portfolio": client.get("portfolio", {}),
-                        }
-                return {"status": "not_found", "message": f"No client found with ID '{query}'"}
-
-            return {
-                "status": "error",
-                "message": f"Unknown action '{action}' for wealth-management. Use: search_name, search_id, portfolio, list",
-            }
-
-        if domain in {"insurance", "ins"}:
-            clients = _load_insurance_crm_clients()
-            if action == "list":
-                summaries = [
-                    {
-                        "clientID": client.get("clientID"),
-                        "fullName": client.get("fullName"),
-                        "activePolicyCount": sum(
-                            1
-                            for policy in client.get("policies", [])
-                            if str(policy.get("PolicyStatus", "")).lower() == "active"
-                        ),
-                    }
-                    for client in clients
-                ]
-                return {"status": "success", "domain": "insurance", "count": len(summaries), "clients": summaries}
-
-            if action == "search_name":
-                if not query:
-                    return {"status": "error", "message": "query (customer name) is required for search_name"}
-                normalized_query = query.lower()
-                matches = [
-                    _sanitize_insurance_client(client)
-                    for client in clients
-                    if normalized_query in client.get("fullName", "").lower()
-                    or normalized_query in client.get("firstName", "").lower()
-                    or normalized_query in client.get("lastName", "").lower()
-                ]
-                if not matches:
-                    return {"status": "not_found", "message": f"No insurance customers found matching '{query}'"}
-                return {"status": "success", "domain": "insurance", "count": len(matches), "clients": matches}
-
-            if action == "search_id":
-                if not query:
-                    return {"status": "error", "message": "query (customer ID) is required for search_id"}
-                for client in clients:
-                    if client.get("clientID") == query or client.get("id") == query:
-                        return {
-                            "status": "success",
-                            "domain": "insurance",
-                            "client": _sanitize_insurance_client(client),
-                        }
-                return {"status": "not_found", "message": f"No insurance customer found with ID '{query}'"}
-
-            if action == "policies":
-                if not query:
-                    return {"status": "error", "message": "query (customer ID) is required for policies"}
-                for client in clients:
-                    if client.get("clientID") == query or client.get("id") == query:
-                        return {
-                            "status": "success",
-                            "domain": "insurance",
-                            "clientID": client.get("clientID"),
-                            "fullName": client.get("fullName"),
-                            "policies": client.get("policies", []),
-                        }
-                return {"status": "not_found", "message": f"No insurance customer found with ID '{query}'"}
-
-            return {
-                "status": "error",
-                "message": f"Unknown action '{action}' for insurance. Use: search_name, search_id, policies, list",
-            }
-
-        return {
-            "status": "error",
-            "message": f"Unknown CRM domain '{params.domain}'. Use: wealth-management or insurance",
-        }
-
-
 # ─── Tool registry ────────────────────────────────────────────────────────────
 
 # All tools to register with every SDK session
-ALL_TOOLS = [web_search, rag_search, code_interpreter, foundry_agent, crm]
+ALL_TOOLS = [web_search, rag_search, code_interpreter, foundry_agent]
 
 # Map from tool function name → tool object (used by CopilotAgent to filter by enabled skills)
 TOOL_MAP = {tool.name: tool for tool in ALL_TOOLS}

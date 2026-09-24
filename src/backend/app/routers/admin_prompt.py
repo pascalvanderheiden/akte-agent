@@ -23,6 +23,9 @@ router = APIRouter(dependencies=[Depends(require_authenticated_user)])
 
 def _get_registry(request: Request, use_case: str) -> SkillRegistry:
     """Resolve the SkillRegistry for the given use-case."""
+    from app.personas import require_not_retired
+
+    require_not_retired(use_case)
     registries = getattr(request.app.state, "registries", {})
     registry = registries.get(use_case)
     if registry is None:

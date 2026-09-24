@@ -29,7 +29,7 @@ function prettyToolName(name: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Collapse "Salesforce Salesforce List Open Cases" → "Salesforce List Open Cases".
+/** Collapse "Documents Documents List Files" → "Documents List Files".
  *  The SDK sometimes emits thought labels that include the MCP server name
  *  twice (once from the namespace, once from the tool name). Drop the dupe.
  */
@@ -72,8 +72,8 @@ function stripFillerSuffix(s: string): string {
 
 /** Build a clean human label for a pill.
  *  Examples:
- *    salesforce-salesforce_search_accounts_by_name → "Salesforce · Search Accounts"
- *    salesforce-list_contacts_by_account            → "Salesforce · List Contacts"
+ *    documents-documents_search_files_by_name → "Documents · Search Files"
+ *    documents-list_files                    → "Documents · List Files"
  *    account-briefing                               → "Account Briefing"
  *    report_intent                                  → "Report Intent"
  */
