@@ -160,6 +160,10 @@ output AZURE_KEY_VAULT_URI string = keyVault.outputs.uri
 output AZURE_APP_INSIGHTS_CONNECTION_STRING string = appInsights.outputs.connectionString
 output AZURE_AI_ACCOUNT_NAME string = aiFoundry.outputs.name
 output FOUNDRY_ENDPOINT string = aiFoundry.outputs.endpoint
+output MODEL_DEPLOYMENT_ORCHESTRATOR string = aiFoundry.outputs.orchestratorModelDeployment
+output MODEL_DEPLOYMENT_DEEP_REASONING string = aiFoundry.outputs.deepReasoningModelDeployment
+output MODEL_DEPLOYMENT_FAST string = aiFoundry.outputs.fastModelDeployment
+// Backwards-compatible alias for the orchestrator role.
 output FOUNDRY_MODEL_DEPLOYMENT string = aiFoundry.outputs.modelDeploymentName
 output AZURE_AI_PROJECT_ENDPOINT string = aiFoundry.outputs.projectEndpoint
 // Extension contract drift (per foundry-hosted-agents skill): azure.ai.agents

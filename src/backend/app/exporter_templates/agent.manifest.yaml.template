@@ -24,6 +24,12 @@ template:
   environment_variables:
     # APPLICATIONINSIGHTS_CONNECTION_STRING is auto-injected by the platform.
     # FOUNDRY_PROJECT_ENDPOINT is auto-injected by the platform.
+    - name: MODEL_DEPLOYMENT_ORCHESTRATOR
+      value: $${MODEL_DEPLOYMENT_ORCHESTRATOR}
+    - name: MODEL_DEPLOYMENT_DEEP_REASONING
+      value: $${MODEL_DEPLOYMENT_DEEP_REASONING}
+    - name: MODEL_DEPLOYMENT_FAST
+      value: $${MODEL_DEPLOYMENT_FAST}
     - name: MODEL_DEPLOYMENT_NAME
       value: $${FOUNDRY_MODEL_DEPLOYMENT}
     - name: COSMOS_DB_ENDPOINT

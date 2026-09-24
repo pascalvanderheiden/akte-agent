@@ -91,14 +91,16 @@ After deploy completes:
 The same runtime can be started outside Azure for fast iteration:
 
 ```bash
-cp .env.template .env             # fill in MODEL_DEPLOYMENT_NAME etc.
+cp .env.template .env             # fill in the MODEL_DEPLOYMENT_* role settings
 cd src/hosted-agent
 uv sync --prerelease=allow
 uv run python main.py             # → http://localhost:8088/invocations
 ```
 
-For BYOK Foundry, set `FOUNDRY_PROJECT_ENDPOINT` and `MODEL_DEPLOYMENT_NAME`
-in `.env` and `az login` — `DefaultAzureCredential` does the rest.
+For BYOK Foundry, set `FOUNDRY_PROJECT_ENDPOINT` and the three role settings
+`MODEL_DEPLOYMENT_ORCHESTRATOR`, `MODEL_DEPLOYMENT_DEEP_REASONING`, and
+`MODEL_DEPLOYMENT_FAST` in `.env`, then run `az login`.
+`MODEL_DEPLOYMENT_NAME` remains a legacy alias for the orchestrator role.
 
 ## Project structure
 
