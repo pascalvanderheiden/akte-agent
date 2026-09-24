@@ -57,6 +57,7 @@ export default function Home() {
     [locale, selectedUseCase, useCases],
   );
   const conversationPersona = useCases.find((persona) => persona.name === activeConversation?.useCase);
+  const selectedPersonaAvailable = useCases.some((persona) => persona.name === selectedUseCase);
   const personaUnavailable = !catalogLoading && !catalogFailed &&
     (activeConversation ? !conversationPersona : !activeUseCase);
 
@@ -89,7 +90,7 @@ export default function Home() {
 
   // Fetch skills whenever the selected use-case changes (only after config is loaded)
   useEffect(() => {
-    if (!configReady || catalogLoading || catalogFailed || !activeUseCase) {
+    if (!configReady || catalogLoading || catalogFailed || !selectedPersonaAvailable) {
       setSkills([]);
       return;
     }
@@ -98,7 +99,7 @@ export default function Home() {
       .then((s) => { if (!cancelled) setSkills(s); })
       .catch(() => { if (!cancelled) { setSkills([]); setError("SKILLS_ERROR"); } });
     return () => { cancelled = true; };
-  }, [selectedUseCase, configReady, catalogLoading, catalogFailed, activeUseCase]);
+  }, [selectedUseCase, configReady, catalogLoading, catalogFailed, selectedPersonaAvailable]);
 
   const handleNewConversation = () => {
     // Navigate to the landing page for the current use case
