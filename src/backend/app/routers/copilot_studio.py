@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.config import get_settings
 from app.models import (
     Conversation,
     ConversationStatus,
@@ -21,6 +22,7 @@ from app.models import (
     MessageRole,
 )
 from app.personas import require_available, require_not_retired
+from app.services.model_routing import ModelRouting
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +40,18 @@ async def copilot_studio_chat(
     """
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
+    try:
+        requested_selection = ModelRouting(getattr(request.app.state, "settings", get_settings())).validate_selection(
+            body.selectedModelId or body.modelSelection
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     require_available(body.useCase, request.app.state.registries)
+    conversation = None
     if body.conversationId:
-        existing = await cosmos.get_conversation(body.conversationId, "copilot-studio")
-        if existing:
-            require_not_retired(existing.useCase)
+        conversation = await cosmos.get_conversation(body.conversationId, "copilot-studio")
+        if conversation:
+            require_not_retired(conversation.useCase)
 
     # Resolve or create conversation
     conversation_id = body.conversationId
@@ -53,6 +62,7 @@ async def copilot_studio_chat(
             userId="copilot-studio",
             title=body.message[:80],
             useCase=body.useCase,
+            modelSelection=requested_selection,
             status=ConversationStatus.ACTIVE,
             createdAt=now,
             updatedAt=now,
@@ -79,6 +89,7 @@ async def copilot_studio_chat(
         use_case=body.useCase,
         locale=body.locale,
         agent_session_id=agent_session_id,
+        model_selection=conversation.modelSelection if conversation else requested_selection,
     ):
         event_name = event_dict.get("event")
         event_data = event_dict.get("data", {})

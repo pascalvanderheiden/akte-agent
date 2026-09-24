@@ -25,6 +25,7 @@ from app.routers import (
     files,
     health,
     import_persona,
+    models_catalogue,
     settings,
     traces,
     use_cases,
@@ -35,6 +36,7 @@ from app.services.cosmos_service import CosmosService
 from app.services.eval_service import EvalService
 from app.services.eval_storage import EvalStorage
 from app.services.foundry_agent_proxy import FoundryAgentProxy
+from app.services.model_routing import ModelRouting
 from app.services.skill_registry import SkillRegistry
 from app.services.traces_service import TracesService
 
@@ -109,6 +111,7 @@ async def _keep_warm_loop(proxy: FoundryAgentProxy, interval_s: int) -> None:
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: initialize services on startup, cleanup on shutdown."""
     settings = get_settings()
+    ModelRouting(settings).validate()
 
     # Fail fast if the hosted agent endpoint is not configured
     if not settings.foundry_agent_invocations_endpoint and not settings.foundry_project_endpoint:
@@ -255,6 +258,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(health.router, tags=["health"])
+app.include_router(models_catalogue.router, tags=["models"])
 app.include_router(conversations.router, prefix="/api/conversations", tags=["conversations"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])

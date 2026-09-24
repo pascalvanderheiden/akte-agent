@@ -12,12 +12,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import get_settings
 from app.models import (
     AgentRequest,
     DoneEvent,
@@ -28,6 +29,7 @@ from app.models import (
 )
 from app.personas import require_available, require_not_retired
 from app.services.follow_up_service import generate_follow_ups
+from app.services.model_routing import ModelRouting
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("kratos.agent.proxy")
@@ -90,6 +92,18 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     conversation = await cosmos.get_conversation(body.conversationId, "default-user")
     if conversation:
         require_not_retired(conversation.useCase)
+    request_selection = body.selectedModelId or body.modelSelection
+    requested_selection = request_selection or (conversation.modelSelection if conversation else "auto")
+    try:
+        model_selection = ModelRouting(getattr(request.app.state, "settings", get_settings())).validate_selection(
+            requested_selection
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if conversation and request_selection and conversation.modelSelection != model_selection:
+        conversation.modelSelection = model_selection
+        conversation.updatedAt = datetime.now(UTC)
+        await cosmos.upsert_conversation(conversation)
 
     # Stamp kratos attributes on the current (HTTP) span so every request is
     # filterable by use-case, conversation, and optional eval run.
@@ -146,6 +160,8 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             collected_tool_calls: list[dict] = []
             proxy_done: dict = {}
             gateway_session_id: str | None = None
+            produced_models: set[str] = set()
+            orchestrator_model = ""
 
             # Replay tool/usage events as OTel child spans so the traces tab
             # can render meaningful waterfalls. The hosted Foundry agent emits
@@ -172,6 +188,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 agent_session_id=agent_session_id,
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
+                model_selection=model_selection,
             ):
                 event_name = event_dict.get("event")
                 event_data = event_dict.get("data", {})
@@ -235,6 +252,10 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                     collected_tool_calls.append(event_data)
                     await event_queue.put({"event": "tool_call", "data": json.dumps(event_data)})
                 elif event_name == "usage":
+                    if event_data.get("model"):
+                        produced_models.add(str(event_data["model"]))
+                        if event_data.get("agentName") == "orchestrator":
+                            orchestrator_model = str(event_data["model"])
                     # Replay usage as an LLM span so traces tab shows model + tokens
                     llm_sp = _tracer.start_span(
                         "chat.completions",
@@ -309,6 +330,8 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                     "thoughts": collected_thoughts,
                     "toolCalls": collected_tool_calls,
                     "runStats": run_stats,
+                    "model": orchestrator_model or proxy_done.get("model") or model_selection,
+                    "models": sorted(produced_models),
                 },
                 createdAt=datetime.now(UTC),
             )

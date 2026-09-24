@@ -278,6 +278,9 @@ export function MessageBubble({ message }: Props) {
               {content}
             </ReactMarkdown>
             {content.includes(getDlPrefix()) && <p className="text-xs text-muted">{t("temporaryFiles")}</p>}
+            {message.metadata?.model && (
+              <p className="text-xs text-muted mt-1">{t("usingModel", { model: message.metadata.model })}</p>
+            )}
           </div>
         )}
       </div>
