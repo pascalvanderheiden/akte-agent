@@ -17,6 +17,9 @@ from copilot.tools import define_tool
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
+from app.config import get_settings
+from app.services.model_routing import AuxiliaryTask, ModelRouting
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -80,16 +83,15 @@ async def web_search(params: WebSearchParams) -> dict:
         if not query:
             return {"error": "Missing required search query for web_search"}
 
-        foundry_endpoint = os.environ.get("FOUNDRY_ENDPOINT", "")
-        model_deployment = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "")
-        if not foundry_endpoint or not model_deployment:
-            return {"error": "FOUNDRY_ENDPOINT or FOUNDRY_MODEL_DEPLOYMENT not configured"}
-
-        # Build the Responses API URL from the Foundry endpoint
-        # FOUNDRY_ENDPOINT is like https://<account>.cognitiveservices.azure.com/
-        # We need https://<account>.services.ai.azure.com/openai/responses
-        account_name = foundry_endpoint.rstrip("/").split("//")[1].split(".")[0]
-        responses_url = f"https://{account_name}.services.ai.azure.com/openai/responses?api-version=2025-03-01-preview"
+        routing = ModelRouting(get_settings())
+        if not routing.azure_mode:
+            return {"error": "Azure model routing is not configured for web search"}
+        target = routing.auxiliary_target(AuxiliaryTask.SKILL_HELPER)
+        base = (routing.settings.llm_gateway_base_url or routing.settings.foundry_endpoint).rstrip("/")
+        if not routing.settings.llm_gateway_base_url and ".services.ai.azure.com" not in base:
+            account_name = base.split("//", 1)[-1].split(".", 1)[0]
+            base = f"https://{account_name}.services.ai.azure.com"
+        responses_url = f"{base}/openai/responses?api-version=2025-03-01-preview"
 
         try:
             credential = _get_credential()
@@ -108,7 +110,7 @@ async def web_search(params: WebSearchParams) -> dict:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": model_deployment,
+                    "model": target.deployment,
                     "input": f"Search the web for: {query}. Return only factual search results with sources.",
                     "tools": [{"type": "web_search_preview"}],
                     "tool_choice": {"type": "web_search_preview"},

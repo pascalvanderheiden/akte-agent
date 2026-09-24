@@ -113,6 +113,8 @@ def _build_system_prompt(manifest: PersonaManifest, slug: str) -> str:
             locale: localization.model_dump(exclude_unset=True)
             for locale, localization in manifest.localizations.items()
         }
+    if manifest.routing is not None:
+        frontmatter["routing"] = manifest.routing.model_dump(exclude_none=True)
     fm_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).strip()
     body = manifest.instructions.strip() or f"You are {display}, an enterprise AI assistant."
     return f"---\n{fm_yaml}\n---\n\n{body}\n"

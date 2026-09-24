@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.config import get_settings
 from app.models import (
     Conversation,
     ConversationCreate,
@@ -15,6 +16,7 @@ from app.models import (
     Message,
 )
 from app.personas import require_available, require_not_retired
+from app.services.model_routing import ModelRouting
 from app.services.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,12 @@ def _get_cosmos(request: Request):  # noqa: ANN202
 async def create_conversation(body: ConversationCreate, request: Request) -> Conversation:
     """Create a new conversation."""
     require_not_retired(body.useCase)
+    try:
+        selection = ModelRouting(getattr(request.app.state, "settings", get_settings())).validate_selection(
+            body.selectedModelId or body.modelSelection
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     cosmos = _get_cosmos(request)
 
     # Re-sync the use-case's skills from blob storage so every new conversation
@@ -55,6 +63,7 @@ async def create_conversation(body: ConversationCreate, request: Request) -> Con
         userId="default-user",  # Replaced by Entra ID user in production
         title=body.title,
         useCase=body.useCase,
+        modelSelection=selection,
         status=ConversationStatus.ACTIVE,
         createdAt=now,
         updatedAt=now,
@@ -97,6 +106,14 @@ async def update_conversation(conversation_id: str, body: ConversationUpdate, re
         raise HTTPException(status_code=404, detail="Conversation not found")
     if body.title is not None:
         conversation.title = body.title
+    requested_model = body.modelId or body.selectedModelId or body.modelSelection
+    if requested_model is not None:
+        try:
+            conversation.modelSelection = ModelRouting(
+                getattr(request.app.state, "settings", get_settings())
+            ).validate_selection(requested_model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     conversation.updatedAt = datetime.now(UTC)
     await cosmos.upsert_conversation(conversation)
     return conversation

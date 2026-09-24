@@ -45,6 +45,9 @@ services:
                 # main.py derives FOUNDRY_ENDPOINT from the platform-injected
                 # FOUNDRY_PROJECT_ENDPOINT (strips /api/projects/... suffix).
                 KEY_VAULT_URI: $${AZURE_KEY_VAULT_URI}
+                MODEL_DEPLOYMENT_ORCHESTRATOR: $${MODEL_DEPLOYMENT_ORCHESTRATOR}
+                MODEL_DEPLOYMENT_DEEP_REASONING: $${MODEL_DEPLOYMENT_DEEP_REASONING}
+                MODEL_DEPLOYMENT_FAST: $${MODEL_DEPLOYMENT_FAST}
                 MODEL_DEPLOYMENT_NAME: $${FOUNDRY_MODEL_DEPLOYMENT}
 
 hooks:

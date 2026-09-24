@@ -6,12 +6,13 @@ to suggest sophisticated follow-ups that showcase Kratos's skill set.
 
 import json
 import logging
-import os
 
 import httpx
 from azure.identity.aio import DefaultAzureCredential
 
+from app.config import get_settings
 from app.locale import Locale
+from app.services.model_routing import AuxiliaryTask, ModelRouting
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +63,13 @@ async def generate_follow_ups(
 
     Returns an empty list on any failure (non-blocking, best-effort).
     """
-    foundry_endpoint = os.environ.get("FOUNDRY_ENDPOINT", "")
-    model_deployment = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "")
-    if not foundry_endpoint or not model_deployment:
+    routing = ModelRouting(get_settings())
+    if not routing.azure_mode:
         return []
-
-    account_name = foundry_endpoint.rstrip("/").split("//")[1].split(".")[0]
-    chat_url = (
-        f"https://{account_name}.services.ai.azure.com/openai/deployments/"
-        f"{model_deployment}/chat/completions?api-version=2024-12-01-preview"
-    )
+    try:
+        chat_url = routing.auxiliary_chat_url(AuxiliaryTask.FOLLOW_UP)
+    except RuntimeError:
+        return []
 
     # Build a concise user prompt
     skills_hint = ""

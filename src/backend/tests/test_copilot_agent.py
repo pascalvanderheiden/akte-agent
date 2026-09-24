@@ -14,6 +14,8 @@ def settings():
     return Settings(
         foundry_endpoint="https://test.services.ai.azure.com",
         foundry_model_deployment="gpt-52",
+        model_deployment_deep_reasoning="gpt-6-sol",
+        model_deployment_fast="gpt-6-luna",
     )
 
 
@@ -263,3 +265,34 @@ async def test_copilot_agent_exception_drops_session(copilot_agent):
         assert events[0].code == "AGENT_ERROR"
         # Session should be dropped
         assert "conv-fail" not in copilot_agent._sessions
+
+
+@pytest.mark.asyncio
+async def test_subagent_events_include_name_and_actual_model(copilot_agent):
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session.return_value = mock_session
+
+    def fake_on(callback):
+        for event_type in ("subagent.started", "subagent.completed"):
+            event = MagicMock()
+            event.type.value = event_type
+            event.data.agent_name = "deep-reasoning-analyst"
+            event.data.model = "gpt-6-sol"
+            event.data.tool_call_id = "subagent-call"
+            callback(event)
+        idle = MagicMock()
+        idle.type.value = "session.idle"
+        callback(idle)
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+    copilot_agent._client = mock_client
+
+    events = [event async for event in copilot_agent.run("analyze", "conversation")]
+
+    thoughts = [event for event in events if isinstance(event, ThoughtEvent)]
+    tools = [event for event in events if isinstance(event, ToolCallEvent)]
+    assert [event.status for event in thoughts] == ["started", "completed"]
+    assert all(event.agentName == "deep-reasoning-analyst" for event in thoughts)
+    assert all(event.model == "gpt-6-sol" for event in (*thoughts, *tools))

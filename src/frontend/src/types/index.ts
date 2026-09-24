@@ -2,6 +2,7 @@ export interface Conversation {
   id: string;
   title: string;
   useCase: string;
+  modelSelection: string;
   status: "active" | "archived";
   createdAt: string;
   updatedAt: string;
@@ -15,6 +16,7 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[];
   thoughts?: string[];
   metadata?: {
+    model?: string;
     thoughts?: string[];
     toolCalls?: ToolCallInfo[];
     runStats?: RunStats;
@@ -392,4 +394,20 @@ export interface TraceSummary {
 export interface TraceList {
   operations: TraceOperation[];
   summary: TraceSummary;
+}
+
+// ─── Models ───
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+  displayName: string;
+  description?: string;
+  enabled: boolean;
+}
+
+export interface ModelCatalogue {
+  models: ModelInfo[];
+  selectedModelId?: string;
 }

@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -148,6 +149,10 @@ def test_assemble_renders_agent_yaml_with_persona(exporter: ProjectExporter, tmp
     manifest = (out / "src" / "hosted-agent" / "agent.manifest.yaml").read_text()
     assert "name: synthetic-review" in manifest
     assert "Synthetic Review Assistant" in manifest
+    for role in ("ORCHESTRATOR", "DEEP_REASONING", "FAST"):
+        setting = f"MODEL_DEPLOYMENT_{role}"
+        assert setting in agent_yaml
+        assert setting in manifest
 
 
 def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_path: Path):
@@ -162,6 +167,8 @@ def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_pa
     assert "language: docker" in azure_yaml
     assert "context: ../.." in azure_yaml
     assert "azure.ai.agents:" in azure_yaml  # required extension
+    for role in ("ORCHESTRATOR", "DEEP_REASONING", "FAST"):
+        assert f"MODEL_DEPLOYMENT_{role}:" in azure_yaml
 
 
 def test_assemble_copies_backend_app_recursively(exporter: ProjectExporter, tmp_path: Path):
@@ -246,6 +253,58 @@ def test_assemble_writes_trimmed_infra(exporter: ProjectExporter, tmp_path: Path
     role_bicep = (out / "infra" / "modules" / "role-assignments.bicep").read_text()
     assert "param agentServicePrincipalId" not in role_bicep
     assert "param aiServicesPrincipalId" in role_bicep
+
+
+def test_assemble_compiles_three_serial_role_deployments(exporter: ProjectExporter, tmp_path: Path):
+    out = tmp_path / "out"
+    out.mkdir()
+    exporter.assemble("synthetic-review", out)
+
+    compiled = json.loads(
+        subprocess.check_output(
+            ["az", "bicep", "build", "--file", str(out / "infra" / "main.bicep"), "--stdout"],
+            text=True,
+        )
+    )
+    for role in ("ORCHESTRATOR", "DEEP_REASONING", "FAST"):
+        assert f"MODEL_DEPLOYMENT_{role}" in compiled["outputs"]
+
+    ai_module = json.loads(
+        subprocess.check_output(
+            [
+                "az",
+                "bicep",
+                "build",
+                "--file",
+                str(out / "infra" / "modules" / "ai-services.bicep"),
+                "--stdout",
+            ],
+            text=True,
+        )
+    )
+    deployments = [
+        resource
+        for resource in ai_module["resources"]
+        if resource["type"] == "Microsoft.CognitiveServices/accounts/deployments"
+    ]
+    assert len(deployments) == 3
+    rendered = json.dumps(compiled) + json.dumps(ai_module)
+    assert "gpt-4o-mini" not in rendered
+    assert "gpt-54" not in rendered
+    assert "gpt-5.4" not in rendered
+
+
+def test_assemble_env_template_documents_roles_and_legacy_alias(exporter: ProjectExporter, tmp_path: Path):
+    out = tmp_path / "out"
+    out.mkdir()
+    exporter.assemble("synthetic-review", out)
+
+    env_template = (out / ".env.template").read_text()
+    assert "MODEL_DEPLOYMENT_ORCHESTRATOR=gpt-6-luna" in env_template
+    assert "MODEL_DEPLOYMENT_DEEP_REASONING=gpt-6-sol" in env_template
+    assert "MODEL_DEPLOYMENT_FAST=gpt-6-astra" in env_template
+    assert "MODEL_DEPLOYMENT_NAME=gpt-6-luna" in env_template
+    assert "gpt-4o-mini" not in env_template
 
 
 def test_assemble_writes_root_files(exporter: ProjectExporter, tmp_path: Path):

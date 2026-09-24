@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     foundry_endpoint: str = ""
     foundry_model_deployment: str = ""
     foundry_project_name: str = ""
+    # Model routing roles. The legacy FOUNDRY_MODEL_DEPLOYMENT remains an
+    # orchestrator alias; explicit role settings take precedence.
+    model_deployment_orchestrator: str = ""
+    model_deployment_deep_reasoning: str = ""
+    model_deployment_fast: str = ""
 
     # Optional: route the LLM (chat completions) calls through the APIM AI gateway
     # instead of straight to the AI Services account. When set, the Copilot SDK

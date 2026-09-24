@@ -31,6 +31,15 @@ param foundryEndpoint string
 @description('Foundry model deployment name')
 param foundryModelDeployment string
 
+@description('Orchestrator model deployment name')
+param orchestratorModelDeployment string
+
+@description('Deep-reasoning model deployment name')
+param deepReasoningModelDeployment string
+
+@description('Fast model deployment name')
+param fastModelDeployment string
+
 @description('Bing Search endpoint')
 param bingSearchEndpoint string
 
@@ -127,6 +136,9 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'COSMOS_DB_ENDPOINT', value: cosmosDbEndpoint }
             { name: 'KEY_VAULT_URI', value: keyVaultUri }
             { name: 'FOUNDRY_ENDPOINT', value: foundryEndpoint }
+            { name: 'MODEL_DEPLOYMENT_ORCHESTRATOR', value: orchestratorModelDeployment }
+            { name: 'MODEL_DEPLOYMENT_DEEP_REASONING', value: deepReasoningModelDeployment }
+            { name: 'MODEL_DEPLOYMENT_FAST', value: fastModelDeployment }
             { name: 'FOUNDRY_MODEL_DEPLOYMENT', value: foundryModelDeployment }
             { name: 'FOUNDRY_PROJECT_NAME', value: foundryProjectName }
             { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }

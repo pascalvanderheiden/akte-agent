@@ -45,10 +45,11 @@ if "FOUNDRY_ENDPOINT" not in os.environ:
 # Add the backend app to the Python path so we can reuse all existing modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
+from datetime import UTC
+
 from app.config import Settings, get_settings
 from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
 from app.locale import Locale
-from app.personas import PersonaUnavailable, RETIRED_PERSONAS, require_not_retired
 from app.models import (
     ContentEvent,
     DoneEvent,
@@ -59,6 +60,7 @@ from app.models import (
     UserInputRequestEvent,
 )
 from app.observability import setup_telemetry
+from app.personas import RETIRED_PERSONAS, PersonaUnavailable, require_identified_history, require_not_retired
 from app.services.blob_skill_service import BlobSkillService
 from app.services.copilot_agent import CopilotAgent
 from app.services.cosmos_service import CosmosService
@@ -100,6 +102,7 @@ app = InvocationAgentServerHost()
 
 
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
+
 
 async def _startup() -> None:
     """Initialise the shared core — mirrors the FastAPI lifespan startup.
@@ -207,7 +210,9 @@ async def _ensure_registry(use_case: str) -> None:
                 if candidate.system_prompt or candidate.skills:
                     registry = candidate
                 else:
-                    logger.warning("Blob load for '%s' returned no skills/prompt — falling back to local disk", use_case)
+                    logger.warning(
+                        "Blob load for '%s' returned no skills/prompt — falling back to local disk", use_case
+                    )
             except Exception:
                 logger.warning("Blob load failed for '%s' — falling back to local disk", use_case, exc_info=True)
 
@@ -282,6 +287,7 @@ async def _stream_response(
     mcp_access_tokens: dict[str, str] | None = None,
     token_source: dict | None = None,
     locale: Locale | None = None,
+    model_selection: str = "auto",
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     start_time = time.monotonic()
@@ -301,7 +307,7 @@ async def _stream_response(
 
     try:
         # Persist user message to Cosmos (non-fatal — agent works without persistence)
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from app.models import Message, MessageRole
 
@@ -310,7 +316,7 @@ async def _stream_response(
             conversationId=conversation_id,
             role=MessageRole.USER,
             content=message,
-            createdAt=datetime.now(timezone.utc),
+            createdAt=datetime.now(UTC),
         )
         try:
             await _cosmos_service.upsert_message(user_message)
@@ -321,11 +327,15 @@ async def _stream_response(
         assistant_content_parts: list[str] = []
         collected_thoughts: list[str] = []
         collected_tool_calls: list[dict] = []
+        produced_models: set[str] = set()
+        orchestrator_model = ""
 
         async for event in _copilot_agent.run(
             message=message,
             conversation_id=conversation_id,
             locale=locale,
+            use_case=use_case,
+            model_selection=model_selection,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -336,6 +346,10 @@ async def _stream_response(
                 collected_tool_calls.append(event.model_dump())
                 yield f"data: {json.dumps({'event': 'tool_call', 'data': event.model_dump()})}\n\n".encode()
             elif isinstance(event, UsageEvent):
+                if event.model:
+                    produced_models.add(event.model)
+                    if event.agentName == "orchestrator":
+                        orchestrator_model = event.model
                 yield f"data: {json.dumps({'event': 'usage', 'data': event.model_dump()})}\n\n".encode()
             elif isinstance(event, ContentEvent):
                 assistant_content_parts.append(event.content)
@@ -388,8 +402,10 @@ async def _stream_response(
                 "thoughts": collected_thoughts,
                 "toolCalls": collected_tool_calls,
                 "runStats": run_stats,
+                "model": orchestrator_model or model_selection,
+                "models": sorted(produced_models),
             },
-            createdAt=datetime.now(timezone.utc),
+            createdAt=datetime.now(UTC),
         )
         try:
             await _cosmos_service.upsert_message(assistant_message)
@@ -461,6 +477,9 @@ async def handle_invoke(request: Request) -> Response:
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
         use_case = data.get("useCase", "akte-agent")
+        model_selection = data.get("selectedModelId") or data.get("modelSelection", "auto")
+        runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
+        runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
 
         # Per-MCP-server user tokens for On-Behalf-Of (kept out of the message
         # text so they are never visible to the model). Coerce to a clean
@@ -484,7 +503,7 @@ async def handle_invoke(request: Request) -> Response:
                 if use_case == "akte-agent":
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
-                message = message[:uc_match.start()] + message[uc_match.end():]
+                message = message[: uc_match.start()] + message[uc_match.end() :]
 
             # Strip <system_instructions> — the hosted agent sets the system
             # prompt via the registry, so the prepended copy is redundant.
@@ -531,13 +550,17 @@ async def handle_invoke(request: Request) -> Response:
 
             if "conversationId" not in data:
                 conversation_id = unescape(conversation_match.group(1))
-            message = message[conversation_match.end():].strip()
+            message = message[conversation_match.end() :].strip()
         locale, message = extract_invoke_locale(data, message)
         logger.info(
-            "handle_invoke: useCase=%s conversation=%s registries=%s message_len=%d "
-            "mcp_tokens=%s (body=%s tag=%s)",
-            use_case, conversation_id, list(_registries.keys()), len(message),
-            sorted(mcp_access_tokens.keys()), body_token_keys, tag_token_keys,
+            "handle_invoke: useCase=%s conversation=%s registries=%s message_len=%d mcp_tokens=%s (body=%s tag=%s)",
+            use_case,
+            conversation_id,
+            list(_registries.keys()),
+            len(message),
+            sorted(mcp_access_tokens.keys()),
+            body_token_keys,
+            tag_token_keys,
         )
 
     except (json.JSONDecodeError, ValueError) as e:
@@ -555,9 +578,15 @@ async def handle_invoke(request: Request) -> Response:
     # loading all use-cases up front.
     try:
         require_not_retired(use_case)
+        if runtime_foundry_endpoint and (
+            runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
+            or runtime_foundry_deployment != _copilot_agent.settings.foundry_model_deployment
+        ):
+            await _copilot_agent.update_config(runtime_foundry_endpoint, runtime_foundry_deployment)
         if _cosmos_service is not None:
             existing = await _cosmos_service.get_conversation(conversation_id, "default-user")
             if existing:
+                require_identified_history(existing.useCase)
                 require_not_retired(existing.useCase)
         await _ensure_registry(use_case)
     except PersonaUnavailable as exc:
@@ -571,6 +600,7 @@ async def handle_invoke(request: Request) -> Response:
             use_case,
             mcp_access_tokens,
             locale=locale,
+            model_selection=model_selection,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,

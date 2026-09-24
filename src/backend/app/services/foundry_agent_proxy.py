@@ -40,6 +40,7 @@ class FoundryAgentProxy:
     """Invokes the Foundry hosted agent via the Invocations REST API."""
 
     def __init__(self, settings: Settings) -> None:
+        self._settings = settings
         # Build the invocations endpoint URL
         if settings.foundry_agent_invocations_endpoint:
             self._endpoint = settings.foundry_agent_invocations_endpoint
@@ -262,6 +263,7 @@ class FoundryAgentProxy:
         eval_run_id: str | None = None,
         mcp_access_tokens: dict[str, str] | None = None,
         locale: Locale | None = None,
+        model_selection: str = "auto",
     ) -> AsyncGenerator[dict, None]:
         """Invoke the hosted agent and yield event dicts.
 
@@ -316,6 +318,9 @@ class FoundryAgentProxy:
             "input": input_text,
             "conversationId": conversation_id,
             "useCase": use_case,
+            "selectedModelId": model_selection,
+            "foundryEndpoint": self._settings.foundry_endpoint,
+            "foundryModelDeployment": self._settings.foundry_model_deployment,
         }
         if locale:
             payload["locale"] = locale

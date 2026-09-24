@@ -16,7 +16,14 @@ resources:
   cpu: "1"
   memory: 2Gi
 environment_variables:
-  # Model deployment (referenced in CopilotAgent._build_provider_config)
+  # Routing-role deployments. MODEL_DEPLOYMENT_NAME is the legacy
+  # orchestrator alias.
+  - name: MODEL_DEPLOYMENT_ORCHESTRATOR
+    value: $${MODEL_DEPLOYMENT_ORCHESTRATOR}
+  - name: MODEL_DEPLOYMENT_DEEP_REASONING
+    value: $${MODEL_DEPLOYMENT_DEEP_REASONING}
+  - name: MODEL_DEPLOYMENT_FAST
+    value: $${MODEL_DEPLOYMENT_FAST}
   - name: MODEL_DEPLOYMENT_NAME
     value: $${FOUNDRY_MODEL_DEPLOYMENT}
   # AI Services project endpoint (full path with /api/projects/<proj>).
