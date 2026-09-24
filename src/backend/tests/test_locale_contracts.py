@@ -88,8 +88,7 @@ def transport(monkeypatch, tmp_path):
     sdk = SimpleNamespace(create_session=AsyncMock(return_value=session))
     local_root = tmp_path / "use-cases"
     shutil.copytree(Path(__file__).parents[3] / "use-cases/akte-agent", local_root / "akte-agent")
-    shutil.copytree(Path(__file__).parents[3] / "use-cases/generic", local_root / "generic")
-    settings = Settings(local_mode="true", warm_pool_size=0, apm_use_cases_root=str(local_root))
+    settings = Settings(local_mode="true", warm_pool_size=0, persona_assets_root=str(local_root))
     runtime = CopilotAgent(settings)
     runtime._client = sdk
     hosted._copilot_agent = runtime
@@ -145,7 +144,7 @@ def transport(monkeypatch, tmp_path):
     app.include_router(copilot_studio.router, prefix="/api/copilot-studio")
     app.state.cosmos_service = cosmos
     app.state.foundry_proxy = proxy
-    app.state.registries = {name: SimpleNamespace(system_prompt="", skills={}) for name in ("generic", "akte-agent")}
+    app.state.registries = {"akte-agent": SimpleNamespace(system_prompt="", skills={})}
     return SimpleNamespace(
         client=TestClient(app),
         sdk=sdk,
@@ -189,8 +188,92 @@ async def test_hosted_cannot_switch_retired_history_to_generic(transport):
     transport.sdk.create_session.assert_not_called()
 
 
+@pytest.mark.parametrize("route", ["/api/agent/chat", "/api/copilot-studio/chat"])
+@pytest.mark.parametrize("use_case", [None, "akte-agent"])
+def test_unidentified_history_cannot_be_continued(transport, route, use_case):
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(return_value=SimpleNamespace(useCase=""))
+    payload = {"conversationId": "metadata-less-history", "message": "Do not append"}
+    if use_case is not None:
+        payload["useCase"] = use_case
+
+    response = transport.client.post(route, json=payload)
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["code"] == "PERSONA_UNAVAILABLE"
+    assert not transport.captured
+    assert not transport.messages
+    assert not transport.sent
+    transport.sdk.create_session.assert_not_called()
+
+
+def _register_custom_persona(transport):
+    """Add a second available (non-retired) persona for cross-persona binding tests."""
+    transport.client.app.state.registries["synthetic-custom"] = SimpleNamespace(system_prompt="Custom", skills={})
+    transport.hosted._registries["synthetic-custom"] = SkillRegistry(
+        use_case="synthetic-custom", system_prompt="Synthetic custom persona"
+    )
+
+
+@pytest.mark.parametrize("route", ["/api/agent/chat", "/api/copilot-studio/chat"])
+def test_explicit_persona_mismatch_is_rejected_before_writes_or_invocation(transport, route):
+    _register_custom_persona(transport)
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(
+        return_value=SimpleNamespace(useCase="synthetic-custom", modelSelection="auto")
+    )
+
+    response = transport.client.post(
+        route,
+        json={
+            "conversationId": "synthetic-custom-conversation",
+            "message": "Switch me to Akte",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PERSONA_MISMATCH"
+    assert not transport.captured
+    assert not transport.messages
+    assert not transport.sent
+    transport.sdk.create_session.assert_not_called()
+
+
+async def test_hosted_direct_invocation_rejects_explicit_persona_mismatch(transport):
+    _register_custom_persona(transport)
+    transport.hosted._cosmos_service.get_conversation = AsyncMock(
+        return_value=SimpleNamespace(useCase="synthetic-custom", modelSelection="auto")
+    )
+
+    response = await transport.invoke(
+        {"input": "Switch me to Akte", "conversationId": "synthetic-custom-conversation", "useCase": "akte-agent"}
+    )
+
+    assert response.status_code == 409
+    assert json.loads(response.body)["detail"]["code"] == "PERSONA_MISMATCH"
+    assert not transport.messages
+    transport.sdk.create_session.assert_not_called()
+
+
+@pytest.mark.parametrize("route", ["/api/agent/chat", "/api/copilot-studio/chat"])
+@pytest.mark.parametrize("requested_use_case", [None, "synthetic-custom"])
+def test_matching_or_omitted_persona_continues_stored_identity(transport, route, requested_use_case):
+    _register_custom_persona(transport)
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(
+        return_value=SimpleNamespace(useCase="synthetic-custom", modelSelection="auto")
+    )
+    payload = {"conversationId": "synthetic-custom-conversation", "message": "Continue"}
+    if requested_use_case is not None:
+        payload["useCase"] = requested_use_case
+
+    response = transport.client.post(route, json=payload)
+
+    assert response.status_code == 200
+    endpoint, gateway_payload = transport.captured[-1]
+    assert gateway_payload["useCase"] == "synthetic-custom"
+
+
 @pytest.mark.parametrize("strip_fields", [False, True])
-@pytest.mark.parametrize("use_case", ["generic", "akte-agent"])
+@pytest.mark.parametrize("use_case", ["akte-agent"])
 def test_switch_language_on_reused_gateway_and_runtime_session(transport, strip_fields, use_case):
     transport.strip_fields[0] = strip_fields
     for locale, message, reply in [

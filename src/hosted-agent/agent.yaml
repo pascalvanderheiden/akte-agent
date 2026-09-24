@@ -41,7 +41,7 @@ environment_variables:
   - name: BLOB_SKILLS_CONTAINER
     value: skills
   # Local fallback path for use-case manifests (Dockerfile copies to /app/use-cases)
-  - name: APM_USE_CASES_ROOT
+  - name: PERSONA_ASSETS_ROOT
     value: /app/use-cases
   # Cosmos DB database name
   - name: COSMOS_DB_DATABASE

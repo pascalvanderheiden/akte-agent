@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir .
 # ── Layer 5: Application code (changes frequently) ──
 COPY src/backend/ .
 
-# ── Layer 6: Use-case manifests (apm.yml, SYSTEM_PROMPT, skills) ──
+# ── Layer 6: Self-contained prompts, skills, and MCP configuration ──
 COPY use-cases/ use-cases/
 
 # ── Layer 7: Repo assets needed by the project-exporter service ──

@@ -34,6 +34,19 @@ router = APIRouter()
 _USE_CASE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 
+def _resolve_code_root() -> Path:
+    """Locate the checkout/container root that supplies export code and infra."""
+    candidates = (Path.cwd(), *Path(__file__).resolve().parents)
+    for candidate in candidates:
+        if (
+            (candidate / "src" / "hosted-agent").is_dir()
+            and (candidate / "src" / "backend" / "app").is_dir()
+            and (candidate / "infra").is_dir()
+        ):
+            return candidate
+    raise FileNotFoundError("Kratos source tree required for export was not found")
+
+
 _auth_dep = Depends(require_authenticated_user)
 
 
@@ -58,16 +71,16 @@ async def export_use_case(
     require_available(use_case, registries)
 
     blob_service = getattr(request.app.state, "blob_skill_service", None)
-    # Resolve the Kratos repo root — we need it to find src/hosted-agent/,
-    # src/backend/app/, and infra/ at export time. Prefer the
-    # parent of blob_service.local_base_dir (which is ``<repo>/use-cases/``);
-    # fall back to cwd so tests don't need to wire up Blob.
-    if blob_service is not None and getattr(blob_service, "local_base_dir", None):
-        repo_root = Path(blob_service.local_base_dir).resolve().parent
-    else:
-        repo_root = Path.cwd()
-
-    exporter = ProjectExporter(repo_root=repo_root)
+    # The code/templates live under the checkout while persona assets can be
+    # configured elsewhere. Keep the roots independent so exports never fall
+    # back to a same-named bundled persona.
+    persona_assets_root = (
+        Path(blob_service.local_base_dir).resolve()
+        if blob_service is not None and getattr(blob_service, "local_base_dir", None)
+        else Path(request.app.state.settings.use_cases_root).resolve()
+    )
+    repo_root = _resolve_code_root()
+    exporter = ProjectExporter(repo_root=repo_root, persona_assets_root=persona_assets_root)
 
     try:
         with tempfile.TemporaryDirectory(prefix=f"kratos-export-{use_case}-") as td:

@@ -27,7 +27,13 @@ from app.models import (
     Message,
     MessageRole,
 )
-from app.personas import require_available, require_not_retired
+from app.personas import (
+    require_available,
+    require_identified_history,
+    require_not_retired,
+    require_persona_match,
+    resolve_use_case,
+)
 from app.services.follow_up_service import generate_follow_ups
 from app.services.model_routing import ModelRouting
 
@@ -88,10 +94,13 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     """
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
-    require_available(body.useCase, request.app.state.registries)
     conversation = await cosmos.get_conversation(body.conversationId, "default-user")
     if conversation:
+        require_identified_history(conversation.useCase)
         require_not_retired(conversation.useCase)
+        require_persona_match(body.useCase, conversation.useCase)
+    use_case = resolve_use_case(body.useCase, conversation.useCase if conversation else None)
+    require_available(use_case, request.app.state.registries)
     request_selection = body.selectedModelId or body.modelSelection
     requested_selection = request_selection or (conversation.modelSelection if conversation else "auto")
     try:
@@ -110,8 +119,8 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     eval_run_id = request.headers.get("x-kratos-eval-run-id") or ""
     request.state.eval_run_id = eval_run_id
     _span = trace.get_current_span()
-    if body.useCase:
-        _span.set_attribute("kratos.use_case", str(body.useCase))
+    if use_case:
+        _span.set_attribute("kratos.use_case", str(use_case))
     if body.conversationId:
         _span.set_attribute("kratos.conversation_id", str(body.conversationId))
     if eval_run_id:
@@ -144,7 +153,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
 
             # Resolve use-case system prompt from the registry
             registries = getattr(app.state, "registries", {})
-            registry = registries.get(body.useCase)
+            registry = registries.get(use_case)
             system_prompt = getattr(registry, "system_prompt", None) if registry else None
 
             # Look up existing gateway session ID so the hosted agent
@@ -168,7 +177,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             # its own gen_ai spans to its private AppInsights — these manual
             # spans surface the same signal in the kratos-side trace tree.
             common_attrs = {
-                "kratos.use_case": str(body.useCase) if body.useCase else "",
+                "kratos.use_case": str(use_case) if use_case else "",
                 "kratos.conversation_id": str(body.conversationId),
             }
             if eval_run_id:
@@ -182,7 +191,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             async for event_dict in foundry_proxy.invoke(
                 message=body.message,
                 conversation_id=body.conversationId,
-                use_case=body.useCase,
+                use_case=use_case,
                 system_prompt=system_prompt,
                 locale=body.locale,
                 agent_session_id=agent_session_id,
@@ -340,7 +349,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             # Generate follow-up questions (best-effort, non-blocking)
             try:
                 registries = getattr(app.state, "registries", {})
-                registry = registries.get(body.useCase)
+                registry = registries.get(use_case)
                 skill_names = [s.name for s in registry.skills if s.enabled] if registry else []
                 follow_ups = await generate_follow_ups(body.message, full_response, skill_names, locale=body.locale)
                 if follow_ups:

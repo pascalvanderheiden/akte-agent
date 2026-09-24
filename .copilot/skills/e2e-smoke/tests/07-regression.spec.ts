@@ -54,13 +54,14 @@ test.describe("regression: core kratos-agent surfaces", () => {
   test("conversation CRUD round-trip: POST -> GET -> list -> DELETE", async () => {
     const api = await request.newContext();
 
+    const useCase = USE_CASES[0] || "akte-agent";
     const created = await api.post(`${BACKEND_URL}/api/conversations`, {
-      data: { useCase: "generic", title: "e2e-smoke regression" },
+      data: { useCase, title: "e2e-smoke regression" },
     });
     expect(created.status(), "create conversation status").toBeLessThan(300);
     const conv = await created.json();
     expect(conv.id, "conversation.id present").toBeTruthy();
-    expect(conv.useCase, "conversation.useCase preserved").toBe("generic");
+    expect(conv.useCase, "conversation.useCase preserved").toBe(useCase);
 
     const id = conv.id;
     try {

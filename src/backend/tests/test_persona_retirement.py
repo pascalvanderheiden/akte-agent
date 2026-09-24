@@ -20,7 +20,6 @@ from app.models import Conversation, EvalMode, EvalRun, EvalRunStatus, Message, 
 from app.personas import RETIRED_PERSONAS, PersonaUnavailable
 from app.routers import (
     admin_analysis,
-    admin_apm,
     admin_mcp,
     admin_prompt,
     admin_skills,
@@ -82,8 +81,7 @@ def upgraded(request, monkeypatch, tmp_path):
     settings = Settings(
         local_mode=True,
         local_data_dir=str(tmp_path / "data"),
-        apm_use_cases_root=str(root),
-        apm_enabled=False,
+        persona_assets_root=str(root),
         keep_warm_enabled=False,
         foundry_agent_invocations_endpoint="http://127.0.0.1:8088/invoke",
         admin_auth_enabled="true",
@@ -152,7 +150,6 @@ def upgraded(request, monkeypatch, tmp_path):
         (admin_skills, "/api/admin/skills"),
         (admin_prompt, "/api/admin/system-prompt"),
         (admin_mcp, "/api/admin/mcp-servers"),
-        (admin_apm, "/api/admin/use-cases/{use_case}/apm"),
         (admin_analysis, "/api/admin/analysis"),
         (files, "/api/files"),
     ]:
@@ -164,7 +161,7 @@ def upgraded(request, monkeypatch, tmp_path):
 
 def test_upgrade_hides_stale_definitions_and_preserves_custom_import(upgraded):
     client = upgraded.client
-    assert {p["name"] for p in client.get("/api/use-cases").json()["useCases"]} == {"generic", "akte-agent"}
+    assert {p["name"] for p in client.get("/api/use-cases").json()["useCases"]} == {"akte-agent"}
     response = client.post(
         "/api/use-cases/import",
         json={
@@ -182,8 +179,7 @@ def test_upgrade_hides_stale_definitions_and_preserves_custom_import(upgraded):
     # A surviving in-memory entry is not authority to reactivate a retired persona.
     upgraded.app.state.registries.update({name: SkillRegistry(use_case=name) for name in RETIRED_PERSONAS})
     catalog = client.get("/api/use-cases").json()["useCases"]
-    assert {p["name"] for p in catalog} == {"generic", "akte-agent", slug}
-    assert all(p["curated"] for p in catalog)
+    assert {p["name"] for p in catalog} == {"akte-agent", slug}
     assert all(upgraded.blobs.content[name] == content for name, content in upgraded.stale.items())
 
 
@@ -203,8 +199,6 @@ def test_stale_cached_persona_is_denied_at_all_entry_points(upgraded, name):
         ("PUT", f"/api/admin/system-prompt?use_case={name}", {"content": "Replace"}),
         ("GET", f"/api/admin/mcp-servers?use_case={name}", None),
         ("PUT", f"/api/admin/mcp-servers?use_case={name}", {"servers": {}}),
-        ("GET", f"/api/admin/use-cases/{name}/apm", None),
-        ("POST", f"/api/admin/use-cases/{name}/apm/sync", None),
         ("POST", f"/api/admin/analysis/consistency?use_case={name}", {}),
         ("POST", f"/api/use-cases/{name}/evals/run", {}),
         ("POST", f"/api/use-cases/{name}/evals/scenarios/generate", {"count": 1}),
@@ -265,14 +259,9 @@ def test_unknown_persona_cannot_create_empty_registry(upgraded):
     assert "synthetic-absent" not in upgraded.app.state.registries
 
 
-async def test_real_generic_standalone_export(tmp_path):
-    ProjectExporter(REPO).assemble("generic", tmp_path)
-    assert {path.name for path in (tmp_path / "use-cases").iterdir()} == {"generic"}
-    registry = SkillRegistry()
-    await registry.load("generic", local_root=str(tmp_path / "use-cases"))
-    assert registry.system_prompt
-    assert {"web_search", "rag_search", "code_interpreter"} <= set(registry.get_enabled_tool_names())
-    assert not (tmp_path / "mocks").exists()
+async def test_generic_standalone_export_is_retired(tmp_path):
+    with pytest.raises(PersonaUnavailable):
+        ProjectExporter(REPO).assemble("generic", tmp_path)
 
 
 def test_explicit_retired_upload_selection_fails_before_cloud_access(tmp_path):
@@ -315,7 +304,6 @@ async def test_direct_load_export_and_cached_sdk_session_cannot_execute(tmp_path
         blobs.delete_skill(name, "legacy"),
         blobs.delete_skill_file(name, "legacy", "SKILL.md"),
         blobs.upload_mcp_config(name, b"{}"),
-        blobs.upload_apm_manifest(name, "apm.yml", b"{}"),
     ]:
         with pytest.raises(PersonaUnavailable):
             await operation
@@ -332,7 +320,7 @@ async def test_direct_load_export_and_cached_sdk_session_cannot_execute(tmp_path
 
 
 def test_upload_selection_matches_runtime_policy():
-    for name in [*RETIRED_PERSONAS, "generic", "akte-agent", "synthetic-custom"]:
+    for name in [*RETIRED_PERSONAS, "akte-agent", "synthetic-custom"]:
         result = subprocess.run(
             [
                 "bash",

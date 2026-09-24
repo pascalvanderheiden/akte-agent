@@ -1,9 +1,0 @@
-name: akte-agent
-version: 1.0.0
-description: Self-contained bilingual notarial draft preparation and exact timekeeping
-author: akte-agent
-license: MIT
-target: copilot
-dependencies:
-  apm: []
-  mcp: []

@@ -10,12 +10,12 @@ from app.services.skill_registry import SkillRegistry
 @pytest.fixture
 def use_case_dir(tmp_path: Path) -> Path:
     """Create a local use-cases directory with sample skills."""
-    uc = tmp_path / "use-cases" / "generic"
+    uc = tmp_path / "use-cases" / "akte-agent"
 
     # System prompt
     uc.mkdir(parents=True)
     (uc / "SYSTEM_PROMPT.md").write_text(
-        "---\ndisplayName: Generic Assistant\ndescription: A helpful AI assistant\n---\n\nYou are a helpful assistant."
+        "---\ndisplayName: Akte Agent\ndescription: A helpful AI assistant\n---\n\nYou are a helpful assistant."
     )
 
     # web-search skill
@@ -46,7 +46,7 @@ def use_case_dir(tmp_path: Path) -> Path:
 async def test_load_skills(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(use_case_dir)
     registry = SkillRegistry()
-    await registry.load("generic")
+    await registry.load("akte-agent")
 
     assert len(registry.skills) == 3
     assert "web-search" in registry.skills
@@ -58,7 +58,7 @@ async def test_load_skills(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
 async def test_get_enabled_skills(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(use_case_dir)
     registry = SkillRegistry()
-    await registry.load("generic")
+    await registry.load("akte-agent")
 
     enabled = registry.get_enabled_skills()
     assert len(enabled) == 2
@@ -72,7 +72,7 @@ async def test_get_enabled_skills(use_case_dir: Path, monkeypatch: pytest.Monkey
 async def test_get_skill_directories(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(use_case_dir)
     registry = SkillRegistry()
-    await registry.load("generic")
+    await registry.load("akte-agent")
 
     dirs = registry.get_skill_directories()
     assert len(dirs) == 2
@@ -92,7 +92,7 @@ async def test_no_use_case_directory(tmp_path: Path, monkeypatch: pytest.MonkeyP
 async def test_get_enabled_tool_names(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(use_case_dir)
     registry = SkillRegistry()
-    await registry.load("generic")
+    await registry.load("akte-agent")
 
     tool_names = registry.get_enabled_tool_names()
     assert "web_search" in tool_names
@@ -104,7 +104,7 @@ async def test_get_enabled_tool_names(use_case_dir: Path, monkeypatch: pytest.Mo
 async def test_system_prompt_loaded(use_case_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(use_case_dir)
     registry = SkillRegistry()
-    await registry.load("generic")
+    await registry.load("akte-agent")
 
     assert "You are a helpful assistant" in registry.system_prompt
-    assert registry.use_case == "generic"
+    assert registry.use_case == "akte-agent"

@@ -60,6 +60,7 @@ async function routeFixture(page: Page, fixture: ReturnType<typeof makeFixture>)
     if (pathname === "/config.json") return route.fulfill({ json: { apiUrl: `${origin}${mount}` } });
     if (!pathname.startsWith("/api/")) return route.continue();
     if (pathname === "/api/use-cases") return route.fulfill({ json: { useCases: fixture.catalog } });
+    if (pathname === "/api/models") return route.fulfill({ json: { models: [] } });
     if (pathname === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (pathname === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (pathname === "/api/conversations") {
@@ -103,11 +104,8 @@ for (const locale of ["en", "nl"] as const) {
     const state = await routeFixture(page, fixture);
     await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
     await page.goto(`${FRONTEND_URL}/`);
-    const selector = page.getByRole("combobox", { name: ui[locale].selectPersona });
-    await expect(selector).toHaveValue("generic");
-    expect(await selector.locator("option").evaluateAll((nodes) => nodes.map((node) => (node as HTMLOptionElement).value)))
-      .toEqual(fixture.catalog.filter((persona) => persona.curated).map((persona) => persona.name));
-    await selector.selectOption("akte-agent");
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
+    expect(fixture.catalog.map((persona) => persona.name)).toEqual(["akte-agent"]);
     await expect(page.getByRole("heading", { name: "Akte Agent", exact: true })).toBeVisible();
     const akte = fixture.catalog.find((persona) => persona.name === "akte-agent")!;
     for (const starter of akte.localizations![locale]!.sampleQuestions!) {

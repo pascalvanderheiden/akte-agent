@@ -68,6 +68,7 @@ async function routeFixture(page: Page, fixture: Fixture) {
     if (pathname === "/config.json") return route.fulfill({ json: { apiUrl: `${origin}${mount}` } });
     if (!pathname.startsWith("/api/")) return route.continue();
     if (pathname === "/api/use-cases") return route.fulfill({ json: { useCases: fixture.catalog } });
+    if (pathname === "/api/models") return route.fulfill({ json: { models: [] } });
     if (pathname === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (pathname === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (pathname === "/api/conversations") {
@@ -121,7 +122,7 @@ print(json.dumps([{"name": item["name"], "path": item["path"], "text": item["tex
     const state = await routeFixture(page, { catalog: loadCatalog(), drafts });
     await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
     await page.goto(`${FRONTEND_URL}/`);
-    await page.getByRole("combobox", { name: ui[locale].selectPersona }).selectOption("akte-agent");
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
     for (const draft of drafts) {
       await page.getByRole("textbox", { name: ui[locale].ask }).fill(`SYNTHETIC-AKTE-LEGAL: ${draft.name}`);
       await page.getByRole("button", { name: ui[locale].sendMessage, exact: true }).click();
@@ -166,10 +167,8 @@ print(json.dumps([{"name": item["name"], "path": item["path"], "text": item["tex
     const state = await routeFixture(page, fixture);
     await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
     await page.goto(`${FRONTEND_URL}/`);
-    const selector = page.getByRole("combobox", { name: ui[locale].selectPersona });
-    await expect(selector).toHaveValue("generic");
-    expect(fixture.catalog.filter((persona) => persona.curated).map((persona) => persona.name)).toContain("akte-agent");
-    await selector.selectOption("akte-agent");
+    expect(fixture.catalog.map((persona) => persona.name)).toContain("akte-agent");
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
     const prompts = locale === "en"
       ? ["SYNTHETIC-AKTE-EXEC: prepare identity and signing checklist from supplied deed and observations.", "Continue same dossier: reconcile supplied funds, charges and taxes.", "Correction D: exclude fee, include replacement 350.005 with confirmed decimal point; preserve originals."]
       : ["SYNTHETIC-AKTE-EXEC: bereid identiteits- en passeerchecklist voor uit akte en observaties.", "Zelfde dossier: reconcilieer aangeleverde clientgelden, kosten en belastingen.", "Correctie D: sluit kosten uit, tel vervanging 350,005 met bevestigde decimale komma mee; behoud origineel."];

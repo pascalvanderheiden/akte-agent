@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -69,13 +70,13 @@ class Settings(BaseSettings):
     # Cosmos DB database
     cosmos_db_database: str = "kratos-agent"
 
-    # APM (Agent Package Manager) — materialises remote skills / prompts /
-    # instructions / agents into each use-case via the `apm` CLI.
-    apm_enabled: bool = True
-    apm_binary: str = "apm"
-    apm_default_target: str = "copilot"
-    apm_use_cases_root: str = "use-cases"
-    apm_startup_sync: bool = True
+    # Root containing self-contained persona assets.  This deliberately has no
+    # package-manager behaviour; APM_USE_CASES_ROOT remains an input alias so
+    # existing deployments keep locating their assets during upgrade.
+    persona_assets_root: str = Field(
+        default="use-cases",
+        validation_alias=AliasChoices("PERSONA_ASSETS_ROOT", "APM_USE_CASES_ROOT"),
+    )
 
     # Local mode — run the backend without any Azure services.
     #   * SQLite replaces Cosmos DB (persistence under ``local_data_dir``)
@@ -108,7 +109,11 @@ class Settings(BaseSettings):
             return self.local_mode
         return not self.cosmos_db_endpoint
 
-    model_config = {"env_file": ".env", "extra": "ignore"}
+    model_config = {"env_file": ".env", "extra": "ignore", "populate_by_name": True}
+
+    @property
+    def use_cases_root(self) -> str:
+        return self.persona_assets_root
 
 
 @lru_cache

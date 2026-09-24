@@ -28,7 +28,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [useCases, setUseCases] = useState<UseCase[]>([]);
-  const [selectedUseCase, setSelectedUseCase] = useState<string>("generic");
+  const [selectedUseCase, setSelectedUseCase] = useState<string>("akte-agent");
   const { locale, t, ready: localeReady } = useLocale();
   const [error, setError] = useState<ErrorCode | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -108,8 +108,7 @@ export default function Home() {
     setSidebarOpen(false);
     setSkillsOpen(false);
     if (!useCases.some((persona) => persona.name === selectedUseCase)) {
-      setSelectedUseCase(useCases.find((persona) => persona.name === "generic")?.name ??
-        useCases.find((persona) => persona.curated)?.name ?? "");
+      setSelectedUseCase(useCases.find((persona) => persona.name === "akte-agent")?.name ?? useCases[0]?.name ?? "");
     }
     setError(null);
   };
@@ -161,7 +160,7 @@ export default function Home() {
 
   const handleSelectConversation = (conv: Conversation) => {
     setActiveConversation(conv);
-    setSelectedUseCase(conv.useCase || "generic");
+    setSelectedUseCase(conv.useCase);
     setPendingMessage(null);
     setSidebarOpen(false);
   };

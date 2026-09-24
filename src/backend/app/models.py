@@ -28,7 +28,7 @@ class ConversationStatus(str, Enum):
 
 class ConversationCreate(BaseModel):
     title: str = "New Conversation"
-    useCase: str = "generic"
+    useCase: str = "akte-agent"
     modelSelection: str = "auto"
     selectedModelId: str | None = None
 
@@ -44,7 +44,9 @@ class Conversation(BaseModel):
     id: str
     userId: str
     title: str
-    useCase: str = "generic"
+    # Empty preserves legacy records with missing persona metadata; only new
+    # work uses the Akte default above.
+    useCase: str = ""
     modelSelection: str = "auto"
     status: ConversationStatus = ConversationStatus.ACTIVE
     createdAt: datetime
@@ -104,7 +106,11 @@ Attachment = FileAttachment | DirectoryAttachment | SelectionAttachment
 class AgentRequest(BaseModel):
     conversationId: str
     message: str
-    useCase: str = "generic"
+    # None means the client omitted a selection: new work defaults to Akte,
+    # but a continuation must execute as the conversation's stored persona
+    # rather than being silently coerced to this default. See
+    # app.personas.resolve_use_case / require_persona_match.
+    useCase: str | None = None
     locale: Locale | None = None
     modelSelection: str | None = None
     selectedModelId: str | None = None
@@ -126,7 +132,7 @@ class ToolCallEvent(BaseModel):
     input: str = ""
     output: str = ""
     durationMs: int = 0
-    source: str = ""  # "local" | "blob" | "apm:<package>" — populated best-effort from the registry
+    source: str = ""  # "local" | "blob" — populated best-effort from the registry
     agentName: str = ""
     model: str = ""
 
@@ -220,7 +226,8 @@ class CopilotStudioRequest(BaseModel):
         default="",
         description="Optional conversation ID to continue a multi-turn session. Leave empty to start a new conversation.",
     )
-    useCase: str = Field(default="generic", description="Use-case identifier")
+    # None means the client omitted a selection; see AgentRequest.useCase.
+    useCase: str | None = Field(default=None, description="Use-case identifier")
     locale: Locale | None = None
     modelSelection: str | None = None
     selectedModelId: str | None = None
@@ -295,7 +302,7 @@ class SkillResponse(BaseModel):
     instructions: str = ""
     toolName: str = ""
     fileCount: int = 0
-    source: str = "local"  # "local" | "blob" | "apm:<package>"
+    source: str = "local"  # "local" | "blob"
 
 
 class SkillCreate(BaseModel):
@@ -354,7 +361,7 @@ class UseCaseList(BaseModel):
 class ImportSkill(BaseModel):
     """A skill reference in the import manifest.
 
-    Maps to ``apm.yml`` ``dependencies.apm[]`` when ``package`` is given.
+    ``package`` identifies an unsupported package-managed dependency.
     ``implements`` carries threadlight ``BR-XXX`` traceability (metadata only).
     """
 
@@ -365,11 +372,13 @@ class ImportSkill(BaseModel):
 
 
 class ImportMcpServer(BaseModel):
-    """An MCP server reference → ``.mcp.json`` + ``apm.yml`` ``dependencies.mcp[]``."""
+    """A directly configured MCP server reference."""
 
     name: str
     transport: str = "http"
     url: str | None = None
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
     registry: bool = False
 
 

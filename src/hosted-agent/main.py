@@ -60,8 +60,16 @@ from app.models import (
     UserInputRequestEvent,
 )
 from app.observability import setup_telemetry
-from app.personas import RETIRED_PERSONAS, PersonaUnavailable, require_not_retired
-from app.services.apm_service import ApmError, ApmService
+from app.personas import (
+    DEFAULT_USE_CASE,
+    RETIRED_PERSONAS,
+    PersonaMismatch,
+    PersonaUnavailable,
+    require_identified_history,
+    require_not_retired,
+    require_persona_match,
+    resolve_use_case,
+)
 from app.services.blob_skill_service import BlobSkillService
 from app.services.copilot_agent import CopilotAgent
 from app.services.cosmos_service import CosmosService
@@ -82,13 +90,12 @@ logger = logging.getLogger(__name__)
 _copilot_agent: CopilotAgent | None = None
 _cosmos_service: CosmosService | None = None
 _blob_service: BlobSkillService | None = None
-_apm_service: ApmService | None = None
 _registries: dict[str, SkillRegistry] = {}
 _settings: Settings | None = None
 
 # Lazy per-use-case loading. A pre-warmed sandbox is unclaimed, so at warm time
 # we don't yet know which use-case it will serve — loading all use-cases up
-# front (each does a serial blob sync + skill parse + ``apm install``) is the
+# front (each does a serial blob sync + skill parse) is the
 # dominant cold-start cost. Instead we warm only the shared core (Cosmos, blob,
 # Copilot agent) and load a single use-case's skills the first time it is
 # actually requested, caching it in ``_registries`` thereafter.
@@ -114,7 +121,7 @@ async def _startup() -> None:
     loaded lazily by :func:`_ensure_registry` on first use, so a pre-warmed
     sandbox becomes ready without paying to load all use-cases up front.
     """
-    global _copilot_agent, _cosmos_service, _blob_service, _apm_service, _settings
+    global _copilot_agent, _cosmos_service, _blob_service, _settings
     global _startup_total_ms, _startup_phases
 
     import time as _time
@@ -150,8 +157,6 @@ async def _startup() -> None:
     )
     _blob_service = blob_service
     _copilot_agent.set_cosmos_service(_cosmos_service)
-    # APM service (kept for lazy per-use-case syncs)
-    _apm_service = ApmService(_settings, blob_service)
     _mark("core_parallel", t0)
 
     # Seed local use-cases into blob if the container is empty. This only
@@ -198,31 +203,19 @@ async def _ensure_registry(use_case: str) -> None:
             return
         t0 = _time.monotonic()
 
-        # Sync just this use-case's APM dependencies (no-op when none declared).
-        if _apm_service is not None and _settings is not None and _settings.apm_enabled and _settings.apm_startup_sync:
-            try:
-                if await _apm_service.needs_sync(use_case):
-                    await _apm_service.sync(use_case)
-            except ApmError as exc:
-                logger.warning("APM sync failed for '%s': %s", use_case, exc)
-            except Exception:
-                logger.warning("Unexpected APM sync error for '%s' (non-fatal)", use_case, exc_info=True)
-
-        local_root = _settings.apm_use_cases_root if _settings else "use-cases"
+        local_root = _settings.use_cases_root if _settings else "use-cases"
 
         # Prefer blob (so use-cases uploaded post-deploy are picked up), but ALWAYS
         # fall back to the baked-in local use-cases/ directory if blob is
         # unavailable OR the blob load fails / yields nothing. The hosted-agent's
         # Foundry-managed compute may not be able to reach the storage account
         # (private-endpoint only), so the local fallback is what keeps the
-        # correct skills + system prompt loaded — mirroring the original eager
-        # startup behaviour. Without this fallback the agent silently reverts to
-        # the generic system prompt for every use-case.
+        # correct skills + system prompt loaded.
         registry: SkillRegistry | None = None
         if _blob_service is not None and _blob_service.is_available:
             try:
                 candidate = SkillRegistry()
-                await candidate.load(use_case, _blob_service, apm_service=_apm_service)
+                await candidate.load(use_case, _blob_service)
                 if candidate.system_prompt or candidate.skills:
                     registry = candidate
                 else:
@@ -235,7 +228,7 @@ async def _ensure_registry(use_case: str) -> None:
         if registry is None:
             try:
                 candidate = SkillRegistry()
-                await candidate.load(use_case, apm_service=_apm_service, local_root=local_root)
+                await candidate.load(use_case, local_root=local_root)
                 registry = candidate
             except Exception:
                 logger.exception("Failed to lazy-load use-case '%s' from local disk", use_case)
@@ -492,7 +485,7 @@ async def handle_invoke(request: Request) -> Response:
             raise ValueError('missing or empty "message" (or "input") field')
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
-        use_case = data.get("useCase", "generic")
+        use_case = data.get("useCase")
         model_selection = data.get("selectedModelId") or data.get("modelSelection", "auto")
         runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
         runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
@@ -516,7 +509,7 @@ async def handle_invoke(request: Request) -> Response:
             # Parse <use_case> tag (fallback when gateway strips useCase field)
             uc_match = re.search(r"<use_case>\s*(\S+?)\s*</use_case>", message)
             if uc_match:
-                if use_case == "generic":
+                if use_case is None or use_case == DEFAULT_USE_CASE:
                     use_case = uc_match.group(1)
                     logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
                 message = message[: uc_match.start()] + message[uc_match.end() :]
@@ -593,18 +586,23 @@ async def handle_invoke(request: Request) -> Response:
     # for a given use-case pays a small one-time load instead of every sandbox
     # loading all use-cases up front.
     try:
-        require_not_retired(use_case)
         if runtime_foundry_endpoint and (
             runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
             or runtime_foundry_deployment != _copilot_agent.settings.foundry_model_deployment
         ):
             await _copilot_agent.update_config(runtime_foundry_endpoint, runtime_foundry_deployment)
+        stored_use_case = None
         if _cosmos_service is not None:
             existing = await _cosmos_service.get_conversation(conversation_id, "default-user")
             if existing:
+                require_identified_history(existing.useCase)
                 require_not_retired(existing.useCase)
+                require_persona_match(use_case, existing.useCase)
+                stored_use_case = existing.useCase
+        use_case = resolve_use_case(use_case, stored_use_case)
+        require_not_retired(use_case)
         await _ensure_registry(use_case)
-    except PersonaUnavailable as exc:
+    except (PersonaUnavailable, PersonaMismatch) as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return StreamingResponse(

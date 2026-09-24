@@ -654,6 +654,70 @@ def test_authenticated_localizations_survive_import_edit_and_export(kratos_repo,
     assert client.get(f"/api/use-cases/{slug}/export").status_code == 401
 
 
+def test_export_uses_configured_persona_assets_root(kratos_repo: Path, tmp_path: Path):
+    custom_root = tmp_path / "custom-personas"
+    source = custom_root / "synthetic-review"
+    source.mkdir(parents=True)
+    prompt = "---\nname: Custom review\ntraits:\n- custom\nworkflow_model: workflow\nskills:\n- name: metadata-only\n  description: Kept\n---\n\nCustom instructions.\n"
+    (source / "SYSTEM_PROMPT.md").write_text(prompt)
+    (source / ".mcp.json").write_text("{}\n")
+    # A matching bundled name must not win when custom storage is configured.
+    bundled = kratos_repo / "use-cases" / "synthetic-review" / "SYSTEM_PROMPT.md"
+    bundled.write_text("---\nname: Bundled review\n---\n\nWrong instructions.\n")
+
+    output = tmp_path / "export"
+    output.mkdir()
+    ProjectExporter(kratos_repo, persona_assets_root=custom_root).assemble("synthetic-review", output)
+
+    assert (output / "use-cases" / "synthetic-review" / "SYSTEM_PROMPT.md").read_text() == prompt
+
+
+def test_legacy_persona_assets_root_alias_is_supported(monkeypatch, tmp_path: Path):
+    from app.config import Settings
+
+    monkeypatch.delenv("PERSONA_ASSETS_ROOT", raising=False)
+    monkeypatch.setenv("APM_USE_CASES_ROOT", str(tmp_path / "custom-personas"))
+    assert Settings().use_cases_root == str(tmp_path / "custom-personas")
+
+
+@pytest.mark.parametrize("use_legacy_alias", [False, True], ids=["custom-root", "legacy-root-alias"])
+def test_export_endpoint_uses_external_assets_in_container_layout(
+    kratos_repo: Path, monkeypatch, tmp_path, use_legacy_alias
+):
+    """The route must not derive assets from the code root in the /app container."""
+    from app.config import Settings
+    from app.main import app
+    from app.routers import export as export_router
+
+    custom_root = tmp_path / "custom-personas"
+    source = custom_root / "synthetic-review"
+    source.mkdir(parents=True)
+    custom_prompt = "---\nname: External review\n---\n\nExternal persona instructions.\n"
+    (source / "SYSTEM_PROMPT.md").write_text(custom_prompt)
+    (source / ".mcp.json").write_text("{}\n")
+
+    monkeypatch.chdir(kratos_repo)
+    monkeypatch.setattr(export_router, "__file__", "/app/app/routers/export.py")
+    registry = MagicMock()
+    registry.system_prompt = ""
+    app.state.registries = {"synthetic-review": registry}
+    if use_legacy_alias:
+        monkeypatch.delenv("PERSONA_ASSETS_ROOT", raising=False)
+        monkeypatch.setenv("APM_USE_CASES_ROOT", str(custom_root))
+        app.state.blob_skill_service = None
+        app.state.settings = Settings()
+    else:
+        blob_stub = MagicMock()
+        blob_stub.local_base_dir = custom_root
+        app.state.blob_skill_service = blob_stub
+
+    response = TestClient(app, raise_server_exceptions=False).get("/api/use-cases/synthetic-review/export")
+
+    assert response.status_code == 200, response.text
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.read("use-cases/synthetic-review/SYSTEM_PROMPT.md").decode() == custom_prompt
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — runtime correctness fixes (RBAC, telemetry, region docs)
 # ---------------------------------------------------------------------------

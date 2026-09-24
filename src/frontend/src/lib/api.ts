@@ -124,7 +124,7 @@ export async function streamAgentChat(
  */
 export async function createConversation(
   title: string = "New Conversation",
-  useCase: string = "generic"
+  useCase: string = "akte-agent"
 ): Promise<{ id: string; title: string; useCase: string }> {
   const response = await fetch(`${getApiUrl()}/api/conversations`, {
     method: "POST",
@@ -282,20 +282,20 @@ export async function importPersona(
 
 import type { Skill, SkillCreate, SkillUpdate } from "@/types";
 
-export async function listSkills(useCase: string = "generic"): Promise<Skill[]> {
+export async function listSkills(useCase: string = "akte-agent"): Promise<Skill[]> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills?use_case=${encodeURIComponent(useCase)}`);
   if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   const data = await response.json();
   return data.skills;
 }
 
-export async function getSkill(name: string, useCase: string = "generic"): Promise<Skill> {
+export async function getSkill(name: string, useCase: string = "akte-agent"): Promise<Skill> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`);
   if (!response.ok) throw await responseError(response, "SKILLS_ERROR");
   return response.json();
 }
 
-export async function createSkill(skill: SkillCreate, useCase: string = "generic"): Promise<Skill> {
+export async function createSkill(skill: SkillCreate, useCase: string = "akte-agent"): Promise<Skill> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills?use_case=${encodeURIComponent(useCase)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -305,7 +305,7 @@ export async function createSkill(skill: SkillCreate, useCase: string = "generic
   return response.json();
 }
 
-export async function updateSkill(name: string, updates: SkillUpdate, useCase: string = "generic"): Promise<Skill> {
+export async function updateSkill(name: string, updates: SkillUpdate, useCase: string = "akte-agent"): Promise<Skill> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -315,7 +315,7 @@ export async function updateSkill(name: string, updates: SkillUpdate, useCase: s
   return response.json();
 }
 
-export async function deleteSkill(name: string, useCase: string = "generic"): Promise<void> {
+export async function deleteSkill(name: string, useCase: string = "akte-agent"): Promise<void> {
   const response = await fetch(`${getApiUrl()}/api/admin/skills/${encodeURIComponent(name)}?use_case=${encodeURIComponent(useCase)}`, {
     method: "DELETE",
   });
@@ -326,7 +326,7 @@ export async function deleteSkill(name: string, useCase: string = "generic"): Pr
 
 import type { SkillFile } from "@/types";
 
-export async function listSkillFiles(skillName: string, useCase: string = "generic"): Promise<{ files: SkillFile[] }> {
+export async function listSkillFiles(skillName: string, useCase: string = "akte-agent"): Promise<{ files: SkillFile[] }> {
   const response = await fetch(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files?use_case=${encodeURIComponent(useCase)}`
   );
@@ -338,7 +338,7 @@ export async function upsertSkillFile(
   skillName: string,
   filePath: string,
   content: string,
-  useCase: string = "generic"
+  useCase: string = "akte-agent"
 ): Promise<void> {
   const response = await fetch(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files/${filePath}?use_case=${encodeURIComponent(useCase)}`,
@@ -354,7 +354,7 @@ export async function upsertSkillFile(
 export async function deleteSkillFile(
   skillName: string,
   filePath: string,
-  useCase: string = "generic"
+  useCase: string = "akte-agent"
 ): Promise<void> {
   const response = await fetch(
     `${getApiUrl()}/api/admin/skills/${encodeURIComponent(skillName)}/files/${filePath}?use_case=${encodeURIComponent(useCase)}`,
@@ -422,7 +422,7 @@ export async function updateMCPConfig(useCase: string, servers: MCPConfig["serve
 import type { AnalysisResult } from "@/types";
 
 export async function analyzeConsistency(
-  useCase: string = "generic",
+  useCase: string = "akte-agent",
   includeDisabled: boolean = true
 ): Promise<AnalysisResult> {
   const response = await fetch(
@@ -439,116 +439,9 @@ export async function analyzeConsistency(
 
 import type { AnalysisIssue, ApplyFixResult } from "@/types";
 
-// ─── APM Admin API ───
-
-import type { ApmStatusResponse, ApmCommandResponse } from "@/types";
-
-export async function getApmStatus(useCase: string): Promise<ApmStatusResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm`
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function installApmPackage(
-  useCase: string,
-  body: { package: string; ref?: string; dev?: boolean }
-): Promise<ApmCommandResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/install`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function uninstallApmPackage(
-  useCase: string,
-  pkg: string
-): Promise<ApmCommandResponse> {
-  // Backend route is DELETE /{package:path}, so slashes must be preserved.
-  // Encode each segment separately to avoid %2F while still escaping special chars.
-  const encodedPkg = pkg.split("/").map(encodeURIComponent).join("/");
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/${encodedPkg}`,
-    { method: "DELETE" }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function installApmMcpServer(
-  useCase: string,
-  body: {
-    name: string;
-    transport?: "stdio" | "http" | "sse";
-    command?: string;
-    args?: string[];
-    url?: string;
-    env?: Record<string, string>;
-  }
-): Promise<ApmCommandResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/mcp`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function uninstallApmMcpServer(
-  useCase: string,
-  name: string
-): Promise<ApmCommandResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/mcp/${encodeURIComponent(name)}`,
-    { method: "DELETE" }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function syncApm(useCase: string): Promise<ApmCommandResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/sync`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
-export async function updateApm(
-  useCase: string,
-  body: { package?: string } = {}
-): Promise<ApmCommandResponse> {
-  const response = await fetch(
-    `${getApiUrl()}/api/admin/use-cases/${encodeURIComponent(useCase)}/apm/update`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-  if (!response.ok) throw await responseError(response, "APM_ERROR");
-  return response.json();
-}
-
 export async function applyAnalysisFix(
   issue: AnalysisIssue,
-  useCase: string = "generic"
+  useCase: string = "akte-agent"
 ): Promise<ApplyFixResult> {
   const response = await fetch(
     `${getApiUrl()}/api/admin/analysis/apply-fix?use_case=${encodeURIComponent(useCase)}`,

@@ -162,7 +162,7 @@ If a required Python library is not installed, install it first with pip before 
 DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPT
 
 # Default use-case when none is specified
-DEFAULT_USE_CASE = "generic"
+DEFAULT_USE_CASE = "akte-agent"
 
 
 class CopilotAgent:
@@ -240,7 +240,7 @@ class CopilotAgent:
         self._model_response_start: dict[str, float] = {}
 
     def set_skill_registry(self, registry: object) -> None:
-        """Inject a single skill registry (backward compat — uses 'generic')."""
+        """Inject a single skill registry (backward compat — uses Akte)."""
         self._registries = {DEFAULT_USE_CASE: registry}
         self._queues: dict[str, asyncio.Queue] = {}
         self._tool_counters: dict[str, int] = {}

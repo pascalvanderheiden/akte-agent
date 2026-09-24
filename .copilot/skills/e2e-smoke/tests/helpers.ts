@@ -21,7 +21,7 @@ export const FRONTEND_URL = requiredUrl("KRATOS_FRONTEND_URL");
 
 export const BACKEND_URL = requiredUrl("KRATOS_BACKEND_URL");
 
-export const USE_CASES = (process.env.KRATOS_USE_CASES || "generic")
+export const USE_CASES = (process.env.KRATOS_USE_CASES || "akte-agent")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

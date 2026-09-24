@@ -18,7 +18,6 @@ def client(tmp_path: Path):
     blob_service = BlobSkillService(Settings(), local_base_dir=str(tmp_path / "use-cases"))
     app.state.blob_skill_service = blob_service
     app.state.registries = {}
-    app.state.apm_service = None
 
     yield TestClient(app, raise_server_exceptions=False)
 
@@ -35,7 +34,6 @@ def _manifest(**overrides) -> dict:
             {
                 "name": "evidence-check",
                 "description": "Check supplied evidence",
-                "package": "acme/skills/skills/evidence-check",
             },
             {"name": "no-package-skill", "description": "metadata only"},
         ],
@@ -65,7 +63,7 @@ def test_import_manifest_creates_persona(client, tmp_path):
     uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
     assert (uc_dir / "SYSTEM_PROMPT.md").exists()
     assert (uc_dir / ".mcp.json").exists()
-    assert (uc_dir / "apm.yml").exists()
+    assert not (uc_dir / "apm.yml").exists()
 
 
 def test_system_prompt_frontmatter_mapping(client, tmp_path):
@@ -78,6 +76,9 @@ def test_system_prompt_frontmatter_mapping(client, tmp_path):
     assert fm["description"].startswith("Reviews synthetic documents")
     assert fm["curated"] is True
     assert "Review synthetic document 12345" in fm["sampleQuestions"]
+    assert fm["traits"] == ["analysis", "validation"]
+    assert fm["workflow_model"] == "agent"
+    assert fm["skills"] == _manifest()["skills"]
     # Instructions become the body
     assert "synthetic document assistant" in text.split("---\n", 2)[2]
 
@@ -106,27 +107,59 @@ def test_import_preserves_localized_persona_metadata(client, tmp_path):
     assert frontmatter["localizations"]["en"]["sampleQuestions"] == ["Review synthetic document 12345"]
 
 
-def test_apm_and_mcp_mapping(client, tmp_path):
-    client.post("/api/use-cases/import", json={"manifest": _manifest()})
+def test_direct_mcp_mapping(client, tmp_path):
+    response = client.post("/api/use-cases/import", json={"manifest": _manifest()})
+    assert response.status_code == 201
     uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
-
-    apm = yaml.safe_load((uc_dir / "apm.yml").read_text())
-    assert apm["name"] == "kratos-synthetic-review-bot"
-    assert apm["dependencies"]["apm"] == ["acme/skills/skills/evidence-check"]
-    assert apm["dependencies"]["mcp"][0]["name"] == "microsoft-learn"
-    assert apm["metadata"]["kratos"]["traits"] == ["analysis", "validation"]
-    assert apm["metadata"]["kratos"]["workflow_model"] == "agent"
 
     mcp = json.loads((uc_dir / ".mcp.json").read_text())
     assert mcp["microsoft-learn"]["url"] == "https://learn.microsoft.com/api/mcp"
     assert mcp["microsoft-learn"]["type"] == "http"
 
 
-def test_url_less_mcp_server_skipped_in_mcp_json(client, tmp_path):
-    # A registry reference with no url cannot be a runnable Copilot MCP entry, so
-    # it must be skipped in .mcp.json (kept only in apm.yml) — never written as a
-    # non-startable {"type": "http"} entry. This is exactly what the host site
-    # emits for its `mcp-tools` / `m365-graph` requirements.
+def test_direct_mcp_with_legacy_registry_metadata_is_preserved(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(mcpServers=[{"name": "tools", "registry": True, "url": "https://example.test/mcp"}])
+        },
+    )
+    assert response.status_code == 201, response.text
+    mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
+    assert mcp["tools"] == {"type": "http", "url": "https://example.test/mcp"}
+
+
+def test_direct_command_mcp_mapping(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(
+                mcpServers=[{"name": "local-tools", "transport": "stdio", "command": "python", "args": ["server.py"]}]
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    mcp = json.loads((tmp_path / "use-cases" / "synthetic-review-bot" / ".mcp.json").read_text())
+    # Command-backed servers always map to the runtime's "local" type — the
+    # manifest's MCP-spec "stdio" transport hint is not a runnable Kratos type.
+    assert mcp["local-tools"] == {"type": "local", "command": "python", "args": ["server.py"]}
+
+
+def test_remote_mcp_with_unsupported_transport_is_rejected(client, tmp_path):
+    response = client.post(
+        "/api/use-cases/import",
+        json={
+            "manifest": _manifest(
+                mcpServers=[{"name": "tools", "transport": "local", "url": "https://example.test/mcp"}]
+            )
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_MCP_TRANSPORT"
+    assert not (tmp_path / "use-cases" / "synthetic-review-bot").exists()
+
+
+def test_package_dependent_import_is_rejected(client, tmp_path):
     manifest = _manifest(
         mcpServers=[
             {"name": "tools", "transport": "http", "registry": True},
@@ -134,17 +167,9 @@ def test_url_less_mcp_server_skipped_in_mcp_json(client, tmp_path):
         ]
     )
     resp = client.post("/api/use-cases/import", json={"manifest": manifest})
-    assert resp.status_code == 201, resp.text
-    uc_dir = tmp_path / "use-cases" / "synthetic-review-bot"
-
-    mcp = json.loads((uc_dir / ".mcp.json").read_text())
-    assert "tools" not in mcp  # url-less → skipped, no broken entry
-    assert mcp["microsoft-learn"]["url"] == "https://learn.microsoft.com/api/mcp"
-
-    # The dependency is still recorded in apm.yml for later resolution.
-    apm = yaml.safe_load((uc_dir / "apm.yml").read_text())
-    mcp_dep_names = {d["name"] for d in apm["dependencies"]["mcp"]}
-    assert {"tools", "microsoft-learn"} <= mcp_dep_names
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "UNSUPPORTED_PACKAGE_DEPENDENCY"
+    assert not (tmp_path / "use-cases" / "synthetic-review-bot").exists()
 
 
 def test_import_dedupes_slug(client):
@@ -219,14 +244,14 @@ def test_invalid_prompt_localization_is_rejected_without_losing_previous_metadat
     assert client.get(url).json() == before
 
 
-def test_generic_catalog_has_complete_translations_and_retained_scalar_fields(client):
+def test_catalog_accepts_inert_curated_metadata(client):
     from app.main import app
     from app.services.skill_registry import SkillRegistry
 
     root = Path(__file__).parents[3]
     registry = SkillRegistry()
-    registry.system_prompt = (root / "use-cases/generic/SYSTEM_PROMPT.md").read_text()
-    app.state.registries = {"generic": registry}
+    registry.system_prompt = (root / "use-cases/akte-agent/SYSTEM_PROMPT.md").read_text()
+    app.state.registries = {"akte-agent": registry}
     persona = client.get("/api/use-cases").json()["useCases"][0]
     assert persona["curated"] is True
     for locale in ("en", "nl"):

@@ -21,16 +21,16 @@ function persona(name: string, curated = true): UseCase {
 }
 
 async function fixture(page: Page) {
-  const generic: UseCase = {
-    ...persona("generic"),
-    displayName: "Generic fixture",
+  const akte: UseCase = {
+    ...persona("akte-agent"),
+    displayName: "Akte Agent",
     localizations: {
-      en: { displayName: "Generic fixture", description: "Synthetic English assistant", sampleQuestions: ["Start a synthetic task"] },
-      nl: { displayName: "Algemene testassistent", description: "Synthetische Nederlandse assistent", sampleQuestions: ["Begin een synthetische taak"] },
+      en: { displayName: "Akte Agent", description: "Synthetic English assistant", sampleQuestions: ["Start a synthetic task"] },
+      nl: { displayName: "Akte Agent", description: "Synthetische Nederlandse assistent", sampleQuestions: ["Begin een synthetische taak"] },
     },
   };
   const state = {
-    catalog: [generic, persona("synthetic-custom"), persona("synthetic-experimental", false)],
+    catalog: [akte, persona("synthetic-custom"), persona("synthetic-experimental", false)],
     conversations: [] as Conversation[],
     messages: [] as ChatMessage[],
     calls: [] as { conversationId: string; message: string; locale: Locale; useCase: string; attachments?: unknown[] }[],
@@ -53,6 +53,7 @@ async function fixture(page: Page) {
       if (state.fail === "catalog") return fail("CATALOG_ERROR");
       return route.fulfill({ json: { useCases: state.catalog } });
     }
+    if (path === "/api/models") return route.fulfill({ json: { models: [] } });
     if (path === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (path === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (path === "/api/admin/system-prompt") {
@@ -66,6 +67,9 @@ async function fixture(page: Page) {
     }
     if (path === "/api/use-cases/import") {
       if (state.fail === "import") return route.fulfill({ status: 401, json: { detail: "SENSITIVE_SYNTHETIC_DIAGNOSTIC" } });
+      if (state.fail === "unsupported-package") {
+        return route.fulfill({ status: 422, json: { detail: { code: "UNSUPPORTED_PACKAGE_DEPENDENCY" } } });
+      }
       state.imported = request.postDataJSON().manifest;
       state.catalog.push({
         ...persona("synthetic-import"),
@@ -154,7 +158,7 @@ for (const locale of ["en", "nl"] as const) {
   test(`${locale}: stored conversation dates use the selected locale`, async ({ page }) => {
     const state = await fixture(page);
     state.conversations.push({
-      id: "synthetic-old", title: "Synthetic older conversation", useCase: "generic",
+      id: "synthetic-old", title: "Synthetic older conversation", useCase: "akte-agent",
       status: "active", createdAt: "2020-03-21T12:00:00Z", updatedAt: "2020-03-21T12:00:00Z",
     });
     await open(page, locale);
@@ -170,10 +174,10 @@ for (const locale of ["en", "nl"] as const) {
     await expect(page.getByRole("heading", { name: state.catalog[0].localizations![locale]!.displayName! })).toBeVisible();
     const select = page.getByRole("combobox", { name: ui[locale].selectPersona });
     expect(await select.locator("option").evaluateAll((nodes) => nodes.map((n) => (n as HTMLOptionElement).value)))
-      .toEqual(state.catalog.filter((p) => p.curated).map((p) => p.name));
+      .toEqual(state.catalog.map((p) => p.name));
     await select.selectOption("synthetic-custom");
     await expect(page.getByRole("heading", { name: "synthetic-custom" })).toBeVisible();
-    await select.selectOption("generic");
+    await select.selectOption("akte-agent");
     await page.getByRole("textbox", { name: ui[locale].ask }).fill("Synthetic first message");
     await page.getByRole("button", { name: ui[locale].sendMessage, exact: true }).click();
     await expect(page.getByText(locale === "nl" ? "Synthetisch antwoord." : "Synthetic response.", { exact: true })).toBeVisible();
@@ -207,7 +211,7 @@ for (const locale of ["en", "nl"] as const) {
     await expect(editor).toHaveValue("My unsaved draft");
     state.fail = "export";
     await page.getByRole("button", { name: ui[locale]["export.deploy"], exact: true }).click();
-    await page.getByRole("button", { name: /generic-foundry-agent.zip/ }).click();
+    await page.getByRole("button", { name: /akte-agent-foundry-agent.zip/ }).click();
     await expect(page.getByRole("alert").filter({ hasText: ui[locale]["error.EXPORT_ERROR"] })).toBeVisible();
     await expect(page.locator("body")).not.toContainText("SENSITIVE_SYNTHETIC_DIAGNOSTIC");
     expect(state.paths.every((path) => path.startsWith(`${mount}/api/`))).toBe(true);
@@ -262,11 +266,11 @@ test("switching preserves conversation, history, draft, attachments, persona and
   await expect(page.getByRole("textbox", { name: nl.ask })).toHaveValue("Unsent source text");
   await expect(page.getByRole("button", { name: "Bijlage verwijderen: synthetic-source.txt" })).toBeVisible();
   await expect(page.getByText("Synthetic response.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: nl.selectPersona })).toHaveValue("generic");
+  await expect(page.getByRole("combobox", { name: nl.selectPersona })).toHaveValue("akte-agent");
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme!);
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();
   await expect(page.getByText("Synthetisch antwoord.", { exact: true })).toBeVisible();
-  expect(state.calls[1]).toMatchObject({ conversationId: state.calls[0].conversationId, locale: "nl", message: "Unsent source text", useCase: "generic" });
+  expect(state.calls[1]).toMatchObject({ conversationId: state.calls[0].conversationId, locale: "nl", message: "Unsent source text", useCase: "akte-agent" });
   expect(state.calls[1].attachments).toEqual([expect.objectContaining({ displayName: "synthetic-source.txt", content: Buffer.from("SYNTHETIC SOURCE - unchanged").toString("base64") })]);
   await page.getByRole("textbox", { name: nl.ask }).fill("Write this output in English");
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();
@@ -295,7 +299,7 @@ test("explicit preference persists across reload; catalog failure never invents 
   await expect(page.getByRole("button", { name: nl.sendMessage, exact: true })).toBeDisabled();
   state.fail = "";
   await page.getByRole("button", { name: nl.retry }).click();
-  await expect(page.getByRole("heading", { name: "Algemene testassistent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Akte Agent" })).toBeVisible();
   state.fail = "create";
   await page.getByRole("textbox", { name: nl.ask }).fill("Retain this draft");
   await page.getByRole("button", { name: nl.sendMessage, exact: true }).click();
@@ -319,6 +323,29 @@ test("embedded import retains metadata, chosen language, persona and base path",
   await expect(page.getByRole("link", { name: nl.backHost })).toBeVisible();
   expect(new URL(page.url()).pathname).toBe(`${mount}/`);
 });
+
+for (const locale of ["en", "nl"] as const) {
+  test(`${locale}: package-dependent embedded import reports a localized error without a partial persona`, async ({ page }) => {
+    const state = await fixture(page);
+    state.fail = "unsupported-package";
+    const manifest = {
+      name: "synthetic-package-persona",
+      instructions: "Synthetic package-dependent import.",
+      skills: [{ name: "synthetic-package-skill", package: "obsolete-package" }],
+    };
+    await page.addInitScript(({ locale, manifest }) => {
+      localStorage.setItem("kratos.locale", locale);
+      sessionStorage.setItem("kratos.import", JSON.stringify(manifest));
+    }, { locale, manifest });
+    await page.goto(`${FRONTEND_URL}/?embed=1&import=1`);
+    await expect(page.getByRole("alert").filter({ hasText: ui[locale]["error.UNSUPPORTED_PACKAGE_DEPENDENCY"] })).toBeVisible();
+    expect(state.imported).toBeNull();
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona }).locator("option"))
+      .toHaveCount(state.catalog.length);
+    await expect(page.getByRole("combobox", { name: ui[locale].selectPersona }))
+      .not.toHaveValue("synthetic-package-persona");
+  });
+}
 
 for (const locale of ["en", "nl"] as const) {
   test(`${locale}: chat HTTP/SSE failures, history retry and deletion rollback stay visible and safe`, async ({ page }) => {

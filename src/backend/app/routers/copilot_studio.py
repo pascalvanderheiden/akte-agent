@@ -21,7 +21,13 @@ from app.models import (
     Message,
     MessageRole,
 )
-from app.personas import require_available, require_not_retired
+from app.personas import (
+    require_available,
+    require_identified_history,
+    require_not_retired,
+    require_persona_match,
+    resolve_use_case,
+)
 from app.services.model_routing import ModelRouting
 
 logger = logging.getLogger(__name__)
@@ -46,12 +52,15 @@ async def copilot_studio_chat(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    require_available(body.useCase, request.app.state.registries)
     conversation = None
     if body.conversationId:
         conversation = await cosmos.get_conversation(body.conversationId, "copilot-studio")
         if conversation:
+            require_identified_history(conversation.useCase)
             require_not_retired(conversation.useCase)
+            require_persona_match(body.useCase, conversation.useCase)
+    use_case = resolve_use_case(body.useCase, conversation.useCase if conversation else None)
+    require_available(use_case, request.app.state.registries)
 
     # Resolve or create conversation
     conversation_id = body.conversationId
@@ -61,7 +70,7 @@ async def copilot_studio_chat(
             id=str(uuid.uuid4()),
             userId="copilot-studio",
             title=body.message[:80],
-            useCase=body.useCase,
+            useCase=use_case,
             modelSelection=requested_selection,
             status=ConversationStatus.ACTIVE,
             createdAt=now,
@@ -86,7 +95,7 @@ async def copilot_studio_chat(
     async for event_dict in foundry_proxy.invoke(
         message=body.message,
         conversation_id=conversation_id,
-        use_case=body.useCase,
+        use_case=use_case,
         locale=body.locale,
         agent_session_id=agent_session_id,
         model_selection=conversation.modelSelection if conversation else requested_selection,

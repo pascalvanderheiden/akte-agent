@@ -53,6 +53,7 @@ async function setup(page: Page, locale: Locale) {
     if (pathname === "/config.json") return route.fulfill({ json: { apiUrl: `${origin}${mount}` } });
     if (!pathname.startsWith("/api/")) return route.continue();
     if (pathname === "/api/use-cases") return route.fulfill({ json: { useCases: catalog } });
+    if (pathname === "/api/models") return route.fulfill({ json: { models: [] } });
     if (pathname === "/api/admin/skills") return route.fulfill({ json: { skills: [] } });
     if (pathname === "/api/admin/mcp-servers") return route.fulfill({ json: { servers: {} } });
     if (pathname === "/api/conversations") {
@@ -109,7 +110,8 @@ except ValueError as error:
   });
   await page.addInitScript((value) => localStorage.setItem("kratos.locale", value), locale);
   await page.goto(`${FRONTEND_URL}/`);
-  await page.getByRole("combobox", { name: ui[locale].selectPersona }).selectOption("akte-agent");
+  await expect(page.getByRole("heading", { name: "Akte Agent", exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: ui[locale].selectPersona })).toHaveCount(0);
   return { state, input };
 }
 
