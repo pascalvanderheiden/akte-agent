@@ -68,7 +68,7 @@ cd src/backend && uv run pytest && uv run ruff check .
 cd src/frontend && npm run lint && npm run build
 
 # deployed environment, end to end (after any azd deploy)
-cd .copilot/skills/e2e-smoke && ./run.sh          # 21 specs
+cd .copilot/skills/e2e-smoke && ./run.sh          # 17 spec files
 SKIP_BROWSER=1 ./run.sh                           # API-only, no chromium
 ```
 

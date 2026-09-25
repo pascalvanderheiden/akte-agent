@@ -355,38 +355,40 @@ def _criterion_passed(scores: dict[str, Any]) -> bool | None:
     return score >= threshold
 
 
-def _build_agent_messages(response_text: str, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Render the run as the agent-message list the evaluators understand.
+def _render_tool_transcript(tool_calls: list[dict[str, Any]]) -> str:
+    """Render tool activity in the form the judge prompts expect to read."""
+    lines: list[str] = []
+    for call in tool_calls:
+        args = call.get("arguments") or {}
+        rendered = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args)
+        lines.append(f"[TOOL_CALL] {call.get('name', '')}({rendered})")
+        lines.append(f"[TOOL_RESULT] {call.get('result', '')}")
+    return "\n".join(lines)
 
-    ``TaskAdherenceEvaluator`` reformats a message list with
-    ``include_tool_messages=True``, which is the only supported way to show a
-    judge that a claim is backed by real tool activity.
+
+def _patch_task_adherence_tool_calls(evaluator: Any) -> None:
+    """Let TaskAdherence receive the tool transcript it treats as source of truth.
+
+    Its prompt says "TOOL_CALLS are the source of truth. If TOOL_CALLS are
+    empty, assume no tool use", and it then marks unverifiable claims as a
+    material failure. But it builds that slot only from a *list* response,
+    while ``reformat_agent_response`` joins a well-formed list into a string —
+    so the slot is always empty and there is no public parameter for it.
+    Filling it at the prompty boundary is the only available channel.
     """
-    messages: list[dict[str, Any]] = []
-    for idx, call in enumerate(tool_calls):
-        call_id = call.get("tool_call_id") or f"call_{idx}"
-        messages.append(
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_call",
-                        "tool_call_id": call_id,
-                        "name": call.get("name", ""),
-                        "arguments": call.get("arguments") or {},
-                    }
-                ],
-            }
-        )
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": [{"type": "tool_result", "tool_result": call.get("result", "")}],
-            }
-        )
-    messages.append({"role": "assistant", "content": [{"type": "text", "text": response_text}]})
-    return messages
+    flow = getattr(evaluator, "_flow", None)
+    if flow is None or getattr(flow, "_kratos_tool_calls_patched", False):
+        return
+
+    async def _patched(*args: Any, _flow: Any = flow, **kwargs: Any) -> Any:
+        if not kwargs.get("tool_calls"):
+            transcript = getattr(evaluator, "_kratos_tool_transcript", "")
+            if transcript:
+                kwargs["tool_calls"] = transcript
+        return await _flow(*args, **kwargs)
+
+    _patched._kratos_tool_calls_patched = True  # type: ignore[attr-defined]
+    evaluator._flow = _patched
 
 
 def _build_tool_definitions(
@@ -891,6 +893,8 @@ class EvalService:
         for name, cls in evaluator_classes.items():
             try:
                 evaluators[name] = cls(model_config=model_config)
+                if name == "TaskAdherence":
+                    _patch_task_adherence_tool_calls(evaluators[name])
             except Exception as exc:
                 logger.warning("[eval %s] evaluator %s init failed: %s", run_id, name, exc)
         if not evaluators:
@@ -912,7 +916,7 @@ class EvalService:
 
             filtered_tool_calls = _filter_tool_calls(result.tool_calls)
             tool_defs = _build_tool_definitions(expected_tools, filtered_tool_calls)
-            agent_messages = _build_agent_messages(result.response, filtered_tool_calls)
+            tool_transcript = _render_tool_transcript(filtered_tool_calls)
 
             scores: dict[str, dict[str, Any]] = {}
             for eval_name, evaluator in evaluators.items():
@@ -925,12 +929,11 @@ class EvalService:
                         kwargs["tool_calls"] = filtered_tool_calls
                         kwargs["tool_definitions"] = tool_defs
                     elif eval_name in _TOOL_AWARE_EVALUATORS and filtered_tool_calls:
-                        # TaskAdherence and IntentResolution judge whether claims
-                        # are substantiated. Without the tool transcript they
-                        # marked every tool-backed claim as unsupported, so hand
-                        # them the message-list response they know how to read.
-                        kwargs["response"] = agent_messages
+                        # These judges decide whether a claim is substantiated.
+                        # Without evidence they marked every tool-backed
+                        # statement as unsupported.
                         kwargs["tool_definitions"] = tool_defs
+                        evaluator._kratos_tool_transcript = tool_transcript
                     # Run synchronous evaluator in executor to avoid blocking event loop
                     score_result = await asyncio.get_event_loop().run_in_executor(
                         None, lambda ev=evaluator, kw=kwargs: ev(**kw)

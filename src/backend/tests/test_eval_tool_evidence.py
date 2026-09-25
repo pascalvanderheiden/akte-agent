@@ -8,11 +8,11 @@ every tool-backed claim was judged unsubstantiated.
 """
 
 from app.services.eval_service import (
-    _build_agent_messages,
     _build_tool_definitions,
     _criterion_passed,
     _filter_tool_calls,
     _normalise_judge_params,
+    _render_tool_transcript,
 )
 
 
@@ -110,35 +110,34 @@ class TestBuildToolDefinitions:
             assert definition["parameters"] == {"type": "object", "properties": {}}
 
 
-class TestBuildAgentMessages:
-    def test_renders_calls_and_results_before_the_final_answer(self) -> None:
-        messages = _build_agent_messages(
-            "The deed was generated.",
-            [{"name": "mcp-tools-view", "arguments": {"path": "deed.md"}, "result": "ok"}],
+class TestRenderToolTranscript:
+    """TaskAdherence reads TOOL_CALLS as the source of truth for any claim."""
+
+    def test_renders_each_call_and_its_result(self) -> None:
+        transcript = _render_tool_transcript(
+            [{"name": "mcp-tools-view", "arguments": {"path": "deed.md"}, "result": "ok"}]
         )
 
-        assert [m["role"] for m in messages] == ["assistant", "tool", "assistant"]
-        assert messages[0]["content"][0]["type"] == "tool_call"
-        assert messages[0]["content"][0]["tool_call_id"] == messages[1]["tool_call_id"]
-        assert messages[1]["content"][0]["tool_result"] == "ok"
-        assert messages[2]["content"][0]["text"] == "The deed was generated."
+        assert transcript == '[TOOL_CALL] mcp-tools-view({"path": "deed.md"})\n[TOOL_RESULT] ok'
 
-    def test_final_answer_is_present_even_with_no_tool_calls(self) -> None:
-        messages = _build_agent_messages("Nothing to do.", [])
+    def test_no_tool_calls_renders_empty(self) -> None:
+        assert _render_tool_transcript([]) == ""
 
-        assert messages == [{"role": "assistant", "content": [{"type": "text", "text": "Nothing to do."}]}]
-
-    def test_tool_call_ids_are_unique_across_repeated_tools(self) -> None:
-        messages = _build_agent_messages(
-            "done",
+    def test_repeated_tools_each_appear(self) -> None:
+        transcript = _render_tool_transcript(
             [
                 {"name": "mcp-tools-view", "arguments": {}, "result": "a"},
                 {"name": "mcp-tools-view", "arguments": {}, "result": "b"},
-            ],
+            ]
         )
 
-        ids = [m["tool_call_id"] for m in messages if m["role"] == "tool"]
-        assert len(set(ids)) == 2
+        assert transcript.count("[TOOL_CALL]") == 2
+        assert "[TOOL_RESULT] a" in transcript and "[TOOL_RESULT] b" in transcript
+
+    def test_non_dict_arguments_are_stringified(self) -> None:
+        transcript = _render_tool_transcript([{"name": "web-search", "arguments": "notarial deed", "result": ""}])
+
+        assert "[TOOL_CALL] web-search(notarial deed)" in transcript
 
 
 class TestFoundryInvocationsShape:
@@ -194,17 +193,6 @@ class TestToolCallShape:
         )
         assert [c["type"] for c in calls] == ["tool_call", "tool_call"]
         assert [c["tool_call_id"] for c in calls] == ["call_0", "call_1"]
-
-    def test_agent_messages_reuse_the_call_id(self) -> None:
-        calls = _filter_tool_calls(
-            [
-                {"skillName": "view", "status": "started", "arguments": {}},
-                {"skillName": "view", "status": "completed", "result": "ok"},
-            ]
-        )
-        messages = _build_agent_messages("done", calls)
-        assert messages[0]["content"][0]["tool_call_id"] == calls[0]["tool_call_id"]
-        assert messages[1]["tool_call_id"] == calls[0]["tool_call_id"]
 
 
 class TestCriterionVerdict:
