@@ -4,6 +4,16 @@ Bilingual (English/Dutch) AI assistant for notarial work, running on Azure with 
 
 > Based on [aiappsgbb/kratos-agent](https://github.com/aiappsgbb/kratos-agent). For architecture, request flow, skills/MCP internals, observability and troubleshooting, see the Kratos repo.
 
+<p align="center">
+  <img src="docs/static/img/akte-agent-chat.png" alt="Akte Agent producing an intake brief, time record and draft follow-up" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/static/img/akte-agent-home.png" alt="Akte Agent home screen with notarial starter prompts" width="800">
+</p>
+
+<sub>Screenshots use synthetic data.</sub>
+
 ## Features
 
 - **Akte Agent persona** — notarial intake, draft follow-ups and exact time records ([intake](docs/akte-intake.md)); execution preparation and client-funds reconciliation ([execution](docs/akte-execution.md)); registration prep, itemized invoice drafts and dossier handoff ([handoff](docs/akte-handoff.md)). Drafts only — official actions stay human.
