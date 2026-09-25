@@ -33,10 +33,10 @@ async function openSkillsAdmin(page: Page) {
   // Wait for the admin shell — the nav rendering "Evals" tab is a unique marker.
   // If the click didn't propagate due to a hydration race, retry once via JS.
   try {
-    await page.getByRole("button", { name: /^Evals$/ }).waitFor({ timeout: 5_000 });
+    await page.getByRole("button", { name: /^Evals\b/ }).waitFor({ timeout: 5_000 });
   } catch {
     await agentManagerBtn.click({ force: true });
-    await page.getByRole("button", { name: /^Evals$/ }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: /^Evals\b/ }).waitFor({ timeout: 10_000 });
   }
 }
 
@@ -98,7 +98,10 @@ test.describe("UX — interactive flows", () => {
     ];
 
     for (const { label, heading } of expectedTabs) {
-      await page.getByRole("button", { name: new RegExp(`^${label}$`) }).click();
+      // The nav buttons carry a trailing badge count once it loads (e.g.
+      // "Skills 12"), so anchor on the label and allow anything after it —
+      // an exact-match regex only passes while the badge is still pending.
+      await page.getByRole("button", { name: new RegExp(`^${label}\\b`) }).click();
       // Header h1/h2 should reflect the current tab — tolerate either.
       await expect(
         page.locator("h1, h2").filter({ hasText: heading }).first(),
@@ -112,7 +115,7 @@ test.describe("UX — interactive flows", () => {
   }) => {
     await gotoHome(page);
     await openSkillsAdmin(page);
-    await page.getByRole("button", { name: /^Evals$/ }).click();
+    await page.getByRole("button", { name: /^Evals\b/ }).click();
 
     // Wait for the toolbar to render the Generate Scenarios button.
     const generateBtn = page
@@ -142,7 +145,7 @@ test.describe("UX — interactive flows", () => {
   }) => {
     await gotoHome(page);
     await openSkillsAdmin(page);
-    await page.getByRole("button", { name: /^Traces$/ }).click();
+    await page.getByRole("button", { name: /^Traces\b/ }).click();
 
     const refreshBtn = page.getByRole("button", { name: /^Refresh$/ }).first();
     await refreshBtn.waitFor({ state: "visible", timeout: 10_000 });
