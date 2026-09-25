@@ -256,13 +256,17 @@ class ModelRouting:
     def _providers(self, bearer_token_provider: Callable[..., Any] | None) -> list[dict[str, Any]]:
         endpoint = (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint).rstrip("/")
         providers: list[dict[str, Any]] = []
-        for name, deployment in self._provider_entries():
+        for name, _deployment in self._provider_entries():
+            # GPT-6 rejects function tools on /v1/chat/completions ("Function tools with
+            # reasoning_effort are not supported ... use /v1/responses"), and the engine
+            # sends its own effort so reasoning_effort="none" does not clear it. The
+            # Responses API on the unversioned /openai/v1 surface is the only wiring that
+            # carries tools and delegation for these deployments — see ADR 0001.
             provider: dict[str, Any] = {
                 "name": name,
                 "type": "azure",
-                "base_url": f"{endpoint}/openai/deployments/{deployment}",
-                "wire_api": "completions",
-                "azure": {"api_version": "2024-10-21"},
+                "base_url": f"{endpoint}/openai/v1",
+                "wire_api": "responses",
             }
             if bearer_token_provider is not None:
                 provider["bearer_token_provider"] = bearer_token_provider
