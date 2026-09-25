@@ -240,6 +240,19 @@ jobs:
         with:
           node-version: 20
 
+      # The Akte specs drive the packaged catalogue through the real backend,
+      # so they shell out to `src/backend/.venv/bin/python`. A runner has no
+      # virtualenv, and without one those specs fail with a bare ENOENT.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: src/backend/uv.lock
+
+      - name: Create the backend virtualenv
+        working-directory: src/backend
+        run: uv sync --frozen
+
       # The e2e-smoke skill is the repository's post-deploy check. It normally
       # resolves its target from the local azd environment, which a runner does
       # not have, so pass the endpoints explicitly from environment variables.
