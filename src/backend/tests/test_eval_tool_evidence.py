@@ -132,3 +132,22 @@ class TestBuildAgentMessages:
 
         ids = [m["tool_call_id"] for m in messages if m["role"] == "tool"]
         assert len(set(ids)) == 2
+
+
+class TestFoundryInvocationsShape:
+    """The Foundry Invocations protocol passes its own payload through untouched."""
+
+    def test_tool_name_and_arguments_are_understood(self) -> None:
+        calls = _filter_tool_calls(
+            [
+                {"tool_call_id": "c1", "tool_name": "view", "arguments": {"path": "deed.md"}},
+                {"tool_call_id": "c1", "tool_name": "view", "result": "contents"},
+            ]
+        )
+
+        assert [c["name"] for c in calls] == ["mcp-tools-view", "mcp-tools-view"]
+        assert calls[0]["arguments"] == {"path": "deed.md"}
+        assert calls[1]["result"] == "contents"
+
+    def test_internal_tools_are_dropped_on_this_shape_too(self) -> None:
+        assert _filter_tool_calls([{"tool_name": "report_intent", "arguments": {}}]) == []

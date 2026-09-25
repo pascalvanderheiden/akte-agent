@@ -242,13 +242,15 @@ def _extract_tool_calls(response: Any) -> list[dict[str, Any]]:
 def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalise recorded tool calls into the evaluator contract.
 
-    Two shapes arrive here. The Responses-API path emits
-    ``{name, arguments, result}`` directly. The hosted-agent path (which is what
-    evals actually use) appends raw SSE ``ToolCallEvent`` dicts, which carry
+    Three shapes arrive here. The Responses-API path emits
+    ``{name, arguments, result}`` directly. The backend SSE path (which is what
+    evals actually use) appends raw ``ToolCallEvent`` dicts, which carry
     ``skillName`` rather than ``name`` and split a single logical call across a
-    ``started`` event (arguments) and a ``completed`` event (result).
+    ``started`` event (arguments) and a ``completed`` event (result). The Foundry
+    Invocations protocol passes its payload through untouched, using
+    ``tool_name``/``arguments``.
 
-    Reading ``name`` alone therefore matched nothing on the hosted-agent path, so
+    Reading ``name`` alone therefore matched nothing on the paths evals use, so
     no tool evidence ever reached the judges and every tool-backed claim was
     scored as unsubstantiated. Merge the pair, drop internal SDK tools, and apply
     the MCP prefix.
@@ -257,24 +259,21 @@ def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]
     pending: dict[str, list[dict[str, Any]]] = {}
 
     for tc in tool_calls:
-        name = tc.get("name") or tc.get("skillName") or ""
-        if name in _INTERNAL_TOOLS:
+        raw_name = tc.get("name") or tc.get("skillName") or tc.get("tool_name") or ""
+        if raw_name in _INTERNAL_TOOLS:
             continue
-        if name and not name.startswith(_MCP_PREFIX):
-            name = _MCP_PREFIX + name
+        name = raw_name if raw_name.startswith(_MCP_PREFIX) else _MCP_PREFIX + raw_name if raw_name else ""
+
+        raw_args = tc.get("input") if tc.get("input") not in (None, "") else tc.get("arguments")
+        raw_result = tc.get("output") or tc.get("result") or ""
 
         status = tc.get("status", "")
         if not status:
-            # Already in evaluator shape — pass through with the name normalised.
-            merged.append({**tc, "name": name})
+            merged.append({"name": name, "arguments": _coerce_arguments(raw_args), "result": raw_result})
             continue
 
         if status == "started":
-            call = {
-                "name": name,
-                "arguments": _coerce_arguments(tc.get("input")),
-                "result": "",
-            }
+            call = {"name": name, "arguments": _coerce_arguments(raw_args), "result": ""}
             merged.append(call)
             pending.setdefault(name, []).append(call)
         else:
@@ -282,15 +281,9 @@ def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]
             # omits tool_name on completion events, so name order is all we have.
             queue = pending.get(name) or []
             if queue:
-                queue.pop(0)["result"] = tc.get("output", "")
+                queue.pop(0)["result"] = raw_result
             else:
-                merged.append(
-                    {
-                        "name": name,
-                        "arguments": _coerce_arguments(tc.get("input")),
-                        "result": tc.get("output", ""),
-                    }
-                )
+                merged.append({"name": name, "arguments": _coerce_arguments(raw_args), "result": raw_result})
 
     return merged
 
