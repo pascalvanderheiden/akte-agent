@@ -251,7 +251,10 @@ jobs:
 
       - name: Create the backend virtualenv
         working-directory: src/backend
-        run: uv sync --frozen
+        # The Akte fixtures import `tests.test_akte_artifacts`, which imports
+        # pytest. pytest lives in the `dev` extra, and a plain `uv sync` skips
+        # optional-dependency extras.
+        run: uv sync --frozen --extra dev
 
       # The e2e-smoke skill is the repository's post-deploy check. It normally
       # resolves its target from the local azd environment, which a runner does
