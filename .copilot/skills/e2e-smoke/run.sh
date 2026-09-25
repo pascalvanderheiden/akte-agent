@@ -44,10 +44,13 @@ fi
 
 if [[ -z "${SKIP_BROWSER:-}" ]]; then
   PW_BIN="./node_modules/.bin/playwright"
-  if ! "$PW_BIN" install --dry-run chromium >/dev/null 2>&1; then
-    echo "[e2e-smoke] installing chromium for Playwright …"
-    "$PW_BIN" install chromium
-  fi
+  # `playwright install --dry-run` only prints what *would* be installed and
+  # exits 0 whether or not the browser is present, so it can never be used as a
+  # guard — on a clean machine it silently skipped the install and every
+  # browser spec then failed with "Executable doesn't exist". `install` is
+  # itself a no-op when the browser is already cached, so just always run it.
+  echo "[e2e-smoke] ensuring chromium is installed for Playwright …"
+  "$PW_BIN" install chromium
 fi
 
 # --- discover all available use-cases ----------------------------------------
