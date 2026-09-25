@@ -8,7 +8,8 @@ name: Deploy
 #   Secrets   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #             (federated / OIDC credential on the app registration)
 #   Variables AZURE_LOCATION           e.g. eastus2
-#             AGENT_SERVICE_URL        used by the integration tests
+#             AGENT_SERVICE_URL        backend endpoint for the smoke tests
+#             STATIC_WEB_APP_URL       frontend endpoint for the smoke tests
 #   Infra     the azd environment must already be provisioned, or run this
 #             workflow once with `provision: true`.
 #
@@ -69,9 +70,6 @@ on:
 permissions:
   id-token: write
   contents: read
-
-env:
-  PYTHON_VERSION: "3.11"
 
 concurrency:
   # Never let two deploys to the same environment overlap.
@@ -229,7 +227,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:
-    name: Integration Tests
+    name: Smoke Tests
     runs-on: ubuntu-latest
     needs: deploy
     if: inputs.run_integration_tests
@@ -237,17 +235,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Set up Node
+        uses: actions/setup-node@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
+          node-version: 20
 
-      - name: Install test dependencies
-        run: pip install httpx pytest pytest-asyncio pytest-timeout
-
+      # The e2e-smoke skill is the repository's post-deploy check. It normally
+      # resolves its target from the local azd environment, which a runner does
+      # not have, so pass the endpoints explicitly from environment variables.
       # Deliberately NOT `|| true`: these tests exist to catch a bad deploy, so
       # they must be able to fail the run.
-      - name: Run integration tests
+      - name: Run e2e smoke tests
         env:
-          AGENT_SERVICE_URL: ${{ vars.AGENT_SERVICE_URL }}
-        run: pytest tests/integration/ -v --timeout=120
+          KRATOS_BACKEND_URL: ${{ vars.AGENT_SERVICE_URL }}
+          KRATOS_FRONTEND_URL: ${{ vars.STATIC_WEB_APP_URL }}
+        run: ./.copilot/skills/e2e-smoke/run.sh
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-smoke-report
+          path: .copilot/skills/e2e-smoke/playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
