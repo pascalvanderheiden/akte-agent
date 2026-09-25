@@ -44,6 +44,10 @@ logger = logging.getLogger(__name__)
 _INTERNAL_TOOLS: frozenset[str] = frozenset({"report_intent", "skill", "sql", "ask_user"})
 _MCP_PREFIX = "mcp-tools-"
 
+# Evaluators that judge whether a response's claims are substantiated, and so
+# need the tool transcript rather than the bare answer text.
+_TOOL_AWARE_EVALUATORS: frozenset[str] = frozenset({"TaskAdherence", "IntentResolution"})
+
 # Warmup parameters (tuned per foundry-evals skill guidance)
 _WARMUP_ATTEMPTS = 6
 _WARMUP_BACKOFF_S = 5.0
@@ -236,34 +240,142 @@ def _extract_tool_calls(response: Any) -> list[dict[str, Any]]:
 
 
 def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove internal GHCP SDK tools and normalise MCP prefix."""
-    filtered: list[dict[str, Any]] = []
+    """Normalise recorded tool calls into the evaluator contract.
+
+    Two shapes arrive here. The Responses-API path emits
+    ``{name, arguments, result}`` directly. The hosted-agent path (which is what
+    evals actually use) appends raw SSE ``ToolCallEvent`` dicts, which carry
+    ``skillName`` rather than ``name`` and split a single logical call across a
+    ``started`` event (arguments) and a ``completed`` event (result).
+
+    Reading ``name`` alone therefore matched nothing on the hosted-agent path, so
+    no tool evidence ever reached the judges and every tool-backed claim was
+    scored as unsubstantiated. Merge the pair, drop internal SDK tools, and apply
+    the MCP prefix.
+    """
+    merged: list[dict[str, Any]] = []
+    pending: dict[str, list[dict[str, Any]]] = {}
+
     for tc in tool_calls:
-        name = tc.get("name", "")
+        name = tc.get("name") or tc.get("skillName") or ""
         if name in _INTERNAL_TOOLS:
             continue
         if name and not name.startswith(_MCP_PREFIX):
-            tc = {**tc, "name": _MCP_PREFIX + name}
-        filtered.append(tc)
-    return filtered
+            name = _MCP_PREFIX + name
+
+        status = tc.get("status", "")
+        if not status:
+            # Already in evaluator shape — pass through with the name normalised.
+            merged.append({**tc, "name": name})
+            continue
+
+        if status == "started":
+            call = {
+                "name": name,
+                "arguments": _coerce_arguments(tc.get("input")),
+                "result": "",
+            }
+            merged.append(call)
+            pending.setdefault(name, []).append(call)
+        else:
+            # Pair back to the oldest unresolved call of the same tool. The SDK
+            # omits tool_name on completion events, so name order is all we have.
+            queue = pending.get(name) or []
+            if queue:
+                queue.pop(0)["result"] = tc.get("output", "")
+            else:
+                merged.append(
+                    {
+                        "name": name,
+                        "arguments": _coerce_arguments(tc.get("input")),
+                        "result": tc.get("output", ""),
+                    }
+                )
+
+    return merged
 
 
-def _build_tool_definitions(expected_tool_calls: list[str]) -> list[dict[str, Any]]:
-    """Build the tool_definitions list for evaluators from expected tool names.
+def _coerce_arguments(raw: Any) -> dict[str, Any]:
+    """Best-effort parse of a tool call's recorded arguments into a mapping."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return {"input": raw}
+        return parsed if isinstance(parsed, dict) else {"input": parsed}
+    return {}
+
+
+def _build_agent_messages(response_text: str, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Render the run as the agent-message list the evaluators understand.
+
+    ``TaskAdherenceEvaluator`` reformats a message list with
+    ``include_tool_messages=True``, which is the only supported way to show a
+    judge that a claim is backed by real tool activity.
+    """
+    messages: list[dict[str, Any]] = []
+    for idx, call in enumerate(tool_calls):
+        call_id = f"call_{idx}"
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": call_id,
+                        "name": call.get("name", ""),
+                        "arguments": call.get("arguments") or {},
+                    }
+                ],
+            }
+        )
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": [{"type": "tool_result", "tool_result": call.get("result", "")}],
+            }
+        )
+    messages.append({"role": "assistant", "content": [{"type": "text", "text": response_text}]})
+    return messages
+
+
+def _build_tool_definitions(
+    expected_tool_calls: list[str],
+    actual_tool_calls: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the tool_definitions list for evaluators.
 
     ToolCallAccuracyEvaluator requires each definition to carry a ``parameters``
     field (JSON Schema shape). We don't know the real schema of expected tools,
     so emit an empty-object schema which matches the evaluator's contract while
     staying generic.
+
+    Tools the agent actually invoked are included alongside the expected ones —
+    a judge that only sees the expected list cannot tell that a tool it wasn't
+    told about was legitimately available.
     """
-    filtered = [t for t in expected_tool_calls if t not in _INTERNAL_TOOLS]
+    names: list[str] = []
+    for raw in expected_tool_calls:
+        if raw in _INTERNAL_TOOLS:
+            continue
+        name = raw if raw.startswith(_MCP_PREFIX) else _MCP_PREFIX + raw
+        if name not in names:
+            names.append(name)
+    for call in actual_tool_calls or []:
+        name = call.get("name", "")
+        if name and name not in names:
+            names.append(name)
+
     return [
         {
-            "name": t if t.startswith(_MCP_PREFIX) else _MCP_PREFIX + t,
-            "description": f"Skill: {t}",
+            "name": name,
+            "description": f"Skill: {name.removeprefix(_MCP_PREFIX)}",
             "parameters": {"type": "object", "properties": {}},
         }
-        for t in filtered
+        for name in names
     ]
 
 
@@ -742,7 +854,8 @@ class EvalService:
             eval_query = f"{result.query}\n\nExpected: {expected_behavior}" if expected_behavior else result.query
 
             filtered_tool_calls = _filter_tool_calls(result.tool_calls)
-            tool_defs = _build_tool_definitions(expected_tools)
+            tool_defs = _build_tool_definitions(expected_tools, filtered_tool_calls)
+            agent_messages = _build_agent_messages(result.response, filtered_tool_calls)
 
             scores: dict[str, dict[str, Any]] = {}
             for eval_name, evaluator in evaluators.items():
@@ -753,6 +866,13 @@ class EvalService:
                     }
                     if eval_name == "ToolCallAccuracy" and filtered_tool_calls:
                         kwargs["tool_calls"] = filtered_tool_calls
+                        kwargs["tool_definitions"] = tool_defs
+                    elif eval_name in _TOOL_AWARE_EVALUATORS and filtered_tool_calls:
+                        # TaskAdherence and IntentResolution judge whether claims
+                        # are substantiated. Without the tool transcript they
+                        # marked every tool-backed claim as unsupported, so hand
+                        # them the message-list response they know how to read.
+                        kwargs["response"] = agent_messages
                         kwargs["tool_definitions"] = tool_defs
                     # Run synchronous evaluator in executor to avoid blocking event loop
                     score_result = await asyncio.get_event_loop().run_in_executor(

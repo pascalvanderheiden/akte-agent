@@ -1213,7 +1213,12 @@ class CopilotAgent:
                                     ToolCallEvent(
                                         skillName=tool_name,
                                         status="started",
-                                        input=_extract_tool_value(getattr(event.data, "input", "")),
+                                        # The SDK carries the call's arguments on
+                                        # `arguments`; `input` has never existed, so
+                                        # reading it alone always yielded "".
+                                        input=_extract_tool_value(
+                                            getattr(event.data, "arguments", None) or getattr(event.data, "input", "")
+                                        ),
                                         source=self._resolve_skill_source(cid, tool_name),
                                     )
                                 )
