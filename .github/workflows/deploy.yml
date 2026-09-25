@@ -11,6 +11,9 @@ name: Deploy
 #             AGENT_SERVICE_URL        used by the integration tests
 #   Infra     the azd environment must already be provisioned, or run this
 #             workflow once with `provision: true`.
+#
+# `turbo-akte-agent` is the already-provisioned environment and is the default;
+# `staging` and `production` have no infrastructure yet and need `provision: true`.
 # Add required reviewers to the `production` environment to gate releases.
 
 on:
@@ -20,8 +23,8 @@ on:
         description: "Target environment"
         required: true
         type: choice
-        options: [staging, production]
-        default: staging
+        options: [turbo-akte-agent, staging, production]
+        default: turbo-akte-agent
       provision:
         description: "Run `azd provision` first (needed for a brand-new environment)"
         type: boolean
