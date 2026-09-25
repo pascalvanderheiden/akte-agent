@@ -269,11 +269,11 @@ def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]
 
         status = tc.get("status", "")
         if not status:
-            merged.append({"name": name, "arguments": _coerce_arguments(raw_args), "result": raw_result})
+            merged.append(_tool_call_record(name, raw_args, raw_result))
             continue
 
         if status == "started":
-            call = {"name": name, "arguments": _coerce_arguments(raw_args), "result": ""}
+            call = _tool_call_record(name, raw_args, "")
             merged.append(call)
             pending.setdefault(name, []).append(call)
         else:
@@ -283,9 +283,27 @@ def _filter_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]
             if queue:
                 queue.pop(0)["result"] = raw_result
             else:
-                merged.append({"name": name, "arguments": _coerce_arguments(raw_args), "result": raw_result})
+                merged.append(_tool_call_record(name, raw_args, raw_result))
+
+    for index, call in enumerate(merged):
+        call["tool_call_id"] = f"call_{index}"
 
     return merged
+
+
+def _tool_call_record(name: str, raw_args: Any, result: Any) -> dict[str, Any]:
+    """Build one tool call in the only shape the evaluators accept.
+
+    ``ToolCallAccuracyEvaluator`` rejects anything without ``type: "tool_call"``
+    outright ("Unsupported tool call format"), which it reports as a skipped,
+    not-applicable result rather than a failure.
+    """
+    return {
+        "type": "tool_call",
+        "name": name,
+        "arguments": _coerce_arguments(raw_args),
+        "result": result,
+    }
 
 
 def _coerce_arguments(raw: Any) -> dict[str, Any]:
@@ -301,6 +319,42 @@ def _coerce_arguments(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _criterion_passed(scores: dict[str, Any]) -> bool | None:
+    """Decide whether one evaluator's score dict counts as a pass.
+
+    azure-ai-evaluation reports its verdict on ``<metric>_result`` and
+    ``<metric>_passed``, never on a bare ``passed`` key, and a metric can also
+    come back ``not_applicable`` or as a raised error. Returns ``None`` when the
+    evaluator produced no verdict, so it is excluded rather than counted as a
+    failure.
+    """
+    if "error" in scores:
+        return None
+    for key, value in scores.items():
+        if key.endswith("_result") and isinstance(value, str):
+            if value == "not_applicable":
+                return None
+            return value == "pass"
+    for key, value in scores.items():
+        if key.endswith("_passed") and isinstance(value, bool):
+            return value
+    threshold = next(
+        (v for k, v in scores.items() if k.endswith("_threshold") and isinstance(v, (int, float))),
+        3,
+    )
+    score = next(
+        (
+            v
+            for k, v in scores.items()
+            if k.endswith("_score") and isinstance(v, (int, float)) and not isinstance(v, bool)
+        ),
+        None,
+    )
+    if score is None:
+        return None
+    return score >= threshold
+
+
 def _build_agent_messages(response_text: str, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Render the run as the agent-message list the evaluators understand.
 
@@ -310,7 +364,7 @@ def _build_agent_messages(response_text: str, tool_calls: list[dict[str, Any]]) 
     """
     messages: list[dict[str, Any]] = []
     for idx, call in enumerate(tool_calls):
-        call_id = f"call_{idx}"
+        call_id = call.get("tool_call_id") or f"call_{idx}"
         messages.append(
             {
                 "role": "assistant",
@@ -372,14 +426,28 @@ def _build_tool_definitions(
     ]
 
 
-def _apply_openai_max_tokens_patch() -> None:
-    """Translate ``max_tokens`` → ``max_completion_tokens`` on OpenAI calls.
+def _normalise_judge_params(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite prompty-hardcoded sampling parameters the judge model rejects.
 
-    gpt-5.x / o1-* models reject ``max_tokens`` and require the new
-    ``max_completion_tokens`` parameter. azure-ai-evaluation's prompty
-    templates still hardcode ``max_tokens``, so we monkey-patch the OpenAI
-    chat-completions ``create`` method to rewrite the parameter at call time.
-    Idempotent.
+    azure-ai-evaluation's prompty templates hardcode ``max_tokens`` and
+    ``temperature: 0``. Reasoning models reject both: they require
+    ``max_completion_tokens``, and they support only the default temperature.
+    Sending either fails the whole evaluator with a 400.
+    """
+    if "max_tokens" in kwargs:
+        legacy = kwargs.pop("max_tokens")
+        kwargs.setdefault("max_completion_tokens", legacy)
+    for param in ("temperature", "top_p"):
+        if kwargs.get(param) is not None and kwargs[param] != 1:
+            kwargs.pop(param)
+    return kwargs
+
+
+def _apply_openai_max_tokens_patch() -> None:
+    """Make OpenAI chat-completions calls acceptable to a reasoning judge model.
+
+    azure-ai-evaluation builds its requests from prompty templates we do not
+    control, so the parameters are rewritten at call time. Idempotent.
     """
     try:
         from openai.resources.chat import completions as _cc  # noqa: PLC0415
@@ -395,18 +463,14 @@ def _apply_openai_max_tokens_patch() -> None:
             if cls_name == "AsyncCompletions":
 
                 async def _patched_async(self, *args, _orig=orig, **kwargs):  # type: ignore[no-untyped-def]
-                    if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
-                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-                    return await _orig(self, *args, **kwargs)
+                    return await _orig(self, *args, **_normalise_judge_params(kwargs))
 
                 _patched_async._kratos_max_tokens_patched = True  # type: ignore[attr-defined]
                 cls.create = _patched_async  # type: ignore[assignment]
             else:
 
                 def _patched_sync(self, *args, _orig=orig, **kwargs):  # type: ignore[no-untyped-def]
-                    if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
-                        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-                    return _orig(self, *args, **kwargs)
+                    return _orig(self, *args, **_normalise_judge_params(kwargs))
 
                 _patched_sync._kratos_max_tokens_patched = True  # type: ignore[attr-defined]
                 cls.create = _patched_sync  # type: ignore[assignment]
@@ -886,17 +950,12 @@ class EvalService:
 
             # Accumulate per-criterion pass/fail
             for criterion, sd in scores.items():
+                verdict = _criterion_passed(sd)
+                if verdict is None:
+                    continue
                 if criterion not in criteria_totals:
                     criteria_totals[criterion] = {"passed": 0, "failed": 0}
-                passed = sd.get("passed", False)
-                if not passed:
-                    # Treat numeric score >= 3 as pass (5-point scale)
-                    score_val = next((v for v in sd.values() if isinstance(v, (int, float))), None)
-                    passed = bool(score_val is not None and score_val >= 3)
-                if passed:
-                    criteria_totals[criterion]["passed"] += 1
-                else:
-                    criteria_totals[criterion]["failed"] += 1
+                criteria_totals[criterion]["passed" if verdict else "failed"] += 1
 
         # Aggregate: scenario "passed" if ALL criteria passed
         passed_count = 0
@@ -905,16 +964,9 @@ class EvalService:
             if result.status == "error":
                 failed_count += 1
                 continue
-            all_passed = all(
-                sd.get("passed", False)
-                or (
-                    next((v for v in sd.values() if isinstance(v, (int, float))), None) is not None
-                    and next((v for v in sd.values() if isinstance(v, (int, float))), 0) >= 3
-                )
-                for sd in result.scores.values()
-                if "error" not in sd
-            )
-            if all_passed and result.scores:
+            verdicts = [_criterion_passed(sd) for sd in result.scores.values()]
+            graded = [v for v in verdicts if v is not None]
+            if graded and all(graded):
                 passed_count += 1
             else:
                 failed_count += 1
