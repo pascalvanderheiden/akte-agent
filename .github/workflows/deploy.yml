@@ -110,6 +110,14 @@ jobs:
       - name: Install azd
         uses: Azure/setup-azd@v2.4.0
 
+      # `azure.yaml` declares the Foundry agents extension for the hosted
+      # `kratos-agent` service, and azd refuses to auto-install extensions in
+      # CI. Install it explicitly before any command that reads `azure.yaml`,
+      # otherwise every one of them fails with "Auto-installation is not
+      # supported in CI/CD environments".
+      - name: Install azd extensions
+        run: azd extension install azure.ai.agents --source azd
+
       - name: Azure Login
         uses: azure/login@v3
         with:
