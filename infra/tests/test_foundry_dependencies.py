@@ -145,8 +145,13 @@ class ApplicationInsightsAlertTests(unittest.TestCase):
         self.assertEqual("GreaterThan", criterion["operator"])
         self.assertEqual(2, criterion["threshold"])
         self.assertIn("traces", criterion["query"])
-        self.assertIn("Failed to persist user message to Cosmos (non-fatal)", criterion["query"])
-        self.assertIn("Failed to persist assistant message to Cosmos (non-fatal)", criterion["query"])
+        hosted_agent = (Path(__file__).resolve().parents[2] / "src" / "hosted-agent" / "main.py").read_text()
+        for signature in (
+            "Failed to persist user message to Cosmos (non-fatal)",
+            "Failed to persist assistant message to Cosmos (non-fatal)",
+        ):
+            self.assertIn(signature, criterion["query"])
+            self.assertIn(signature, hosted_agent)
 
 
 class AgentServiceModelEnvironmentTests(unittest.TestCase):
