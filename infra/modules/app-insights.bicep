@@ -28,6 +28,7 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
   properties: {
     displayName: 'Hosted-agent Cosmos persistence failures'
     description: 'Repeated hosted-agent user or assistant message persistence failures.'
+    // Azure Monitor severity 2 is Warning.
     severity: 2
     enabled: true
     evaluationFrequency: 'PT5M'
