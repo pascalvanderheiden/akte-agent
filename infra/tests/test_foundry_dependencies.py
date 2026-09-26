@@ -115,6 +115,40 @@ class FoundryDependenciesTests(unittest.TestCase):
         )
 
 
+class ApplicationInsightsAlertTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        module = Path(__file__).resolve().parents[1] / "modules" / "app-insights.bicep"
+        cls.template = json.loads(
+            subprocess.check_output(
+                ["az", "bicep", "build", "--file", str(module), "--stdout"],
+                text=True,
+            )
+        )
+        cls.alert = next(
+            resource
+            for resource in cls.template["resources"]
+            if resource["type"] == "Microsoft.Insights/scheduledQueryRules"
+        )
+
+    def test_cosmos_persistence_alert_targets_application_insights(self):
+        self.assertEqual(
+            ["[resourceId('Microsoft.Insights/components', parameters('name'))]"],
+            self.alert["properties"]["scopes"],
+        )
+
+    def test_cosmos_persistence_alert_is_narrow_and_requires_repeated_failures(self):
+        properties = self.alert["properties"]
+        criterion = properties["criteria"]["allOf"][0]
+
+        self.assertEqual("PT15M", properties["windowSize"])
+        self.assertEqual("GreaterThan", criterion["operator"])
+        self.assertEqual(2, criterion["threshold"])
+        self.assertIn("traces", criterion["query"])
+        self.assertIn("Failed to persist user message to Cosmos (non-fatal)", criterion["query"])
+        self.assertIn("Failed to persist assistant message to Cosmos (non-fatal)", criterion["query"])
+
+
 class AgentServiceModelEnvironmentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
