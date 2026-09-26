@@ -64,7 +64,9 @@ jobs:
                 issue(number:$number) {
                   id
                   state
-                  assignees(first:20) { nodes { login id } }
+                  assignedActors(first:20) {
+                    nodes { ... on Bot { id login } ... on User { id login } }
+                  }
                 }
               }
             }' --jq '.data.repository.issue')
@@ -74,17 +76,19 @@ jobs:
             exit 0
           fi
 
-          if echo "$issue" | jq -e '.assignees.nodes[] | select(.login == "copilot-swe-agent")' >/dev/null; then
+          if echo "$issue" | jq -e '.assignedActors.nodes[] | select(.login == "copilot-swe-agent")' >/dev/null; then
             echo "Copilot coding agent is already assigned to #$ISSUE_NUMBER."
             exit 0
           fi
 
-          # replaceActorsForAssignable replaces the whole set, so keep the humans.
+          # replaceActorsForAssignable replaces the whole set, so keep the existing
+          # actors. Read them from assignedActors, not assignees: the latter is a
+          # User connection and silently omits bots.
           # gh's -f/-F cannot pass a list variable, so post the payload as raw JSON.
           echo "$issue" | jq -c --arg bot "$bot_id" '{
-            query: "mutation($assignableId:ID!, $actorIds:[ID!]!) { replaceActorsForAssignable(input:{assignableId:$assignableId, actorIds:$actorIds}) { assignable { ... on Issue { number assignees(first:20) { nodes { login } } } } } }",
-            variables: { assignableId: .id, actorIds: ([.assignees.nodes[].id] + [$bot]) }
+            query: "mutation($assignableId:ID!, $actorIds:[ID!]!) { replaceActorsForAssignable(input:{assignableId:$assignableId, actorIds:$actorIds}) { assignable { ... on Issue { number assignedActors(first:20) { nodes { ... on Bot { login } ... on User { login } } } } } } }",
+            variables: { assignableId: .id, actorIds: ([.assignedActors.nodes[].id] + [$bot]) }
           }' | gh api graphql --input - \
-            --jq '.data.replaceActorsForAssignable.assignable.assignees.nodes[].login'
+            --jq '.data.replaceActorsForAssignable.assignable.assignedActors.nodes[].login'
 
           echo "Assigned Copilot coding agent to #$ISSUE_NUMBER."
