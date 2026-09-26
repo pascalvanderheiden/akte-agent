@@ -1,0 +1,90 @@
+name: Assign Copilot coding agent
+
+# Deterministic hand-off: when a ticket is labelled `ready-for-agent`, assign the
+# Copilot coding agent so it opens a draft PR for the issue. No LLM reasoning is
+# involved, so this is a plain GitHub Action rather than an agentic workflow.
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to assign the Copilot coding agent to
+        required: true
+        type: number
+
+concurrency:
+  group: assign-copilot-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  assign:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-agent'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign Copilot coding agent
+        env:
+          # A PAT or GitHub App token is preferred: assignments made with the default
+          # GITHUB_TOKEN do not always start the coding agent. Falls back so the
+          # workflow still runs (and fails loudly) when the secret is absent.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          owner="${REPO%/*}"
+          name="${REPO#*/}"
+
+          bot_id=$(gh api graphql \
+            -f owner="$owner" -f name="$name" \
+            -f query='query($owner:String!, $name:String!) {
+              repository(owner:$owner, name:$name) {
+                suggestedActors(capabilities:[CAN_BE_ASSIGNED], first:100) {
+                  nodes { login ... on Bot { id } ... on User { id } }
+                }
+              }
+            }' --jq '.data.repository.suggestedActors.nodes[]
+                     | select(.login == "copilot-swe-agent") | .id')
+
+          if [ -z "${bot_id:-}" ]; then
+            echo "::error::Copilot coding agent is not assignable in $REPO. Enable it under Settings > Copilot > Coding agent."
+            exit 1
+          fi
+
+          issue=$(gh api graphql \
+            -f owner="$owner" -f name="$name" -F number="$ISSUE_NUMBER" \
+            -f query='query($owner:String!, $name:String!, $number:Int!) {
+              repository(owner:$owner, name:$name) {
+                issue(number:$number) {
+                  id
+                  state
+                  assignees(first:20) { nodes { login id } }
+                }
+              }
+            }' --jq '.data.repository.issue')
+
+          if [ "$(echo "$issue" | jq -r '.state')" != "OPEN" ]; then
+            echo "Issue #$ISSUE_NUMBER is closed; nothing to assign."
+            exit 0
+          fi
+
+          if echo "$issue" | jq -e '.assignees.nodes[] | select(.login == "copilot-swe-agent")' >/dev/null; then
+            echo "Copilot coding agent is already assigned to #$ISSUE_NUMBER."
+            exit 0
+          fi
+
+          # replaceActorsForAssignable replaces the whole set, so keep the humans.
+          # gh's -f/-F cannot pass a list variable, so post the payload as raw JSON.
+          echo "$issue" | jq -c --arg bot "$bot_id" '{
+            query: "mutation($assignableId:ID!, $actorIds:[ID!]!) { replaceActorsForAssignable(input:{assignableId:$assignableId, actorIds:$actorIds}) { assignable { ... on Issue { number assignees(first:20) { nodes { login } } } } } }",
+            variables: { assignableId: .id, actorIds: ([.assignees.nodes[].id] + [$bot]) }
+          }' | gh api graphql --input - \
+            --jq '.data.replaceActorsForAssignable.assignable.assignees.nodes[].login'
+
+          echo "Assigned Copilot coding agent to #$ISSUE_NUMBER."
