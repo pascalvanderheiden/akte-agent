@@ -12,6 +12,7 @@ concurrency:
 permissions:
   contents: read
   issues: read
+  copilot-requests: write
 skills:
   - .github/skills/to-tickets
 tools:
