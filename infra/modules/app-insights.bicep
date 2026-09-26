@@ -38,6 +38,7 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
     criteria: {
       allOf: [
         {
+          // Keep these signatures synchronized with the persistence warnings in src/hosted-agent/main.py.
           query: '''
             traces
             | where message in (
@@ -47,6 +48,7 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
           '''
           timeAggregation: 'Count'
           operator: 'GreaterThan'
+          // GreaterThan 2 alerts on the third warning in the window.
           threshold: 2
           failingPeriods: {
             numberOfEvaluationPeriods: 1
