@@ -498,6 +498,7 @@ class EvalService:
         self._registries = registries
         self._foundry_proxy = foundry_proxy
         self._tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._active_runs: dict[tuple[str, str], EvalRun] = {}
         self._cancel_requests: set[tuple[str, str]] = set()
 
     # ── Hosted-agent invocation helper (uses Invocations protocol via FoundryAgentProxy) ──
@@ -652,6 +653,7 @@ class EvalService:
         )
         key = (use_case, run_id)
         self._tasks[key] = task
+        self._active_runs[key] = run
         task.add_done_callback(lambda _task: self._cleanup_run(key))
 
         logger.info(
@@ -678,13 +680,18 @@ class EvalService:
             return run
         if run.status in {EvalRunStatus.COMPLETED, EvalRunStatus.FAILED}:
             raise ValueError(f"Run '{run_id}' has already finished")
-        self._cancel_requests.add((use_case, run_id))
+        key = (use_case, run_id)
+        task = self._tasks.get(key)
+        if task is not None and not task.done():
+            self._cancel_requests.add(key)
+            run = self._active_runs.get(key, run)
         run.status = EvalRunStatus.CANCELLED
         await self._storage.save_run(run)
         return run
 
     def _cleanup_run(self, key: tuple[str, str]) -> None:
         self._tasks.pop(key, None)
+        self._active_runs.pop(key, None)
         self._cancel_requests.discard(key)
 
     async def _stop_if_cancelled(self, run: EvalRun) -> bool:

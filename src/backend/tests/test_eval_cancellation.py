@@ -111,15 +111,17 @@ async def test_cancel_run_stops_before_the_next_scenario_and_persists_cancelled(
         return "done", [], None, []
 
     service._invoke_hosted_agent = invoke  # type: ignore[method-assign]
-    service._score_run = MagicMock()  # type: ignore[method-assign]
+    service._score_run = AsyncMock()  # type: ignore[method-assign]
 
     task = asyncio.create_task(service._execute_run(run))
     service._tasks[(run.use_case, run.run_id)] = task
+    service._active_runs[(run.use_case, run.run_id)] = run
     await first_started.wait()
 
     cancelled = await service.cancel_run(run.use_case, run.run_id)
     assert cancelled is not None
     assert cancelled.status == EvalRunStatus.CANCELLED
+    assert run.status == EvalRunStatus.CANCELLED
     assert not task.done()
 
     release_first.set()
