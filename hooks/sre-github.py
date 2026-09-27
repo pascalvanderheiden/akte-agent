@@ -373,8 +373,7 @@ class GitHubSetup:
                 matches.append(repo)
         if len(matches) > 1:
             fail("Duplicate target repository/branch registrations; resolve them manually before retrying.")
-        matched_existing = bool(matches)
-        wrote_repository = False
+        reused_existing_registration = bool(matches)
         name = (
             matches[0]["name"] if matches else "github-" + hashlib.sha256(f"{url}\n{branch}".encode()).hexdigest()[:24]
         )
@@ -389,7 +388,6 @@ class GitHubSetup:
                 path,
                 {"name": name, "type": "CodeRepo", "properties": {"url": url, "type": "GitHub", "branch": branch}},
             )
-            wrote_repository = True
 
         for attempt in range(self.attempts):
             repo = self.data_plane("GET", path)
@@ -411,7 +409,7 @@ class GitHubSetup:
             commit = props.get("latestCommit")
             # For existing registrations, isHealthy is the SRE data-plane connection health signal.
             # It is stronger evidence than a cached cloneStatus/latestCommit pair alone.
-            if matched_existing and not wrote_repository and clone == "Ready" and props.get("isHealthy") is True:
+            if reused_existing_registration and clone == "Ready" and props.get("isHealthy") is True:
                 ready("Existing GitHub repository registration is healthy in the SRE data plane.")
             if (
                 clone == "Ready"
