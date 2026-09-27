@@ -84,7 +84,7 @@ jobs:
               approved=$((approved + 1))
             done
 
-            if [ "$approved" -gt 0 ]; then
+            if [ "$approved" -gt 0 ] || [ "$attempt" -eq 5 ]; then
               break
             fi
 
