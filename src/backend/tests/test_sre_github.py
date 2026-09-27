@@ -418,6 +418,14 @@ def test_existing_healthy_registration_is_ready(
     assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
 
 
+def test_new_healthy_registration_still_requires_fresh_access_acceptance(fake_bin: Path, log: Path) -> None:
+    items = sequence(existing=False)
+    items[-1]["body"]["properties"]["isHealthy"] = True
+    check(run_hook(SETUP, fake_bin, log, settings(items)), fake_bin, "pending")
+    writes = [json.loads(line) for line in log.read_text().splitlines() if json.loads(line).get("method") == "PUT"]
+    assert len(writes) == 1
+
+
 @pytest.mark.parametrize("raw", ['""', "null", "5", '"bad\\nvalue"'])
 def test_malformed_token_never_reaches_http(raw: str, fake_bin: Path, log: Path) -> None:
     check(run_hook(SETUP, fake_bin, log, settings([], FAKE_TOKEN=raw)), fake_bin, "failed", 1)

@@ -303,7 +303,7 @@ class GitHubSetup:
     def setup(self) -> None:
         url, host, slug = repository_url(os.environ.get("SRE_GITHUB_REPOSITORY_URL") or DEFAULT_REPOSITORY)
         branch = os.environ.get("SRE_GITHUB_BRANCH") or ""
-        default_branch = ""
+        branch_is_discovered_default = False
         if branch:
             branch = branch_name(branch)
         self.resolve_endpoint()
@@ -331,7 +331,7 @@ class GitHubSetup:
             if not isinstance(data, dict) or "default_branch" not in data:
                 fail("Malformed default-branch discovery response.")
             branch = branch_name(data["default_branch"])
-            default_branch = branch
+            branch_is_discovered_default = True
 
         status, data = self.github(host, f"/repos/{slug}/branches/{quote(branch, safe='')}")
         expected_commit = ""
@@ -350,7 +350,7 @@ class GitHubSetup:
             fail("Malformed or paginated repository collection; refusing an incomplete registration check.")
 
         def branch_matches(value: object) -> bool:
-            return value == branch or (value is None and bool(default_branch) and branch == default_branch)
+            return value == branch or (value is None and branch_is_discovered_default)
 
         matches = []
         for repo in repos:
@@ -371,6 +371,7 @@ class GitHubSetup:
                 matches.append(repo)
         if len(matches) > 1:
             fail("Duplicate target repository/branch registrations; resolve them manually before retrying.")
+        matched_existing = bool(matches)
         name = (
             matches[0]["name"] if matches else "github-" + hashlib.sha256(f"{url}\n{branch}".encode()).hexdigest()[:24]
         )
@@ -404,7 +405,7 @@ class GitHubSetup:
                 fail("Repository readback does not match the requested repository and branch.")
             clone = props.get("cloneStatus")
             commit = props.get("latestCommit")
-            if clone == "Ready" and props.get("isHealthy") is True:
+            if matched_existing and clone == "Ready" and props.get("isHealthy") is True:
                 ready("Existing GitHub repository registration is healthy in the SRE data plane.")
             if (
                 clone == "Ready"
