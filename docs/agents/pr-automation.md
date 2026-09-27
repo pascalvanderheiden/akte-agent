@@ -11,7 +11,7 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer and requests `copilot-pull-request-reviewer[bot]`. Drops stale `reviewed` / `ready-to-merge` labels when the head commit moves. |
+| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` labels when the head commit moves. |
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and approves the CI runs sitting in `action_required`. |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
@@ -65,44 +65,63 @@ Two further consequences worth keeping in mind:
 
 ## Approval gating
 
-The `reviewed` step approves workflow runs because GitHub can hold them in
-`action_required` until a maintainer clicks **Approve workflows to run**, and a
-held run blocks the merge gate indefinitely.
+**This is the one thing that stops the chain running unattended, and it cannot
+be fixed from inside a workflow.**
 
-Two things about that mechanism are worth knowing before changing it, because
-both were established the hard way here:
+GitHub holds workflow runs on the Copilot coding agent's pull requests in
+`action_required` until someone with write access clicks **Approve workflows to
+run**. Every trigger is affected — `pull_request` CI *and* the
+`pull_request_target` workflows here — even though the branches are in this
+repository and not a fork:
 
-- **`POST /actions/runs/{id}/approve` is narrower than it looks.** It accepts
-  runs from fork pull requests and runs queued by the Actions bot. Anything else
-  comes back `403 This run is not from a fork pull request or queued by the
-  Actions bot` — including for a repository admin holding a `repo`-scoped token.
-  So a 403 carrying that message is not a permissions problem and no token will
-  fix it. Both workflows treat it as "nothing to do" and carry on.
-- **Copilot coding agent `pull_request` runs are not held.** They execute
-  normally. The runs that did pile up in `action_required` here were
-  base-context `workflow_run` runs on `main`, which have no pull request to
-  gate, cannot be approved, and only existed because post-merge CI was spawning
-  them. `pr-auto-merge` now carries `branches-ignore: [main]` so they are never
-  created.
+```
+CI              | pull_request        | completed/action_required | copilot/...
+PR review by Copilot | pull_request_target | completed/action_required | copilot/...
+```
 
-`approve-gated-runs` is the backstop. `pr-reviewed` only sees the runs that
-exist at the moment the review lands, so anything queued afterwards — a re-run,
-a slow check suite — would otherwise sit there with no event to release it. The
-sweeper runs on a schedule, whose actor is the last person to touch the workflow
-file, and it looks only at the head commits of open pull requests. Runs on
-branches with no open PR are neither approvable nor blocking, so sweeping them
-would only generate noise.
+And the obvious escape hatch is closed:
+`POST /actions/runs/{id}/approve` only accepts runs from **fork** pull requests
+and runs queued by the Actions bot. For these runs it returns
+`403 This run is not from a fork pull request or queued by the Actions bot` —
+and it returns that to a repository **admin** holding a `repo`-scoped token, so
+it is not a permissions problem and no secret will fix it.
 
-If you would rather remove the gating at source than work around it, the policy
-is settable:
+The practical consequences:
+
+- The first approval on each Copilot PR is manual. Once approved, later pushes
+  to that same PR run automatically.
+- `approve-gated-runs` and the approve step in `pr-reviewed` still handle the
+  cases the API *does* accept, and treat that specific 403 as nothing-to-do so
+  they never fail the chain over something they cannot change.
+
+The only way to remove the gate is to loosen the repository policy, which has
+exactly three values and no "off":
 
 ```bash
-gh api --method PUT repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval \
-  -f approval_policy=...
+gh api repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval
+# first_time_contributors_new_to_github | first_time_contributors | all_external_contributors
 ```
 
 That is a security decision about fork pull requests on a public repository, so
 it is deliberately not automated here.
+
+## Draft pull requests
+
+The coding agent opens its PR as a draft, pushes to it for a while, and asks the
+person who delegated the task to review it. Two GitHub behaviours shape how
+`pr-copilot-review` handles that:
+
+- **Requesting a review on a draft silently fails.** The API answers `200 OK`
+  and the reviewer simply does not appear. So the workflow verifies the reviewer
+  afterwards rather than trusting the status code, and does not bother asking
+  until the PR is ready.
+- **Removing a reviewer from a draft works normally.** So the human review
+  request is cleared as soon as the PR is opened, rather than sitting in
+  someone's queue for however long the draft lasts.
+
+Pushes to a draft are ignored — there is no review to refresh yet, and the
+reviewer cleanup already happened when the PR was opened. `ready_for_review`
+brings the PR back to request the review.
 
 ## Labels
 
