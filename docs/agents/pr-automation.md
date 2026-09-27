@@ -1,32 +1,33 @@
 # PR automation
 
-Four plain GitHub Actions carry a pull request from "opened" to "merged, with
-every completed parent issue closed", and a fifth keeps them unblocked. None of
-them needs an LLM, so none is an agentic workflow.
+Five plain GitHub Actions carry a pull request from "opened" to "merged, with
+every completed parent issue closed". None of them needs an LLM, so none is an
+agentic workflow.
 
 ```
 pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
-                    approve-gated-runs (schedule, safety net)
+                    approve-gated-runs (schedule, drives the chain)
 ```
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
 | `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` labels when the head commit moves. |
-| `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and approves the CI runs sitting in `action_required`. |
+| `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
-| `approve-gated-runs.yml` | `schedule`, every 10 minutes | Approves runs left in `action_required` on the head commit of an open PR, catching anything queued after the review landed. See "Approval gating" below. |
+| `approve-gated-runs.yml` | `schedule`, every 10 minutes | **Load-bearing, not a safety net.** Applies the `reviewed` label, and releases held runs — both `pull_request` CI on an open PR head and this chain's own held `workflow_run` runs. See "Approval gating". |
 
 Every workflow also takes a `workflow_dispatch` with a `pr_number`, so any step
 can be replayed by hand when something goes sideways.
 
 ## Prerequisites
 
-- **`COPILOT_ASSIGN_TOKEN` needs the `repo` scope.** Approving a pending
-  workflow run is a maintainer action; the default `GITHUB_TOKEN` acts as
-  `github-actions[bot]` and is rejected. Both `pr-reviewed` and
-  `approve-gated-runs` use it. The same secret already backs
-  `assign-copilot.yml`.
+- **`GITHUB_TOKEN` with `actions: write` releases held runs.** Not a PAT. The
+  repo's fine-grained `COPILOT_ASSIGN_TOKEN` has no Actions permission and
+  fails with `Resource not accessible by personal access token`; a classic
+  `repo`-scoped PAT is refused too, for a different reason (see below).
+  `COPILOT_ASSIGN_TOKEN` is still used by `pr-copilot-review` and
+  `assign-copilot.yml` for pull-request writes.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
   refused.
@@ -65,9 +66,6 @@ Two further consequences worth keeping in mind:
 
 ## Approval gating
 
-**This is the one thing that stops the chain running unattended, and it cannot
-be fixed from inside a workflow.**
-
 GitHub holds workflow runs on the Copilot coding agent's pull requests in
 `action_required` until someone with write access clicks **Approve workflows to
 run**. Every trigger is affected — `pull_request` CI *and* the
@@ -86,24 +84,47 @@ and runs queued by the Actions bot. For these runs it returns
 and it returns that to a repository **admin** holding a `repo`-scoped token, so
 it is not a permissions problem and no secret will fix it.
 
-The practical consequences:
+**Re-running the run does work.** `POST /actions/runs/{id}/rerun` re-queues the
+jobs under the actor that triggered the re-run rather than under Copilot, so the
+approval policy does not hold them a second time. Both `pr-reviewed` and
+`approve-gated-runs` try approve first and fall back to rerun; neither treats a
+failure as fatal, because the next sweep retries anyway.
 
-- The first approval on each Copilot PR is manual. Once approved, later pushes
-  to that same PR run automatically.
-- `approve-gated-runs` and the approve step in `pr-reviewed` still handle the
-  cases the API *does* accept, and treat that specific 403 as nothing-to-do so
-  they never fail the chain over something they cannot change.
-
-The only way to remove the gate is to loosen the repository policy, which has
-exactly three values and no "off":
+This repository's policy is set to the narrowest value:
 
 ```bash
 gh api repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval
 # first_time_contributors_new_to_github | first_time_contributors | all_external_contributors
 ```
 
-That is a security decision about fork pull requests on a public repository, so
-it is deliberately not automated here.
+There is no "off" value — it is a security setting about fork pull requests on a
+public repository. With `first_time_contributors_new_to_github`, fresh
+`pull_request` and `pull_request_target` runs on Copilot branches are no longer
+held. **`workflow_run` runs still are**, which matters because `pr-auto-merge`
+is triggered that way.
+
+Two details about held `workflow_run` runs, both learned the hard way:
+
+- They report the **default branch** SHA, not the PR head, so any sweep that
+  matches held runs against open PR heads will silently skip them. The sweeper
+  matches them on event type instead.
+- Because of that, the sweeper is load-bearing: without it, every PR stalls
+  fully reviewed and fully green but unmerged.
+
+## Copilot's review raises no event
+
+Copilot's automatic code review does **not** raise a workflow-triggering
+`pull_request_review` event. Observed on two consecutive PRs: the review was
+submitted, and no run of `pr-reviewed` was created at all — not a held run, no
+run. So `pull_request_review` cannot be relied on as the entry point, and
+`pr-reviewed` in practice only ever runs via `workflow_dispatch`.
+
+`approve-gated-runs` therefore reconciles the `reviewed` label itself on every
+sweep. It keys the label to the reviewed **commit**, not to the PR, so a push
+landing after a review does not leave a stale label behind.
+
+`pr-auto-merge` was already immune to this, because its gate is "Copilot
+reviewed this exact head commit", not "the PR carries the `reviewed` label".
 
 ## Draft pull requests
 
