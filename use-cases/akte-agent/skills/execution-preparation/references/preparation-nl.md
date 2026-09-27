@@ -39,4 +39,5 @@ Deze checklist blijft zelf een niet-ondertekend concept.]
 ## Openstaande acties en gevolgen van wijzigingen
 
 [Menselijke identiteits-/scannercontrole, beoordeling wilsbekwaamheid, vragen,
-goedkeuringen. Voeg correcties toe; behoud bewijs en herbeoordeel eerdere concepten.]
+goedkeuringen. Voeg correcties toe; behoud bewijs en markeer getroffen eerdere
+concepten/checklists expliciet voor herbeoordeling of revisie.]

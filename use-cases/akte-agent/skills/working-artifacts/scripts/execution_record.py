@@ -40,6 +40,7 @@ TEXT = {
         "executed": "Reported executed",
         "unsigned": "Reported unsigned",
         "actions": "Pending human actions",
+        "revision_required": "Affected prior drafts: REVIEW REQUIRED for observations corrected by",
         "followup": "Resolve discrepancies, assess capacity in person, review the deed and obtain missing approvals through authorized channels. Preserve original evidence and append corrections; review affected earlier drafts.",
     },
     "nl": {
@@ -74,6 +75,7 @@ TEXT = {
         "executed": "Volgens bron gepasseerd",
         "unsigned": "Volgens bron niet ondertekend",
         "actions": "Openstaande menselijke acties",
+        "revision_required": "Getroffen eerdere concepten: HERBEOORDELING VEREIST voor observaties gecorrigeerd door",
         "followup": "Los verschillen op, beoordeel wilsbekwaamheid persoonlijk, controleer de akte en verkrijg ontbrekende goedkeuringen via bevoegde kanalen. Behoud origineel bewijs en voeg correcties toe; beoordeel eerdere getroffen concepten opnieuw.",
     },
 }
@@ -103,6 +105,7 @@ def prepare(data: dict) -> dict:
     lines.extend(["", f"## {labels['observations']}", f"| {labels['headers']} |", "| --- | --- | --- | --- | --- |"])
     seen: set[str] = set()
     supplied_topics: set[str] = set()
+    corrections: list[tuple[str, str]] = []
     for row in records("observations"):
         entry_id = required_text(row.get("id"), "observation id")
         if entry_id in seen:
@@ -114,6 +117,8 @@ def prepare(data: dict) -> dict:
         correction = row.get("correction_of")
         if correction is not None and (not isinstance(correction, str) or correction not in seen):
             raise ValueError("correction_of must reference an earlier observation")
+        if correction:
+            corrections.append((entry_id, correction))
         seen.add(entry_id)
         if sources[source]["kind"] != "assumption":
             supplied_topics.add(topic)
@@ -167,7 +172,10 @@ def prepare(data: dict) -> dict:
         )
     if len({row["claim"] for row in signing}) > 1 and any(row["claim"] == "unsigned" for row in signing):
         lines.append(labels["contradiction"] + ": " + labels["pending"])
-    lines.extend(["", f"## {labels['actions']}", labels["followup"]])
+    lines.extend(["", f"## {labels['actions']}"])
+    for entry_id, correction in corrections:
+        lines.append(f"- {labels['revision_required']} {inline(correction)}: {inline(entry_id)}")
+    lines.append(labels["followup"])
     return {
         "dossier": data["dossier"],
         "locale": data["locale"],

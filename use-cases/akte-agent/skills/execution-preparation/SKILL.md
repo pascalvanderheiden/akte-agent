@@ -22,6 +22,9 @@ enabled: true
    approvals **unresolved**, with source and action for the responsible notary.
    Never infer clearance from an absence of concerns. Do not recommend proceeding
    while such conditions remain unresolved.
+   If new or corrected information changes earlier observations or conditions,
+   explicitly mark the affected prior drafts/checklists as needing review or
+   revision; do not leave stale stage 4/5 artifacts silently current.
 5. Explain each material supplied clause in ordinary requested-language terms,
    with clause/source references and unresolved terms. Preserve Dutch legal
    concepts in English (for example, vruchtgebruik: a right to use/enjoy another's
@@ -40,6 +43,7 @@ enabled: true
 
 Done: a draft with questions, attributed observations, clause explanations,
 pending human tasks and evidence gaps. Continue the dossier across turns;
-append corrections referencing earlier records and flag affected drafts for
-review. For financial figures, load `reconciliation`; keep execution and payment
-evidence separate. No scanner, signing or official submission is performed.
+append corrections referencing earlier records and explicitly flag affected
+drafts/checklists for review. For financial figures, load `reconciliation`; keep
+execution and payment evidence separate. No scanner, signing or official
+submission is performed.

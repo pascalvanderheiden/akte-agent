@@ -40,4 +40,5 @@ This checklist itself remains an unsigned draft.]
 ## Pending actions and revision implications
 
 [Human identity/scanner checks, capacity assessment, questions, approvals.
-Append corrections without erasing evidence; flag affected earlier drafts.]
+Append corrections without erasing evidence; explicitly flag affected earlier
+drafts/checklists as needing review or revision.]
