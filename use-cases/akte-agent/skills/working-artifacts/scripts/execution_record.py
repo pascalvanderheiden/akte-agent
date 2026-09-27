@@ -121,7 +121,7 @@ def prepare(data: dict) -> dict:
         correction = row.get("correction_of")
         if correction is not None and (not isinstance(correction, str) or correction not in seen):
             raise ValueError("correction_of must reference an earlier observation")
-        if correction:
+        if correction is not None:
             corrections.append((entry_id, correction))
         seen.add(entry_id)
         if sources[source]["kind"] != "assumption":
