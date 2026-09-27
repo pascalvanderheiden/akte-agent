@@ -1,0 +1,85 @@
+name: Approve gated workflow runs
+
+# Safety net for the PR automation chain.
+#
+# GitHub gates workflow runs by *actor*, and the Copilot coding agent is treated
+# as a first-time contributor, so every run it causes lands in `action_required`
+# — including base-context `workflow_run` runs that never touch PR code. That was
+# confirmed here: at a Copilot-authored commit the `workflow_run` children came
+# back `action_required`, while at a maintainer-authored commit the identical
+# workflow ran normally.
+#
+# The consequence is that `pr-auto-merge`'s own `workflow_run` instance is gated
+# on precisely the pull requests this automation exists to handle, and a gated
+# workflow cannot ungate itself. `pr-reviewed` releases the runs that exist when
+# the review lands, but anything queued afterwards needs releasing too.
+#
+# A `schedule` run's actor is the last person to touch the workflow file, never
+# Copilot, so this is the one trigger that is guaranteed never to be gated. It
+# does one thing: approve what is waiting.
+
+on:
+  schedule:
+    # Every ten minutes. GitHub delays scheduled runs under load, which only
+    # costs latency here — the event-driven path is still the fast one.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: approve-gated-runs
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve runs waiting on same-repo branches
+        env:
+          # Approving is a maintainer action; the documented requirement is a
+          # token with `repo` scope. The default GITHUB_TOKEN is not an accepted
+          # approver, so the fallback exists only to fail loudly.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Same-repo branches only. Runs from forks stay gated — releasing those
+          # automatically would throw away the protection the gate exists for,
+          # and this repository is public.
+          runs=$(gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+            --jq ".workflow_runs[]
+                  | select(.head_repository.full_name == \"$REPO\")
+                  | \"\(.id)\t\(.name)\t\(.head_branch)\"")
+
+          if [ -z "$runs" ]; then
+            echo "Nothing is awaiting approval."
+            exit 0
+          fi
+
+          approved=0
+          failed=0
+
+          while IFS=$'\t' read -r run_id name branch; do
+            [ -z "$run_id" ] && continue
+            echo "Approving $run_id — $name on $branch"
+            if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
+              approved=$((approved + 1))
+            else
+              # A run can be approved by someone else, or expire, between the
+              # listing and this call. Count it and keep going rather than
+              # abandoning the rest of the queue.
+              echo "::warning::Could not approve run $run_id ($name on $branch)."
+              failed=$((failed + 1))
+            fi
+          done <<< "$runs"
+
+          echo "Approved $approved run(s); $failed could not be approved."
+
+          if [ "$approved" -eq 0 ] && [ "$failed" -gt 0 ]; then
+            echo "::error::Every approval attempt failed. Check that COPILOT_ASSIGN_TOKEN is set and carries the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
+            exit 1
+          fi

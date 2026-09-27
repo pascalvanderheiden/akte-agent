@@ -24,6 +24,10 @@ on:
   workflow_run:
     workflows: [CI, CI Pipeline, Dependency compatibility]
     types: [completed]
+    # Post-merge CI on the default branch has no PR to evaluate, but it still
+    # spawns a run of this workflow — which then gates as `action_required`,
+    # because the actor carried over from the merged PR is Copilot.
+    branches-ignore: [main]
   pull_request_target:
     types: [labeled]
   workflow_dispatch:
