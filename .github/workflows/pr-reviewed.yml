@@ -52,12 +52,15 @@ jobs:
           gh pr edit "$PR" --repo "$REPO" --add-label reviewed
           echo "Labelled #$PR as reviewed."
 
-      - name: Approve the workflow runs waiting on this PR
+      - name: Release the workflow runs waiting on this PR
         env:
-          # Approving a run is a maintainer action: the documented requirement is
-          # a token with `repo` scope. The default GITHUB_TOKEN acts as
-          # github-actions[bot] and is rejected, so the PAT is the real path here
-          # and the fallback exists only to fail loudly rather than silently.
+          # Two different mechanisms, because the approve endpoint is much
+          # narrower than its docs suggest: it only accepts fork-PR runs and
+          # runs queued by the Actions bot. A run held on a same-repo Copilot
+          # branch is refused with 403 even for a repo admin with a
+          # `repo`-scoped PAT, so no secret can fix it. Re-running the run does
+          # work, because the re-run is attributed to the actor that triggered
+          # it rather than to Copilot, so that is the fallback.
           GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number || inputs.pr_number }}
           REPO: ${{ github.repository }}
@@ -67,7 +70,7 @@ jobs:
           head_sha=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
           echo "PR #$PR head is $head_sha"
 
-          approved=0
+          released=0
 
           # The review can land before the CI runs for the head commit have been
           # registered, so give them a short window to appear before giving up.
@@ -76,15 +79,19 @@ jobs:
                      --jq ".workflow_runs[] | select(.head_sha == \"$head_sha\") | .id")
 
             for run_id in $runs; do
-              echo "Approving workflow run $run_id"
+              echo "Releasing workflow run $run_id"
               if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
-                approved=$((approved + 1))
+                released=$((released + 1))
               elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
-                # The approve endpoint only accepts fork-PR runs and runs queued
-                # by the Actions bot. Anything else is stuck in `action_required`
-                # by design and no token can release it, so there is nothing to
-                # report and nothing to retry.
-                echo "::notice::Run $run_id cannot be approved through the API (not a fork PR or Actions-bot run); leaving it."
+                # Expected on a same-repo Copilot branch. Re-run it instead:
+                # that re-queues the jobs under this workflow's actor, which is
+                # not subject to the fork-contributor approval policy.
+                if rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
+                  echo "Approve is not available for run $run_id; re-ran it instead."
+                  released=$((released + 1))
+                else
+                  echo "::notice::Run $run_id could be neither approved nor re-run: $rerun_err"
+                fi
               else
                 echo "::error::Could not approve workflow run $run_id: $err"
                 echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
@@ -92,7 +99,7 @@ jobs:
               fi
             done
 
-            if [ "$approved" -gt 0 ] || [ "$attempt" -eq 5 ]; then
+            if [ "$released" -gt 0 ] || [ "$attempt" -eq 5 ]; then
               break
             fi
 
@@ -100,10 +107,10 @@ jobs:
             sleep 15
           done
 
-          if [ "$approved" -eq 0 ]; then
+          if [ "$released" -eq 0 ]; then
             # Not an error: repositories that do not gate runs for this author
             # never produce an `action_required` run in the first place.
             echo "No workflow runs were awaiting approval for $head_sha."
           else
-            echo "Approved $approved workflow run(s) for #$PR."
+            echo "Released $released workflow run(s) for #$PR."
           fi

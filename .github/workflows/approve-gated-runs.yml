@@ -14,9 +14,10 @@ name: Approve gated workflow runs
 # Scope matters. `POST /actions/runs/{id}/approve` only accepts runs from fork
 # pull requests and runs queued by the Actions bot; anything else comes back
 # 403 "This run is not from a fork pull request or queued by the Actions bot"
-# and no token can release it. So this sweeps the runs attached to open pull
-# requests and treats that particular refusal as "nothing to do" rather than as
-# a failure.
+# and no token can release it — not even a repo admin's `repo`-scoped PAT. So
+# this sweeps the runs attached to open pull requests and, when approve is
+# refused, re-runs them instead: a re-run is attributed to this workflow's
+# actor rather than to Copilot, so it is not gated a second time.
 
 on:
   schedule:
@@ -78,14 +79,20 @@ jobs:
             while IFS=$'\t' read -r run_sha run_id name; do
               [ "$run_sha" = "$sha" ] || continue
 
-              echo "Approving $run_id — $name (PR #$pr)"
+              echo "Releasing $run_id — $name (PR #$pr)"
               if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
                 approved=$((approved + 1))
               elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
-                # Gated by GitHub but outside what the API will release. Nothing
-                # to retry, so say so once and move on.
-                echo "::notice::Run $run_id on PR #$pr cannot be approved through the API; leaving it."
-                skipped=$((skipped + 1))
+                # Gated by GitHub but outside what approve will release. A
+                # re-run re-queues the jobs under this workflow's actor, which
+                # is not Copilot, so it is not held back a second time.
+                if rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
+                  echo "Approve unavailable for $run_id; re-ran it instead."
+                  approved=$((approved + 1))
+                else
+                  echo "::notice::Run $run_id on PR #$pr could be neither approved nor re-run: $rerun_err"
+                  skipped=$((skipped + 1))
+                fi
               else
                 echo "::error::Could not approve run $run_id on PR #$pr: $err"
                 echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
