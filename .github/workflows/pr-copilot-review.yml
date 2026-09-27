@@ -1,0 +1,112 @@
+name: PR review by Copilot
+
+# Step 1 of the PR automation chain:
+#
+#   pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
+#
+# Makes Copilot the sole reviewer of every pull request, and re-requests a review
+# whenever the head commit moves so a review can never go stale under the
+# auto-merge gate. Entirely deterministic, so this is a plain GitHub Action
+# rather than an agentic workflow.
+#
+# Uses `pull_request_target`, not `pull_request`: workflow runs for the Copilot
+# coding agent's pull requests land in `action_required` (awaiting approval), and
+# a gated workflow cannot be the thing that ungates the rest. `pull_request_target`
+# runs in the base-branch context and is never gated. Nothing here checks out or
+# executes PR code, which is what makes that safe — keep it that way.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to request a Copilot review on
+        required: true
+        type: number
+
+concurrency:
+  group: pr-copilot-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  request-review:
+    # Draft PRs are skipped — including their pushes, which matters because the
+    # Copilot coding agent pushes repeatedly while a PR is still a draft and each
+    # review request spends AI credits. `ready_for_review` brings them back here.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make Copilot the only reviewer
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          copilot='copilot-pull-request-reviewer[bot]'
+
+          pr_json=$(gh pr view "$PR" --repo "$REPO" \
+            --json state,headRefOid,reviews,labels)
+
+          state=$(echo "$pr_json" | jq -r .state)
+          if [ "$state" != "OPEN" ]; then
+            echo "PR #$PR is $state; nothing to review."
+            exit 0
+          fi
+
+          head=$(echo "$pr_json" | jq -r .headRefOid)
+
+          # The auto-merge gate only accepts a Copilot review of the current head
+          # commit, so that is the same question asked here.
+          if echo "$pr_json" | jq -e --arg head "$head" '
+                .reviews[] | select(
+                  (.author.login | startswith("copilot-pull-request-reviewer")) and
+                  .commit.oid == $head)' >/dev/null; then
+            echo "Copilot has already reviewed $head on #$PR."
+            exit 0
+          fi
+
+          # The head moved past whatever was reviewed, so any state the later
+          # steps of the chain wrote is stale.
+          for stale in reviewed ready-to-merge; do
+            if echo "$pr_json" | jq -e --arg l "$stale" '.labels[] | select(.name == $l)' >/dev/null; then
+              echo "Dropping stale '$stale' label — $head has not been reviewed."
+              gh pr edit "$PR" --repo "$REPO" --remove-label "$stale"
+            fi
+          done
+
+          requested=$(gh api "repos/$REPO/pulls/$PR/requested_reviewers")
+
+          # Requested reviewers come back under `users` even when they are bots,
+          # and the login there omits the `[bot]` suffix. Drop everyone else so
+          # Copilot is left as the only outstanding review request.
+          drop_users=$(echo "$requested" | jq -c '
+            [.users[].login | select(startswith("copilot-pull-request-reviewer") | not)]')
+          drop_teams=$(echo "$requested" | jq -c '[.teams[].slug]')
+
+          if [ "$drop_users" != "[]" ] || [ "$drop_teams" != "[]" ]; then
+            echo "Removing existing reviewers: users=$drop_users teams=$drop_teams"
+            jq -nc --argjson r "$drop_users" --argjson t "$drop_teams" \
+              '{reviewers: $r, team_reviewers: $t}' \
+              | gh api --method DELETE "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null
+          fi
+
+          if echo "$requested" | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
+            echo "Copilot review is already requested on #$PR."
+            exit 0
+          fi
+
+          echo "Requesting a review from $copilot on #$PR ($head)."
+          if ! jq -nc --arg c "$copilot" '{reviewers: [$c]}' \
+               | gh api --method POST "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null; then
+            echo "::error::Could not request a Copilot review on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
+            exit 1
+          fi
+
+          echo "Copilot is now the only requested reviewer on #$PR."

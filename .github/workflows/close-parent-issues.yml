@@ -1,0 +1,142 @@
+name: Close parent issues
+
+# Step 4 of the PR automation chain. After a PR merges, GitHub closes the issues
+# its body links with a closing keyword. This walks up from those issues and
+# closes each ancestor whose sub-issues are now all closed — ticket -> spec ->
+# the origin issue a maintainer filed.
+#
+# Deterministic, so a plain GitHub Action rather than an agentic workflow.
+#
+# `pull_request_target: closed` does not fire for a merge performed with
+# GITHUB_TOKEN, which is why `auto-merge-reviewed-prs` calls this through
+# `workflow_call` instead of relying on the event. The event trigger is what
+# covers merges done by a human.
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: Merged pull request number to cascade from
+        required: true
+        type: number
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Merged pull request number to cascade from
+        required: true
+        type: number
+
+concurrency:
+  group: close-parent-issues-${{ inputs.pr_number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  cascade:
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close completed parent issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr_number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          owner="${REPO%/*}"
+          name="${REPO#*/}"
+
+          merged=$(gh pr view "$PR" --repo "$REPO" --json merged --jq .merged)
+          if [ "$merged" != "true" ]; then
+            echo "PR #$PR was closed without merging; leaving issues alone."
+            exit 0
+          fi
+
+          linked=$(gh pr view "$PR" --repo "$REPO" \
+            --json closingIssuesReferences --jq '.closingIssuesReferences[].number')
+
+          if [ -z "$linked" ]; then
+            echo "PR #$PR closes no issues; nothing to cascade."
+            exit 0
+          fi
+
+          echo "PR #$PR closes: $(echo "$linked" | tr '\n' ' ')"
+
+          # shellcheck disable=SC2016  # $owner/$name/$number are GraphQL variables, not shell
+          parent_query='query($owner:String!, $name:String!, $number:Int!) {
+            repository(owner:$owner, name:$name) {
+              issue(number:$number) {
+                number
+                state
+                parent {
+                  number
+                  title
+                  state
+                  subIssues(first: 100) { nodes { number state } }
+                }
+              }
+            }
+          }'
+
+          for issue in $linked; do
+            # GitHub closes linked issues asynchronously on merge; give it a
+            # moment before falling back to closing the issue ourselves.
+            for _ in 1 2 3; do
+              issue_state=$(gh issue view "$issue" --repo "$REPO" --json state --jq .state)
+              [ "$issue_state" = "CLOSED" ] && break
+              sleep 5
+            done
+
+            if [ "$issue_state" != "CLOSED" ]; then
+              echo "Issue #$issue is still open after the merge; closing it."
+              gh issue close "$issue" --repo "$REPO" --reason completed \
+                --comment "Closed by #$PR."
+            fi
+
+            current="$issue"
+
+            # Bounded so a cyclic or unexpectedly deep hierarchy cannot spin.
+            for _ in $(seq 1 10); do
+              parent=$(gh api graphql \
+                -f owner="$owner" -f name="$name" -F number="$current" \
+                -f query="$parent_query" \
+                --jq '.data.repository.issue.parent')
+
+              if [ "$parent" = "null" ] || [ -z "$parent" ]; then
+                echo "#$current has no parent; chain ends."
+                break
+              fi
+
+              parent_number=$(echo "$parent" | jq -r .number)
+              parent_state=$(echo "$parent" | jq -r .state)
+
+              if [ "$parent_state" = "CLOSED" ]; then
+                echo "Parent #$parent_number is already closed; continuing upwards."
+                current="$parent_number"
+                continue
+              fi
+
+              open_siblings=$(echo "$parent" | jq -r \
+                '[.subIssues.nodes[] | select(.state != "CLOSED") | .number] | join(", ")')
+
+              if [ -n "$open_siblings" ]; then
+                echo "Parent #$parent_number still has open sub-issues ($open_siblings); stopping."
+                break
+              fi
+
+              echo "Closing parent #$parent_number — all of its sub-issues are closed."
+              gh issue close "$parent_number" --repo "$REPO" --reason completed \
+                --comment "All sub-issues are closed; the last one landed with #$PR."
+
+              current="$parent_number"
+            done
+          done

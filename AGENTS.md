@@ -194,3 +194,15 @@ Use the five default triage labels. See `docs/agents/triage-labels.md`.
 ### Domain docs
 
 Single-context: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+### PR automation
+
+Copilot reviews every PR, then four plain GitHub Actions label it, unblock CI,
+merge it, and close the completed parent issues. The trigger choices work around
+three `GITHUB_TOKEN` recursion guards and are not interchangeable — read
+`docs/agents/pr-automation.md` before touching `pr-copilot-review.yml`,
+`pr-reviewed.yml`, `pr-auto-merge.yml`, or `close-parent-issues.yml`.
+
+Approving a pending workflow run needs `COPILOT_ASSIGN_TOKEN` to carry the
+`repo` scope; the default `GITHUB_TOKEN` is not an accepted approver, and
+without it nothing on a Copilot coding agent PR ever merges.

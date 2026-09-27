@@ -1,0 +1,101 @@
+name: PR reviewed by Copilot
+
+# Step 2 of the PR automation chain. Fires when Copilot submits its review:
+# labels the PR `reviewed` and approves the CI workflow runs that are sitting in
+# `action_required`, which is the state every run enters on a Copilot coding
+# agent pull request until a maintainer (or this workflow) releases it.
+#
+# Deterministic, so a plain GitHub Action rather than an agentic workflow.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to mark reviewed and unblock CI for
+        required: true
+        type: number
+
+concurrency:
+  group: pr-reviewed-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  reviewed:
+    # The review API strips the `[bot]` suffix in some payloads and keeps it in
+    # others, so match on the prefix rather than the exact login.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label the PR reviewed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state)
+          if [ "$state" != "OPEN" ]; then
+            echo "PR #$PR is $state; nothing to label."
+            exit 0
+          fi
+
+          gh pr edit "$PR" --repo "$REPO" --add-label reviewed
+          echo "Labelled #$PR as reviewed."
+
+      - name: Approve the workflow runs waiting on this PR
+        env:
+          # Approving a run is a maintainer action: the documented requirement is
+          # a token with `repo` scope. The default GITHUB_TOKEN acts as
+          # github-actions[bot] and is rejected, so the PAT is the real path here
+          # and the fallback exists only to fail loudly rather than silently.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          head_sha=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
+          echo "PR #$PR head is $head_sha"
+
+          approved=0
+
+          # The review can land before the CI runs for the head commit have been
+          # registered, so give them a short window to appear before giving up.
+          for attempt in 1 2 3 4 5; do
+            runs=$(gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+                     --jq ".workflow_runs[] | select(.head_sha == \"$head_sha\") | .id")
+
+            for run_id in $runs; do
+              echo "Approving workflow run $run_id"
+              if ! gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null; then
+                echo "::error::Could not approve workflow run $run_id. Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
+                exit 1
+              fi
+              approved=$((approved + 1))
+            done
+
+            if [ "$approved" -gt 0 ]; then
+              break
+            fi
+
+            echo "No runs awaiting approval yet (attempt $attempt/5); waiting 15s."
+            sleep 15
+          done
+
+          if [ "$approved" -eq 0 ]; then
+            # Not an error: repositories that do not gate runs for this author
+            # never produce an `action_required` run in the first place.
+            echo "No workflow runs were awaiting approval for $head_sha."
+          else
+            echo "Approved $approved workflow run(s) for #$PR."
+          fi

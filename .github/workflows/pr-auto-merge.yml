@@ -1,0 +1,223 @@
+name: Auto-merge reviewed PRs
+
+# Step 3 of the PR automation chain. Once Copilot has reviewed the PR's current
+# head commit and every CI check is green, labels the PR `ready-to-merge`,
+# squash-merges it, and hands off to `close-parent-issues`.
+#
+# Deterministic, so a plain GitHub Action rather than an agentic workflow.
+#
+# Trigger choice matters here. A label written with GITHUB_TOKEN does not raise a
+# `labeled` event, and `check_suite: completed` raised by Actions does not trigger
+# workflows — both are recursion guards. So the two real entry points are
+# `pull_request_review` (checks may already be green when the review lands) and
+# `workflow_run` (the review landed first and CI finished later). Between them
+# every ordering is covered; `pull_request_target: labeled` only exists for a
+# human applying `ready-to-merge` by hand.
+#
+# The gate is "Copilot reviewed this exact head commit", not "the PR carries the
+# `reviewed` label". The label is written by GITHUB_TOKEN and so cannot be a
+# trigger, which would make it a lagging signal; the review itself cannot lag.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [CI, CI Pipeline, Dependency compatibility]
+    types: [completed]
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to evaluate and merge
+        required: true
+        type: number
+
+concurrency:
+  group: >-
+    pr-auto-merge-${{
+      github.event.pull_request.number ||
+      github.event.workflow_run.head_branch ||
+      inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  merge:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request_review' &&
+        startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer')) ||
+      (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request_target' &&
+        github.event.label.name == 'ready-to-merge')
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.resolve.outputs.pr }}
+      merged: ${{ steps.merge.outputs.merged }}
+    steps:
+      - name: Resolve the pull request
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_PR: ${{ inputs.pr_number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          RUN_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+
+          case "$EVENT" in
+            workflow_dispatch)
+              pr="$DISPATCH_PR"
+              ;;
+            pull_request_review|pull_request_target)
+              pr="$EVENT_PR"
+              ;;
+            workflow_run)
+              # `pull_requests` is populated for same-repo PRs and empty for
+              # forks, so fall back to a branch lookup.
+              pr="${RUN_PR:-}"
+              if [ -z "$pr" ]; then
+                pr=$(gh pr list --repo "$REPO" --head "$RUN_BRANCH" --state open \
+                       --json number --jq '.[0].number // empty')
+              fi
+              ;;
+          esac
+
+          if [ -z "${pr:-}" ]; then
+            echo "No open pull request for this event; nothing to do."
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Resolved pull request #$pr"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      - name: Merge when reviewed and green
+        id: merge
+        if: steps.resolve.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.resolve.outputs.pr }}
+        run: |
+          set -euo pipefail
+
+          pr_json=$(gh pr view "$PR" --repo "$REPO" \
+            --json state,isDraft,mergeable,headRefName,headRefOid,labels,reviews,statusCheckRollup)
+
+          state=$(echo "$pr_json" | jq -r .state)
+          draft=$(echo "$pr_json" | jq -r .isDraft)
+          head=$(echo "$pr_json" | jq -r .headRefOid)
+
+          if [ "$state" != "OPEN" ] || [ "$draft" != "false" ]; then
+            echo "PR #$PR is $state (draft=$draft); not merging."
+            exit 0
+          fi
+
+          reviewed=false
+          if echo "$pr_json" | jq -e --arg head "$head" '
+                .reviews[] | select(
+                  (.author.login | startswith("copilot-pull-request-reviewer")) and
+                  .commit.oid == $head)' >/dev/null; then
+            reviewed=true
+          elif echo "$pr_json" | jq -e '.labels[] | select(.name == "ready-to-merge")' >/dev/null; then
+            # A human applied the label deliberately; take them at their word.
+            echo "No Copilot review of $head, but 'ready-to-merge' was applied by hand."
+            reviewed=true
+          fi
+
+          if [ "$reviewed" != "true" ]; then
+            echo "Copilot has not reviewed $head yet; not merging."
+            exit 0
+          fi
+
+          # This workflow and its siblings report their own check runs against the
+          # PR head, so excluding them is what stops the gate waiting on itself.
+          ignore='["PR review by Copilot","PR reviewed by Copilot","Auto-merge reviewed PRs","Close parent issues"]'
+
+          # `$w` is bound before the membership test: inside `$ignore | index(...)`
+          # the `.` context is the ignore array, not the check run.
+          checks=$(echo "$pr_json" | jq -c --argjson ignore "$ignore" \
+            '[.statusCheckRollup[] | (.workflowName // "") as $w | select(($ignore | index($w)) == null)]')
+
+          total=$(echo "$checks" | jq 'length')
+          if [ "$total" -eq 0 ]; then
+            echo "PR #$PR has no CI checks yet; not merging."
+            exit 0
+          fi
+
+          # ACTION_REQUIRED is a run still awaiting approval, which `pr-reviewed`
+          # releases — pending, not failed.
+          pending=$(echo "$checks" | jq '[.[] | select(
+            (.__typename == "CheckRun" and (.status != "COMPLETED" or .conclusion == "ACTION_REQUIRED")) or
+            (.__typename == "StatusContext" and (.state == "PENDING" or .state == "EXPECTED"))
+          )] | length')
+
+          # Legacy commit statuses carry `context`/`state`; check runs carry
+          # `name`/`status`/`conclusion`.
+          failed=$(echo "$checks" | jq -c '[.[] | select(
+            (.__typename == "CheckRun" and .status == "COMPLETED" and .conclusion != "ACTION_REQUIRED"
+              and .conclusion != "SUCCESS" and .conclusion != "NEUTRAL" and .conclusion != "SKIPPED") or
+            (.__typename == "StatusContext" and .state != "SUCCESS" and .state != "PENDING" and .state != "EXPECTED")
+          ) | (.name // .context)]')
+
+          echo "PR #$PR checks: total=$total pending=$pending failed=$failed"
+
+          if [ "$(echo "$failed" | jq 'length')" -gt 0 ]; then
+            echo "::warning::PR #$PR has failing checks: $(echo "$failed" | jq -r 'join(", ")'). Not merging."
+            exit 0
+          fi
+
+          if [ "$pending" -gt 0 ]; then
+            echo "PR #$PR still has $pending check(s) running; not merging yet."
+            exit 0
+          fi
+
+          gh pr edit "$PR" --repo "$REPO" --add-label ready-to-merge
+          if echo "$pr_json" | jq -e '.labels[] | select(.name == "reviewed")' >/dev/null; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label reviewed
+          fi
+          echo "Labelled #$PR as ready-to-merge."
+
+          # `mergeable` is computed asynchronously and reads UNKNOWN until GitHub
+          # catches up; merging on UNKNOWN just fails the job noisily.
+          mergeable=$(echo "$pr_json" | jq -r .mergeable)
+          for _ in 1 2 3 4 5; do
+            [ "$mergeable" != "UNKNOWN" ] && break
+            sleep 5
+            mergeable=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq .mergeable)
+          done
+
+          if [ "$mergeable" != "MERGEABLE" ]; then
+            echo "::warning::PR #$PR is $mergeable and needs a human. Not merging."
+            exit 0
+          fi
+
+          gh pr merge "$PR" --repo "$REPO" --squash
+          echo "Squash-merged #$PR."
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+          # Tidying up the head branch must not fail the merge: fork branches and
+          # branches already removed by repository settings both error here.
+          branch=$(echo "$pr_json" | jq -r .headRefName)
+          if ! gh api --method DELETE "repos/$REPO/git/refs/heads/$branch" >/dev/null 2>&1; then
+            echo "::notice::Head branch '$branch' was not deleted (fork, protected, or already gone)."
+          fi
+
+  close-parents:
+    needs: merge
+    if: needs.merge.outputs.merged == 'true'
+    uses: ./.github/workflows/close-parent-issues.yml
+    with:
+      pr_number: ${{ fromJSON(needs.merge.outputs.pr) }}
+    secrets: inherit
