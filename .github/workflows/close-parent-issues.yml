@@ -55,8 +55,9 @@ jobs:
           owner="${REPO%/*}"
           name="${REPO#*/}"
 
-          merged=$(gh pr view "$PR" --repo "$REPO" --json merged --jq .merged)
-          if [ "$merged" != "true" ]; then
+          # `merged` is not a queryable field; the merged state lives in `state`.
+          state=$(gh pr view "$PR" --repo "$REPO" --json state --jq .state)
+          if [ "$state" != "MERGED" ]; then
             echo "PR #$PR was closed without merging; leaving issues alone."
             exit 0
           fi
