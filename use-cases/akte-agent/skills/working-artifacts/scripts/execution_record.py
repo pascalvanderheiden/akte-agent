@@ -119,9 +119,9 @@ def prepare(data: dict) -> dict:
             raise ValueError("Unknown observation topic")
         source = source_of(row)
         correction = row.get("correction_of")
-        if correction is not None and (not isinstance(correction, str) or correction not in seen):
-            raise ValueError("correction_of must reference an earlier observation")
         if correction is not None:
+            if not isinstance(correction, str) or correction not in seen:
+                raise ValueError("correction_of must reference an earlier observation")
             corrections.append((correction, entry_id))
         seen.add(entry_id)
         if sources[source]["kind"] != "assumption":
