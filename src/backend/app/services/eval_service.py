@@ -680,7 +680,6 @@ class EvalService:
             raise ValueError(f"Run '{run_id}' has already finished")
         self._cancel_requests.add((use_case, run_id))
         run.status = EvalRunStatus.CANCELLED
-        run.status = EvalRunStatus.CANCELLED
         await self._storage.save_run(run)
         return run
 

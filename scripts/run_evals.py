@@ -108,7 +108,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--use-case", required=True)
     p.add_argument("--mode", choices=["validation", "foundry"], default="validation")
-    p.add_argument("--scenarios", help="Comma-separated scenario names. Default: all.")
+    p.add_argument("--scenarios", help="Comma-separated scenario names. Default: all discovered for the use-case.")
     args = p.parse_args()
 
     try:
