@@ -89,21 +89,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only the head commits of open PRs are of interest. Runs on branches
-          # with no open PR — post-merge CI on the default branch, for instance —
-          # are not approvable and never gate a merge, so sweeping them would
-          # just generate noise on every schedule tick.
+          # Two classes of held run matter, and they are identified differently.
+          #
+          # A `pull_request` CI run carries the PR head SHA, so it is matched by
+          # comparing against the heads of the open PRs. Runs on branches with
+          # no open PR are ignored: they never gate a merge, and sweeping them
+          # would generate noise on every tick.
+          #
+          # A `workflow_run` run — this chain's own auto-merge step — reports the
+          # *default branch* SHA instead, so no PR head will ever match it. It is
+          # matched on the event type. Re-running one that has nothing to do is
+          # harmless; it evaluates, finds no eligible PR, and exits.
           heads=$(gh pr list --repo "$REPO" --state open --limit 100 \
-                    --json number,headRefOid \
-                    --jq '.[] | "\(.headRefOid) \(.number)"')
-
-          if [ -z "$heads" ]; then
-            echo "No open pull requests."
-            exit 0
-          fi
+                    --json headRefOid --jq '.[].headRefOid')
 
           pending=$(gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
-                      --jq '.workflow_runs[] | "\(.head_sha)\t\(.id)\t\(.name)"')
+                      --jq '.workflow_runs[] | "\(.head_sha)\t\(.event)\t\(.id)\t\(.name)"')
 
           if [ -z "$pending" ]; then
             echo "Nothing is awaiting approval."
@@ -113,29 +114,33 @@ jobs:
           approved=0
           skipped=0
 
-          while read -r sha pr; do
-            [ -z "$sha" ] && continue
+          while IFS=$'\t' read -r run_sha event run_id name; do
+            [ -z "$run_id" ] && continue
 
-            while IFS=$'\t' read -r run_sha run_id name; do
-              [ "$run_sha" = "$sha" ] || continue
+            if [ "$event" = "workflow_run" ]; then
+              :
+            elif printf '%s\n' "$heads" | grep -qx "$run_sha"; then
+              :
+            else
+              continue
+            fi
 
-              echo "Releasing $run_id — $name (PR #$pr)"
-              if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
-                approved=$((approved + 1))
-              elif rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
-                # Approve is refused for anything that is not a fork-PR run or
-                # an Actions-bot run, which is every run on a same-repo Copilot
-                # branch. A re-run re-queues the jobs under this workflow's
-                # actor rather than Copilot's, so it is not held a second time.
-                echo "Approve unavailable for $run_id; re-ran it instead."
-                approved=$((approved + 1))
-              else
-                # Never fatal: one unreleasable run must not stop the sweep, and
-                # the next tick retries anyway.
-                echo "::notice::Run $run_id on PR #$pr could be neither approved nor re-run: $rerun_err"
-                skipped=$((skipped + 1))
-              fi
-            done <<< "$pending"
-          done <<< "$heads"
+            echo "Releasing $run_id — $name ($event)"
+            if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
+              approved=$((approved + 1))
+            elif rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
+              # Approve is refused for anything that is not a fork-PR run or an
+              # Actions-bot run, which is every run on a same-repo Copilot
+              # branch. A re-run re-queues the jobs under this workflow's actor
+              # rather than Copilot's, so it is not held a second time.
+              echo "Approve unavailable for $run_id; re-ran it instead."
+              approved=$((approved + 1))
+            else
+              # Never fatal: one unreleasable run must not stop the sweep, and
+              # the next tick retries anyway.
+              echo "::notice::Run $run_id could be neither approved nor re-run: $rerun_err"
+              skipped=$((skipped + 1))
+            fi
+          done <<< "$pending"
 
           echo "Approved $approved run(s); skipped $skipped that the API will not release."
