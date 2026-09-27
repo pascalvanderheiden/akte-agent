@@ -13,10 +13,12 @@ name: PR review by Copilot
 # secrets always come from the base branch. Nothing here checks out or executes
 # PR code, which is what makes that safe — keep it that way.
 #
-# Note that this does NOT escape GitHub's run approval gate: runs on the Copilot
-# coding agent's pull requests land in `action_required` regardless of trigger,
-# and `POST /actions/runs/{id}/approve` refuses same-repo runs. They are released
-# by `approve-gated-runs`, which re-runs them instead. See
+# Note on the approval gate: runs on the Copilot coding agent's pull requests
+# are held in `action_required` unless *Require approval for workflow runs* is
+# disabled under Settings -> Copilot -> Cloud agent. This repository has it
+# disabled, so these runs start on their own. If it is ever turned back on,
+# nothing here can release them — `POST /actions/runs/{id}/approve` refuses
+# same-repo runs — and `approve-gated-runs` has to re-run them instead. See
 # docs/agents/pr-automation.md.
 
 on:
