@@ -39,6 +39,51 @@ jobs:
   approve:
     runs-on: ubuntu-latest
     steps:
+      - name: Take humans out of the review queue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # `pr-copilot-review` does this properly — it also requests Copilot,
+          # which needs a PAT. But its runs are held in `action_required` like
+          # everything else on a Copilot PR, so a human can sit in the review
+          # queue for hours before anything releases them. Stripping here as
+          # well makes the relief immediate and independent of that release.
+          copilot='copilot-pull-request-reviewer'
+
+          prs=$(gh pr list --repo "$REPO" --state open --limit 100 \
+                  --json number,reviewRequests \
+                  --jq ".[] | select([.reviewRequests[].login
+                        | select(startswith(\"$copilot\") | not)] | length > 0)
+                        | \"\(.number) \([.reviewRequests[].login
+                        | select(startswith(\"$copilot\") | not)] | join(\",\"))\"")
+
+          if [ -z "$prs" ]; then
+            echo "No pull request has a non-Copilot reviewer."
+            exit 0
+          fi
+
+          while read -r pr reviewers; do
+            [ -z "$pr" ] && continue
+
+            args=()
+            while IFS= read -r login; do
+              [ -z "$login" ] && continue
+              args+=(-f "reviewers[]=$login")
+            done <<< "$(tr ',' '\n' <<< "$reviewers")"
+
+            # Non-gating cleanup: a failure here must not abort the sweep that
+            # the rest of the chain depends on.
+            if gh api --method DELETE "repos/$REPO/pulls/$pr/requested_reviewers" \
+                 "${args[@]}" --silent; then
+              echo "Removed $reviewers from #$pr."
+            else
+              echo "::notice::Could not remove $reviewers from #$pr."
+            fi
+          done <<< "$prs"
+
       - name: Label pull requests Copilot has already reviewed
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

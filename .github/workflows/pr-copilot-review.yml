@@ -15,8 +15,9 @@ name: PR review by Copilot
 #
 # Note that this does NOT escape GitHub's run approval gate: runs on the Copilot
 # coding agent's pull requests land in `action_required` regardless of trigger,
-# and `POST /actions/runs/{id}/approve` refuses same-repo runs, so nothing can
-# release them automatically. See docs/agents/pr-automation.md.
+# and `POST /actions/runs/{id}/approve` refuses same-repo runs. They are released
+# by `approve-gated-runs`, which re-runs them instead. See
+# docs/agents/pr-automation.md.
 
 on:
   pull_request_target:
@@ -38,14 +39,14 @@ permissions:
 
 jobs:
   request-review:
-    # A draft's pushes are ignored: the coding agent pushes repeatedly while
-    # drafting, there is no review to refresh yet, and the reviewer cleanup
-    # already happened when the PR was opened. Every other event still runs on
-    # drafts so a human never sits in the review queue for a PR that is not
-    # ready. `ready_for_review` picks the rest up.
-    if: >-
-      github.event.action != 'synchronize' ||
-      github.event.pull_request.draft == false
+    # Deliberately unconditional, including on a draft's pushes. An earlier
+    # version skipped `synchronize` while draft, on the assumption that the
+    # reviewer cleanup had already happened when the PR was opened. It had not:
+    # the coding agent adds the reviewer at some point during drafting, and the
+    # `opened` run is held in `action_required` anyway, so the only run that
+    # ever reached the cleanup was a `synchronize` one — which was the run being
+    # skipped. The result was a human sitting in the review queue for hours.
+    # The script itself exits early on a draft, so the extra runs are cheap.
     runs-on: ubuntu-latest
     steps:
       - name: Make Copilot the only reviewer
