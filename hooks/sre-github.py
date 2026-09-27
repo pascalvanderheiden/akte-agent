@@ -87,6 +87,10 @@ def branch_name(value: object) -> str:
     return value
 
 
+def repo_branch_matches(value: object, branch: str, branch_is_discovered_default: bool) -> bool:
+    return value == branch or (value is None and branch_is_discovered_default)
+
+
 def bounded_integer(name: str, default: str, maximum: int, minimum: int = 0) -> int:
     value = os.environ.get(name, default)
     if not re.fullmatch(r"[0-9]{1,3}", value) or not minimum <= int(value) <= maximum:
@@ -349,9 +353,6 @@ class GitHubSetup:
         if not isinstance(repos, list) or (isinstance(result, dict) and result.get("nextLink")):
             fail("Malformed or paginated repository collection; refusing an incomplete registration check.")
 
-        def branch_matches(value: object) -> bool:
-            return value == branch or (value is None and branch_is_discovered_default)
-
         matches = []
         for repo in repos:
             if (
@@ -366,7 +367,7 @@ class GitHubSetup:
                 props.get("type") == "GitHub"
                 and isinstance(props.get("url"), str)
                 and props["url"].rstrip("/").removesuffix(".git").lower() == url
-                and branch_matches(props.get("branch"))
+                and repo_branch_matches(props.get("branch"), branch, branch_is_discovered_default)
             ):
                 matches.append(repo)
         if len(matches) > 1:
@@ -399,12 +400,14 @@ class GitHubSetup:
             props = repo["properties"]
             if (
                 props.get("type") != "GitHub"
-                or not branch_matches(props.get("branch"))
+                or not repo_branch_matches(props.get("branch"), branch, branch_is_discovered_default)
                 or repository_url(props.get("url"))[0] != url
             ):
                 fail("Repository readback does not match the requested repository and branch.")
             clone = props.get("cloneStatus")
             commit = props.get("latestCommit")
+            # For existing registrations, isHealthy is the SRE data-plane connection health signal.
+            # It is stronger evidence than a cached cloneStatus/latestCommit pair alone.
             if matched_existing and clone == "Ready" and props.get("isHealthy") is True:
                 ready("Existing GitHub repository registration is healthy in the SRE data plane.")
             if (
