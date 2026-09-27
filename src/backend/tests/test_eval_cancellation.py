@@ -2,12 +2,14 @@
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import ValidationError
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.models import EvalMode, EvalRun, EvalRunRequest, EvalRunStatus, EvalScenario
+from app.routers import evals
 from app.services.eval_service import EvalService
 
 
@@ -56,11 +58,38 @@ def _run() -> EvalRun:
     )
 
 
-def test_eval_run_request_requires_an_explicit_non_empty_scenario_list() -> None:
-    with pytest.raises(ValidationError):
-        EvalRunRequest()
-    with pytest.raises(ValidationError):
-        EvalRunRequest(scenarios=[])
+def test_eval_run_request_does_not_expand_an_omitted_scenario_list() -> None:
+    assert EvalRunRequest().scenarios == []
+
+
+def test_start_run_endpoint_rejects_an_empty_scenario_list() -> None:
+    app = FastAPI()
+    app.include_router(evals.router, prefix="/api/use-cases")
+    service = MagicMock()
+    service.start_run = AsyncMock()
+    app.state.eval_service = service
+    app.state.registries = {"demo": MagicMock()}
+
+    response = TestClient(app).post("/api/use-cases/demo/evals/run", json={})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "At least one scenario is required"
+    service.start_run.assert_not_awaited()
+
+
+def test_cancel_run_endpoint_returns_the_cancelled_run() -> None:
+    app = FastAPI()
+    app.include_router(evals.router, prefix="/api/use-cases")
+    cancelled = _run().model_copy(update={"status": EvalRunStatus.CANCELLED})
+    service = MagicMock()
+    service.cancel_run = AsyncMock(return_value=cancelled)
+    app.state.eval_service = service
+
+    response = TestClient(app).post("/api/use-cases/demo/evals/runs/run-1/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    service.cancel_run.assert_awaited_once_with("demo", "run-1")
 
 
 @pytest.mark.asyncio
@@ -99,3 +128,34 @@ async def test_cancel_run_stops_before_the_next_scenario_and_persists_cancelled(
     assert persisted is not None
     assert persisted.status == EvalRunStatus.CANCELLED
     assert invoked == ["Run first"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_report_cannot_be_overwritten_by_completed() -> None:
+    run = _run().model_copy(update={"scenarios": ["first"]})
+    storage = FakeEvalStorage(run, [_scenario("first")])
+    service = EvalService(MagicMock(), storage, {"demo": MagicMock()})  # type: ignore[arg-type]
+    report_started = asyncio.Event()
+    release_report = asyncio.Event()
+
+    async def invoke(message: str, **kwargs):
+        return "ready" if message == "ping" else "done", [], None, []
+
+    async def write_report(use_case: str, run_id: str, report: dict) -> None:
+        report_started.set()
+        await release_report.wait()
+
+    service._invoke_hosted_agent = invoke  # type: ignore[method-assign]
+    service._score_run = AsyncMock()  # type: ignore[method-assign]
+    storage.write_report = write_report  # type: ignore[method-assign]
+
+    task = asyncio.create_task(service._execute_run(run))
+    service._tasks[(run.use_case, run.run_id)] = task
+    await report_started.wait()
+    await service.cancel_run(run.use_case, run.run_id)
+    release_report.set()
+    await task
+
+    persisted = await storage.load_run(run.use_case, run.run_id)
+    assert persisted is not None
+    assert persisted.status == EvalRunStatus.CANCELLED

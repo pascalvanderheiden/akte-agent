@@ -129,6 +129,8 @@ async def start_run(
     user: dict = Depends(require_authenticated_user),
 ) -> EvalRun:
     _ensure_use_case(request, use_case)
+    if not body.scenarios:
+        raise HTTPException(status_code=400, detail="At least one scenario is required")
     service = _get_service(request)
     try:
         run = await service.start_run(

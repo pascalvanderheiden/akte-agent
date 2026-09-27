@@ -628,6 +628,8 @@ class EvalService:
     ) -> EvalRun:
         """Create an EvalRun record, persist it, and kick off the background task."""
         require_available(use_case, self._registries)
+        if not scenario_names:
+            raise ValueError("At least one scenario is required")
         run_id = uuid.uuid4().hex
 
         now = _now()
@@ -720,6 +722,8 @@ class EvalService:
             run.error = ""
             await self._storage.save_run(run)
         except Exception as exc:
+            if await self._stop_if_cancelled(run):
+                return
             logger.exception("Eval run %s failed", run_id)
             run.status = EvalRunStatus.FAILED
             run.error = str(exc)
@@ -889,6 +893,8 @@ class EvalService:
         # ── Phase 3: Write report ─────────────────────────────────────────
         report = self._build_report(run, use_case)
         await self._storage.write_report(use_case, run_id, report)
+        if await self._stop_if_cancelled(run):
+            return
 
         run.status = EvalRunStatus.COMPLETED
         run.progress = f"{total}/{total}"
