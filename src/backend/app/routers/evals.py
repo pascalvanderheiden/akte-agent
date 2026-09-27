@@ -165,6 +165,7 @@ async def get_run(use_case: str, run_id: str, request: Request) -> EvalRun:
 
 @router.post("/{use_case}/evals/runs/{run_id}/cancel", response_model=EvalRun)
 async def cancel_run(use_case: str, run_id: str, request: Request) -> EvalRun:
+    _ensure_use_case(request, use_case)
     service = _get_service(request)
     try:
         run = await service.cancel_run(use_case, run_id)

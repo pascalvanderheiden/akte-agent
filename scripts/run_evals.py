@@ -112,9 +112,10 @@ def main() -> int:
     args = p.parse_args()
 
     try:
-        scenario_names = [s.strip() for s in args.scenarios.split(",")] if args.scenarios else list_scenario_names(
-            args.use_case
-        )
+        if args.scenarios:
+            scenario_names = [s.strip() for s in args.scenarios.split(",")]
+        else:
+            scenario_names = list_scenario_names(args.use_case)
         print(f"→ Starting {args.mode} run for '{args.use_case}' ({len(scenario_names)} scenarios)…")
         run = start_run(args.use_case, args.mode, scenario_names)
     except httpx.HTTPStatusError as e:

@@ -723,6 +723,7 @@ class EvalService:
             await self._storage.save_run(run)
         except Exception as exc:
             if await self._stop_if_cancelled(run):
+                logger.warning("Eval run %s raised after cancellation was requested: %s", run_id, exc)
                 return
             logger.exception("Eval run %s failed", run_id)
             run.status = EvalRunStatus.FAILED

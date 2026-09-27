@@ -84,6 +84,7 @@ def test_cancel_run_endpoint_returns_the_cancelled_run() -> None:
     service = MagicMock()
     service.cancel_run = AsyncMock(return_value=cancelled)
     app.state.eval_service = service
+    app.state.registries = {"demo": MagicMock()}
 
     response = TestClient(app).post("/api/use-cases/demo/evals/runs/run-1/cancel")
 

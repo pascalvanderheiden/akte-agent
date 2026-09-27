@@ -786,8 +786,9 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
         <button
           onClick={handleRunValidation}
-          disabled={loading || personaUnavailable || runningValidation || runningFoundry}
+          disabled={loading || personaUnavailable || runningValidation || runningFoundry || scenarios.length === 0}
           className="flex items-center gap-2 px-4 py-2 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          title={scenarios.length === 0 ? t("eval.addFirst") : undefined}
         >
           {runningValidation ? (
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-border border-t-slate-500" />
