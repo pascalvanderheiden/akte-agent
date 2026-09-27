@@ -122,7 +122,7 @@ def prepare(data: dict) -> dict:
         if correction is not None and (not isinstance(correction, str) or correction not in seen):
             raise ValueError("correction_of must reference an earlier observation")
         if correction is not None:
-            corrections.append((entry_id, correction))
+            corrections.append((correction, entry_id))
         seen.add(entry_id)
         if sources[source]["kind"] != "assumption":
             supplied_topics.add(topic)
@@ -177,8 +177,8 @@ def prepare(data: dict) -> dict:
     if len({row["claim"] for row in signing}) > 1 and any(row["claim"] == "unsigned" for row in signing):
         lines.append(labels["contradiction"] + ": " + labels["pending"])
     lines.extend(["", f"## {labels['actions']}"])
-    for entry_id, correction in corrections:
-        review_line = labels["revision_required"].format(affected=inline(correction), correcting=inline(entry_id))
+    for affected, correcting in corrections:
+        review_line = labels["revision_required"].format(affected=inline(affected), correcting=inline(correcting))
         lines.append(f"- {review_line}")
     if corrections:
         lines.append("")
