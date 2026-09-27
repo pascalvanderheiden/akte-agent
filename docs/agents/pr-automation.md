@@ -6,7 +6,7 @@ agentic workflow.
 
 ```
 pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
-                    approve-gated-runs (schedule, drives the chain)
+                    approve-gated-runs (safety net)
 ```
 
 | Workflow | Trigger | What it does |
@@ -15,13 +15,19 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
-| `approve-gated-runs.yml` | `schedule`, every 10 minutes | **Load-bearing, not a safety net.** Applies the `reviewed` label, and releases held runs — both `pull_request` CI on an open PR head and this chain's own held `workflow_run` runs. See "Approval gating". |
+| `approve-gated-runs.yml` | `schedule`, every 10 minutes, plus `workflow_dispatch` | Safety net. Takes any non-Copilot reviewer back out of the queue, applies the `reviewed` label, and releases held runs. **Its schedule does not fire reliably** — see "The schedule trigger is unreliable". |
 
 Every workflow also takes a `workflow_dispatch` with a `pr_number`, so any step
 can be replayed by hand when something goes sideways.
 
 ## Prerequisites
 
+- **The Copilot workflow-approval gate must be off**, under Settings → Copilot →
+  Cloud agent → Actions workflow approval → *Require approval for workflow
+  runs*. Leave it on and every run on a Copilot PR is held in `action_required`,
+  which stalls the whole chain. This is the single most important setting here;
+  see "Approval gating" for why nothing can work around it. Repository admin
+  only, and there is no API for it.
 - **`GITHUB_TOKEN` with `actions: write` releases held runs.** Not a PAT. The
   repo's fine-grained `COPILOT_ASSIGN_TOKEN` has no Actions permission and
   fails with `Resource not accessible by personal access token`; a classic
@@ -77,31 +83,57 @@ CI              | pull_request        | completed/action_required | copilot/...
 PR review by Copilot | pull_request_target | completed/action_required | copilot/...
 ```
 
-And the obvious escape hatch is closed:
-`POST /actions/runs/{id}/approve` only accepts runs from **fork** pull requests
-and runs queued by the Actions bot. For these runs it returns
+**This is a Copilot-specific gate, not the fork one.** That distinction cost a
+lot of time here, so it is worth stating plainly. There are two separate
+approval mechanisms and they look identical from the outside:
+
+| | Fork gate | Copilot cloud agent gate |
+|---|---|---|
+| Applies to | pull requests from forks | anything Copilot pushes, same-repo included |
+| Setting | `actions/permissions/fork-pr-contributor-approval` | Settings → Copilot → Cloud agent → **Actions workflow approval** |
+| REST API | yes | **none — UI only** |
+| Released by | `POST /actions/runs/{id}/approve` | nothing; no approve endpoint exists |
+
+Because these runs are held by the *second* mechanism,
+`POST /actions/runs/{id}/approve` returns
 `403 This run is not from a fork pull request or queued by the Actions bot` —
-and it returns that to a repository **admin** holding a `repo`-scoped token, so
-it is not a permissions problem and no secret will fix it.
+and it returns that to a repository **admin** holding a `repo`-scoped token. It
+is not a permissions problem and no secret will fix it; it is simply the wrong
+endpoint for this hold. Tightening `fork-pr-contributor-approval` does nothing
+either, for the same reason.
 
-**Re-running the run does work.** `POST /actions/runs/{id}/rerun` re-queues the
-jobs under the actor that triggered the re-run rather than under Copilot, so the
-approval policy does not hold them a second time. Both `pr-reviewed` and
-`approve-gated-runs` try approve first and fall back to rerun; neither treats a
-failure as fatal, because the next sweep retries anyway.
+**The fix is to turn the Copilot gate off**, under Settings → Copilot → Cloud
+agent → Actions workflow approval → *Require approval for workflow runs*. That
+requires repository admin, has no API, and carries a real trade-off that GitHub
+states directly: unreviewed Copilot code may then run with write access to the
+repository and access to Actions secrets. With it off, every workflow here runs
+on its own events and the chain needs no intervention.
 
-This repository's policy is set to the narrowest value:
+**If you leave the gate on, re-running is the only release.**
+`POST /actions/runs/{id}/rerun` re-queues the jobs under the actor that
+triggered the re-run rather than under Copilot, so the hold is not applied a
+second time. Both `pr-reviewed` and `approve-gated-runs` try approve first and
+fall back to rerun; neither treats a failure as fatal, because the next sweep
+retries anyway. But this only works if something drives the sweep — see below.
+
+## The schedule trigger is unreliable
+
+`approve-gated-runs` is scheduled `*/10`. In this repository that schedule has
+produced **zero** runs — not delayed runs, none at all — while
+`workflow_dispatch` runs of the same file succeed immediately. This matches a
+large cluster of unresolved reports from other repositories over the same
+period, and it is consistent with GitHub's own documented behaviour: scheduled
+runs are best-effort, and *"if the load is sufficiently high enough, some queued
+jobs may be dropped"*.
+
+The consequence is that **the sweeper must not be load-bearing**. With the
+Copilot gate disabled it is a genuine safety net again, which is the only
+configuration this chain should be run in. If the gate is ever re-enabled,
+expect to dispatch the sweeper by hand:
 
 ```bash
-gh api repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval
-# first_time_contributors_new_to_github | first_time_contributors | all_external_contributors
+gh workflow run approve-gated-runs.yml
 ```
-
-There is no "off" value — it is a security setting about fork pull requests on a
-public repository. With `first_time_contributors_new_to_github`, fresh
-`pull_request` and `pull_request_target` runs on Copilot branches are no longer
-held. **`workflow_run` runs still are**, which matters because `pr-auto-merge`
-is triggered that way.
 
 Two details about held `workflow_run` runs, both learned the hard way:
 
@@ -140,9 +172,15 @@ person who delegated the task to review it. Two GitHub behaviours shape how
   request is cleared as soon as the PR is opened, rather than sitting in
   someone's queue for however long the draft lasts.
 
-Pushes to a draft are ignored — there is no review to refresh yet, and the
-reviewer cleanup already happened when the PR was opened. `ready_for_review`
-brings the PR back to request the review.
+`pr-copilot-review` deliberately runs on a draft's pushes too. An earlier
+version skipped `synchronize` while draft, reasoning that the cleanup had
+already happened at `opened`. It had not, and the failure mode was the one that
+prompted this whole document: the coding agent adds the reviewer partway through
+drafting, the `opened` run is held in `action_required`, and so the only run
+that would ever have reached the cleanup was a `synchronize` one — the run being
+skipped. A human then sat in the review queue for hours. `approve-gated-runs`
+strips foreign reviewers as well, so the relief does not depend on a held run
+being released.
 
 ## Labels
 
