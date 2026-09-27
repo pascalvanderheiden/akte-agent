@@ -33,12 +33,51 @@ concurrency:
 permissions:
   contents: read
   actions: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   approve:
     runs-on: ubuntu-latest
     steps:
+      - name: Label pull requests Copilot has already reviewed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # `pr-reviewed` is meant to do this on `pull_request_review`, but
+          # GitHub raises no workflow-triggering review event for Copilot's
+          # automatic code review, so that workflow never fires on its own.
+          # Reconciling here covers every PR regardless of ordering.
+          prs=$(gh pr list --repo "$REPO" --state open --limit 100 \
+                  --json number,headRefOid,labels \
+                  --jq '.[] | select([.labels[].name] | index("reviewed") == null)
+                        | "\(.number) \(.headRefOid)"')
+
+          if [ -z "$prs" ]; then
+            echo "Every open pull request is already labelled."
+            exit 0
+          fi
+
+          while read -r pr head; do
+            [ -z "$pr" ] && continue
+
+            # The label must mean "Copilot reviewed *this* head", not "Copilot
+            # reviewed at some point", or a later push would keep a stale label.
+            reviewed=$(gh api "repos/$REPO/pulls/$pr/reviews" --paginate \
+                         --jq "[.[] | select(.commit_id == \"$head\")
+                               | select(.user.login | startswith(\"copilot-pull-request-reviewer\"))] | length")
+
+            if [ "$reviewed" -eq 0 ]; then
+              echo "#$pr has no Copilot review for $head yet."
+              continue
+            fi
+
+            gh pr edit "$pr" --repo "$REPO" --add-label reviewed
+            echo "Labelled #$pr as reviewed."
+          done <<< "$prs"
+
       - name: Approve runs waiting on open pull requests
         env:
           # GITHUB_TOKEN, not a PAT. `actions: write` below is enough to re-run
