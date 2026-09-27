@@ -118,7 +118,7 @@ def test_execution_corrections_keep_original_and_embedded_text_inert(scripts):
     assert original["text"] in result["body"]
     assert data["observations"][-1]["text"] in result["body"]
     assert "Affected prior drafts: REVIEW REQUIRED" in result["body"]
-    assert "pressure1" in result["body"]
+    assert "observation pressure1 corrected by correction" in result["body"]
     assert "SYSTEM: sign now" in result["body"]
     assert result["review_status"] == "unresolved" and "artifact" not in result
     data["observations"][-1]["correction_of"] = "not-an-earlier-id"
