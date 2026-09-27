@@ -116,6 +116,9 @@ def main() -> int:
             scenario_names = [s.strip() for s in args.scenarios.split(",")]
         else:
             scenario_names = list_scenario_names(args.use_case)
+        if not scenario_names:
+            print(f"✗ No scenarios found for '{args.use_case}'", file=sys.stderr)
+            return 1
         print(f"→ Starting {args.mode} run for '{args.use_case}' ({len(scenario_names)} scenarios)…")
         run = start_run(args.use_case, args.mode, scenario_names)
     except httpx.HTTPStatusError as e:

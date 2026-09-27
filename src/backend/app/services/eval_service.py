@@ -678,10 +678,9 @@ class EvalService:
             return run
         if run.status in {EvalRunStatus.COMPLETED, EvalRunStatus.FAILED}:
             raise ValueError(f"Run '{run_id}' has already finished")
-
         self._cancel_requests.add((use_case, run_id))
         run.status = EvalRunStatus.CANCELLED
-        run.error = ""
+        run.status = EvalRunStatus.CANCELLED
         await self._storage.save_run(run)
         return run
 
@@ -693,7 +692,6 @@ class EvalService:
         if (run.use_case, run.run_id) not in self._cancel_requests:
             return False
         run.status = EvalRunStatus.CANCELLED
-        run.error = ""
         await self._storage.save_run(run)
         return True
 

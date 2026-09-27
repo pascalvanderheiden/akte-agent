@@ -164,7 +164,12 @@ async def get_run(use_case: str, run_id: str, request: Request) -> EvalRun:
 
 
 @router.post("/{use_case}/evals/runs/{run_id}/cancel", response_model=EvalRun)
-async def cancel_run(use_case: str, run_id: str, request: Request) -> EvalRun:
+async def cancel_run(
+    use_case: str,
+    run_id: str,
+    request: Request,
+    _user: dict = Depends(require_authenticated_user),
+) -> EvalRun:
     _ensure_use_case(request, use_case)
     service = _get_service(request)
     try:

@@ -568,7 +568,7 @@ class EvalRunRequest(BaseModel):
     mode: EvalMode = EvalMode.VALIDATION
     scenarios: list[str] = Field(
         default_factory=list,
-        description="Scenario names to run.",
+        description="Scenario names to run. Must contain at least one name.",
     )
 
 
