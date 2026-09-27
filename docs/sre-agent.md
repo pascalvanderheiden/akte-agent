@@ -379,19 +379,20 @@ They are preserved even when a PAT was supplied; an expired/ambiguous existing
 authorization must be renewed in the portal, not overwritten automatically.
 Other domains and registrations are never changed. A new PAT is installed only
 when no target-domain record exists. The hook lists registrations, reuses an
-exact URL/branch match regardless of its name, or PUTs a deterministic
-URL-and-branch-specific name. It reads back the exact URL, branch, and type;
-duplicates, name collisions, malformed data, and mismatches fail explicitly.
-Changing the branch adds a distinct registration and preserves the old one.
+exact URL/branch match regardless of its name, treats a null branch as the
+discovered default branch, or PUTs a deterministic URL-and-branch-specific
+name. It reads back the exact URL, branch, and type; duplicates, name
+collisions, malformed data, and mismatches fail explicitly. Changing the
+branch adds a distinct registration and preserves the old one.
 
 Default-branch and current-commit lookup use GitHub's HTTPS REST API with only
 the dedicated PAT, if supplied, otherwise anonymously. A private repo may be
 usable by SRE while this independent lookup is unavailable: supply an explicit
-branch. Never guess `main` or use the current checkout. A `Ready` clone at the
-current GitHub commit is reported as verified **clone evidence**, still
-`pending`: a cached clone cannot prove current auth or a fresh source read.
-No hook path currently reports GitHub `ready`; even successful registration
-requires the manual read-only acceptance below.
+branch. Never guess `main` or use the current checkout. An existing data-plane
+registration with `cloneStatus: Ready` and `isHealthy: true` reports GitHub
+`ready`. A `Ready` clone at the current GitHub commit without the health signal
+is reported as verified **clone evidence**, still `pending`: a cached clone
+alone cannot prove current auth or a fresh source read.
 
 `SRE_GITHUB_ATTEMPTS` (default 3, range 1-10) and
 `SRE_GITHUB_DELAY_SECONDS` (default 5, range 0-30) bound propagation/readiness

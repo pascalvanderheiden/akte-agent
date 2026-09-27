@@ -41,6 +41,10 @@ def pending(message: str) -> NoReturn:
     raise SetupResultError("pending", message)
 
 
+def ready(message: str) -> NoReturn:
+    raise SetupResultError("ready", message)
+
+
 def parse_json(raw: str) -> object:
     try:
         return json.loads(raw)
@@ -299,6 +303,7 @@ class GitHubSetup:
     def setup(self) -> None:
         url, host, slug = repository_url(os.environ.get("SRE_GITHUB_REPOSITORY_URL") or DEFAULT_REPOSITORY)
         branch = os.environ.get("SRE_GITHUB_BRANCH") or ""
+        default_branch = ""
         if branch:
             branch = branch_name(branch)
         self.resolve_endpoint()
@@ -326,6 +331,7 @@ class GitHubSetup:
             if not isinstance(data, dict) or "default_branch" not in data:
                 fail("Malformed default-branch discovery response.")
             branch = branch_name(data["default_branch"])
+            default_branch = branch
 
         status, data = self.github(host, f"/repos/{slug}/branches/{quote(branch, safe='')}")
         expected_commit = ""
@@ -342,6 +348,10 @@ class GitHubSetup:
         repos = result.get("value") if isinstance(result, dict) else result
         if not isinstance(repos, list) or (isinstance(result, dict) and result.get("nextLink")):
             fail("Malformed or paginated repository collection; refusing an incomplete registration check.")
+
+        def branch_matches(value: object) -> bool:
+            return value == branch or (value is None and branch == default_branch)
+
         matches = []
         for repo in repos:
             if (
@@ -356,7 +366,7 @@ class GitHubSetup:
                 props.get("type") == "GitHub"
                 and isinstance(props.get("url"), str)
                 and props["url"].rstrip("/").removesuffix(".git").lower() == url
-                and props.get("branch") == branch
+                and branch_matches(props.get("branch"))
             ):
                 matches.append(repo)
         if len(matches) > 1:
@@ -388,12 +398,14 @@ class GitHubSetup:
             props = repo["properties"]
             if (
                 props.get("type") != "GitHub"
-                or props.get("branch") != branch
+                or not branch_matches(props.get("branch"))
                 or repository_url(props.get("url"))[0] != url
             ):
                 fail("Repository readback does not match the requested repository and branch.")
             clone = props.get("cloneStatus")
             commit = props.get("latestCommit")
+            if clone == "Ready" and props.get("isHealthy") is True:
+                ready("Existing GitHub repository registration is healthy in the SRE data plane.")
             if (
                 clone == "Ready"
                 and isinstance(commit, str)

@@ -404,6 +404,17 @@ def test_existing_manual_name_is_reused(fake_bin: Path, log: Path) -> None:
     assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
 
 
+def test_existing_default_branch_registration_with_null_branch_is_ready(fake_bin: Path, log: Path) -> None:
+    items = sequence(existing=True)
+    for repo in (items[3]["body"]["value"][0], items[-1]["body"]):
+        repo["name"] = "operator-repo"
+        repo["properties"]["branch"] = None
+        repo["properties"]["isHealthy"] = True
+    items[-1]["url"] = ENDPOINT + "/api/v2/repos/operator-repo"
+    check(run_hook(SETUP, fake_bin, log, settings(items)), fake_bin, "ready")
+    assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
+
+
 @pytest.mark.parametrize("raw", ['""', "null", "5", '"bad\\nvalue"'])
 def test_malformed_token_never_reaches_http(raw: str, fake_bin: Path, log: Path) -> None:
     check(run_hook(SETUP, fake_bin, log, settings([], FAKE_TOKEN=raw)), fake_bin, "failed", 1)
