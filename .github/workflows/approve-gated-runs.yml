@@ -41,10 +41,11 @@ jobs:
     steps:
       - name: Approve runs waiting on open pull requests
         env:
-          # Approving is a maintainer action; the documented requirement is a
-          # token with `repo` scope. The default GITHUB_TOKEN is not an accepted
-          # approver, so the fallback exists only to fail loudly.
-          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          # GITHUB_TOKEN, not a PAT. `actions: write` below is enough to re-run
+          # a held run, and the fine-grained PAT this repo carries for assigning
+          # Copilot has no Actions permission at all — it fails with 403
+          # "Resource not accessible by personal access token".
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -80,23 +81,20 @@ jobs:
               [ "$run_sha" = "$sha" ] || continue
 
               echo "Releasing $run_id — $name (PR #$pr)"
-              if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
+              if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
                 approved=$((approved + 1))
-              elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
-                # Gated by GitHub but outside what approve will release. A
-                # re-run re-queues the jobs under this workflow's actor, which
-                # is not Copilot, so it is not held back a second time.
-                if rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
-                  echo "Approve unavailable for $run_id; re-ran it instead."
-                  approved=$((approved + 1))
-                else
-                  echo "::notice::Run $run_id on PR #$pr could be neither approved nor re-run: $rerun_err"
-                  skipped=$((skipped + 1))
-                fi
+              elif rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
+                # Approve is refused for anything that is not a fork-PR run or
+                # an Actions-bot run, which is every run on a same-repo Copilot
+                # branch. A re-run re-queues the jobs under this workflow's
+                # actor rather than Copilot's, so it is not held a second time.
+                echo "Approve unavailable for $run_id; re-ran it instead."
+                approved=$((approved + 1))
               else
-                echo "::error::Could not approve run $run_id on PR #$pr: $err"
-                echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
-                exit 1
+                # Never fatal: one unreleasable run must not stop the sweep, and
+                # the next tick retries anyway.
+                echo "::notice::Run $run_id on PR #$pr could be neither approved nor re-run: $rerun_err"
+                skipped=$((skipped + 1))
               fi
             done <<< "$pending"
           done <<< "$heads"

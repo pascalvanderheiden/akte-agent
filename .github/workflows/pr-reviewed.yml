@@ -54,14 +54,17 @@ jobs:
 
       - name: Release the workflow runs waiting on this PR
         env:
-          # Two different mechanisms, because the approve endpoint is much
-          # narrower than its docs suggest: it only accepts fork-PR runs and
-          # runs queued by the Actions bot. A run held on a same-repo Copilot
-          # branch is refused with 403 even for a repo admin with a
-          # `repo`-scoped PAT, so no secret can fix it. Re-running the run does
-          # work, because the re-run is attributed to the actor that triggered
-          # it rather than to Copilot, so that is the fallback.
-          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          # Two mechanisms, because the approve endpoint is much narrower than
+          # its docs suggest: it only accepts fork-PR runs and runs queued by
+          # the Actions bot. A run held on a same-repo Copilot branch is refused
+          # with 403 even for a repo admin with a `repo`-scoped PAT, so no
+          # secret fixes it. Re-running does work, because the re-run is
+          # attributed to this workflow's actor rather than to Copilot.
+          #
+          # GITHUB_TOKEN, not a PAT: `actions: write` above is enough to re-run,
+          # and this repo's fine-grained PAT has no Actions permission at all
+          # ("Resource not accessible by personal access token").
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.number || inputs.pr_number }}
           REPO: ${{ github.repository }}
         run: |
@@ -80,22 +83,17 @@ jobs:
 
             for run_id in $runs; do
               echo "Releasing workflow run $run_id"
-              if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
+              if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
                 released=$((released + 1))
-              elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
-                # Expected on a same-repo Copilot branch. Re-run it instead:
-                # that re-queues the jobs under this workflow's actor, which is
-                # not subject to the fork-contributor approval policy.
-                if rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
-                  echo "Approve is not available for run $run_id; re-ran it instead."
-                  released=$((released + 1))
-                else
-                  echo "::notice::Run $run_id could be neither approved nor re-run: $rerun_err"
-                fi
+              elif rerun_err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/rerun" 2>&1 >/dev/null); then
+                # Expected on a same-repo Copilot branch: approve is refused, but
+                # a re-run re-queues the jobs under this workflow's actor.
+                echo "Approve is not available for run $run_id; re-ran it instead."
+                released=$((released + 1))
               else
-                echo "::error::Could not approve workflow run $run_id: $err"
-                echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
-                exit 1
+                # Not fatal: the schedule sweeper retries, and failing here would
+                # leave the PR unlabelled for no gain.
+                echo "::notice::Run $run_id could be neither approved nor re-run: $rerun_err"
               fi
             done
 
