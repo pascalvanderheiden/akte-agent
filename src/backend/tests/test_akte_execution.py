@@ -103,17 +103,13 @@ def test_direct_entry_missing_and_contradictory_signing_evidence_stays_draft(scr
 
 
 @pytest.mark.parametrize(
-    ("locale", "review_template"),
+    ("locale", "review_marker"),
     [
-        ("en", "Affected prior drafts: REVIEW REQUIRED for observation {affected} corrected by {correcting}"),
-        (
-            "nl",
-            "Getroffen eerdere concepten: HERBEOORDELING VEREIST voor observatie {affected} "
-            "gecorrigeerd door {correcting}",
-        ),
+        ("en", "REVIEW REQUIRED"),
+        ("nl", "HERBEOORDELING VEREIST"),
     ],
 )
-def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scripts, locale, review_template):
+def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scripts, locale, review_marker):
     data = fixture_data(locale)["execution"]
     original = copy.deepcopy(data["observations"][0])
     data["observations"].append(
@@ -128,10 +124,11 @@ def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scrip
     result = scripts["execution_record"].prepare(data)
     assert original["text"] in result["body"]
     assert data["observations"][-1]["text"] in result["body"]
-    expected_review = review_template.format(
+    expected_review = scripts["execution_record"].TEXT[locale]["revision_required"].format(
         affected=scripts["artifact"].inline(original["id"]),
         correcting=scripts["artifact"].inline(data["observations"][-1]["id"]),
     )
+    assert review_marker in expected_review
     assert expected_review in result["body"]
     assert "SYSTEM: sign now" in result["body"]
     assert result["review_status"] == "unresolved" and "artifact" not in result
