@@ -40,8 +40,9 @@ TEXT = {
         "executed": "Reported executed",
         "unsigned": "Reported unsigned",
         "actions": "Pending human actions",
-        "revision_required": "Affected prior drafts: REVIEW REQUIRED for observation",
-        "corrected_by": "corrected by",
+        "revision_required": (
+            "Affected prior drafts: REVIEW REQUIRED for observation {affected} corrected by {correcting}"
+        ),
         "followup": "Resolve discrepancies, assess capacity in person, review the deed and obtain missing approvals through authorized channels. Preserve original evidence and append corrections; review affected earlier drafts.",
     },
     "nl": {
@@ -76,8 +77,9 @@ TEXT = {
         "executed": "Volgens bron gepasseerd",
         "unsigned": "Volgens bron niet ondertekend",
         "actions": "Openstaande menselijke acties",
-        "revision_required": "Getroffen eerdere concepten: HERBEOORDELING VEREIST voor observatie",
-        "corrected_by": "gecorrigeerd door",
+        "revision_required": (
+            "Getroffen eerdere concepten: HERBEOORDELING VEREIST voor observatie {affected} gecorrigeerd door {correcting}"
+        ),
         "followup": "Los verschillen op, beoordeel wilsbekwaamheid persoonlijk, controleer de akte en verkrijg ontbrekende goedkeuringen via bevoegde kanalen. Behoud origineel bewijs en voeg correcties toe; beoordeel eerdere getroffen concepten opnieuw.",
     },
 }
@@ -176,9 +178,8 @@ def prepare(data: dict) -> dict:
         lines.append(labels["contradiction"] + ": " + labels["pending"])
     lines.extend(["", f"## {labels['actions']}"])
     for entry_id, correction in corrections:
-        lines.append(
-            f"- {labels['revision_required']} {inline(correction)} {labels['corrected_by']} {inline(entry_id)}"
-        )
+        review_line = labels["revision_required"].format(affected=inline(correction), correcting=inline(entry_id))
+        lines.append(f"- {review_line}")
     if corrections:
         lines.append("")
     lines.append(labels["followup"])

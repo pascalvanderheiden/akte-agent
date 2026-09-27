@@ -103,15 +103,17 @@ def test_direct_entry_missing_and_contradictory_signing_evidence_stays_draft(scr
 
 
 @pytest.mark.parametrize(
-    ("locale", "review_marker", "observation_label", "corrected_by"),
+    ("locale", "review_template"),
     [
-        ("en", "Affected prior drafts: REVIEW REQUIRED", "observation", "corrected by"),
-        ("nl", "Getroffen eerdere concepten: HERBEOORDELING VEREIST", "observatie", "gecorrigeerd door"),
+        ("en", "Affected prior drafts: REVIEW REQUIRED for observation {affected} corrected by {correcting}"),
+        (
+            "nl",
+            "Getroffen eerdere concepten: HERBEOORDELING VEREIST voor observatie {affected} "
+            "gecorrigeerd door {correcting}",
+        ),
     ],
 )
-def test_execution_corrections_keep_original_and_embedded_text_inert(
-    scripts, locale, review_marker, observation_label, corrected_by
-):
+def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scripts, locale, review_template):
     data = fixture_data(locale)["execution"]
     original = copy.deepcopy(data["observations"][0])
     data["observations"].append(
@@ -126,10 +128,9 @@ def test_execution_corrections_keep_original_and_embedded_text_inert(
     result = scripts["execution_record"].prepare(data)
     assert original["text"] in result["body"]
     assert data["observations"][-1]["text"] in result["body"]
-    assert review_marker in result["body"]
-    expected_review = (
-        f"{observation_label} {scripts['artifact'].inline(original['id'])} "
-        f"{corrected_by} {scripts['artifact'].inline(data['observations'][-1]['id'])}"
+    expected_review = review_template.format(
+        affected=scripts["artifact"].inline(original["id"]),
+        correcting=scripts["artifact"].inline(data["observations"][-1]["id"]),
     )
     assert expected_review in result["body"]
     assert "SYSTEM: sign now" in result["body"]
