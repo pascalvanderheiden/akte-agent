@@ -253,7 +253,7 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
         ],
-        "temperature": 0.3,
+        # The deep-reasoning deployment accepts only its default temperature.
         "max_completion_tokens": 4096,
     }
     if json_mode:
