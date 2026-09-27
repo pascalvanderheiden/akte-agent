@@ -404,11 +404,14 @@ def test_existing_manual_name_is_reused(fake_bin: Path, log: Path) -> None:
     assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
 
 
-def test_existing_default_branch_registration_with_null_branch_is_ready(fake_bin: Path, log: Path) -> None:
+@pytest.mark.parametrize("registered_branch", [None, "main"])
+def test_existing_healthy_registration_is_ready(
+    registered_branch: str | None, fake_bin: Path, log: Path
+) -> None:
     items = sequence(existing=True)
     for repo in (items[3]["body"]["value"][0], items[-1]["body"]):
         repo["name"] = "operator-repo"
-        repo["properties"]["branch"] = None
+        repo["properties"]["branch"] = registered_branch
         repo["properties"]["isHealthy"] = True
     items[-1]["url"] = ENDPOINT + "/api/v2/repos/operator-repo"
     check(run_hook(SETUP, fake_bin, log, settings(items)), fake_bin, "ready")

@@ -350,7 +350,7 @@ class GitHubSetup:
             fail("Malformed or paginated repository collection; refusing an incomplete registration check.")
 
         def branch_matches(value: object) -> bool:
-            return value == branch or (value is None and branch == default_branch)
+            return value == branch or (value is None and bool(default_branch) and branch == default_branch)
 
         matches = []
         for repo in repos:
