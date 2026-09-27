@@ -2,26 +2,26 @@ name: Approve gated workflow runs
 
 # Safety net for the PR automation chain.
 #
-# GitHub gates workflow runs by *actor*, and the Copilot coding agent is treated
-# as a first-time contributor, so every run it causes lands in `action_required`
-# — including base-context `workflow_run` runs that never touch PR code. That was
-# confirmed here: at a Copilot-authored commit the `workflow_run` children came
-# back `action_required`, while at a maintainer-authored commit the identical
-# workflow ran normally.
+# `pr-reviewed` approves whatever is waiting when Copilot's review lands, but it
+# only sees the runs that exist at that instant. Anything queued afterwards — a
+# re-run, a slow check suite, a run registered moments later — has no event to
+# release it, and a run left in `action_required` blocks the merge gate forever.
 #
-# The consequence is that `pr-auto-merge`'s own `workflow_run` instance is gated
-# on precisely the pull requests this automation exists to handle, and a gated
-# workflow cannot ungate itself. `pr-reviewed` releases the runs that exist when
-# the review lands, but anything queued afterwards needs releasing too.
+# This is the backstop. A `schedule` run's actor is the last person to touch the
+# workflow file, never Copilot, so it is the one trigger that cannot itself end
+# up gated behind the thing it exists to fix.
 #
-# A `schedule` run's actor is the last person to touch the workflow file, never
-# Copilot, so this is the one trigger that is guaranteed never to be gated. It
-# does one thing: approve what is waiting.
+# Scope matters. `POST /actions/runs/{id}/approve` only accepts runs from fork
+# pull requests and runs queued by the Actions bot; anything else comes back
+# 403 "This run is not from a fork pull request or queued by the Actions bot"
+# and no token can release it. So this sweeps the runs attached to open pull
+# requests and treats that particular refusal as "nothing to do" rather than as
+# a failure.
 
 on:
   schedule:
     # Every ten minutes. GitHub delays scheduled runs under load, which only
-    # costs latency here — the event-driven path is still the fast one.
+    # costs latency here — `pr-reviewed` is still the fast path.
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
@@ -32,12 +32,13 @@ concurrency:
 permissions:
   contents: read
   actions: write
+  pull-requests: read
 
 jobs:
   approve:
     runs-on: ubuntu-latest
     steps:
-      - name: Approve runs waiting on same-repo branches
+      - name: Approve runs waiting on open pull requests
         env:
           # Approving is a maintainer action; the documented requirement is a
           # token with `repo` scope. The default GITHUB_TOKEN is not an accepted
@@ -47,39 +48,50 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Same-repo branches only. Runs from forks stay gated — releasing those
-          # automatically would throw away the protection the gate exists for,
-          # and this repository is public.
-          runs=$(gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
-            --jq ".workflow_runs[]
-                  | select(.head_repository.full_name == \"$REPO\")
-                  | \"\(.id)\t\(.name)\t\(.head_branch)\"")
+          # Only the head commits of open PRs are of interest. Runs on branches
+          # with no open PR — post-merge CI on the default branch, for instance —
+          # are not approvable and never gate a merge, so sweeping them would
+          # just generate noise on every schedule tick.
+          heads=$(gh pr list --repo "$REPO" --state open --limit 100 \
+                    --json number,headRefOid \
+                    --jq '.[] | "\(.headRefOid) \(.number)"')
 
-          if [ -z "$runs" ]; then
+          if [ -z "$heads" ]; then
+            echo "No open pull requests."
+            exit 0
+          fi
+
+          pending=$(gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+                      --jq '.workflow_runs[] | "\(.head_sha)\t\(.id)\t\(.name)"')
+
+          if [ -z "$pending" ]; then
             echo "Nothing is awaiting approval."
             exit 0
           fi
 
           approved=0
-          failed=0
+          skipped=0
 
-          while IFS=$'\t' read -r run_id name branch; do
-            [ -z "$run_id" ] && continue
-            echo "Approving $run_id — $name on $branch"
-            if gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>&1; then
-              approved=$((approved + 1))
-            else
-              # A run can be approved by someone else, or expire, between the
-              # listing and this call. Count it and keep going rather than
-              # abandoning the rest of the queue.
-              echo "::warning::Could not approve run $run_id ($name on $branch)."
-              failed=$((failed + 1))
-            fi
-          done <<< "$runs"
+          while read -r sha pr; do
+            [ -z "$sha" ] && continue
 
-          echo "Approved $approved run(s); $failed could not be approved."
+            while IFS=$'\t' read -r run_sha run_id name; do
+              [ "$run_sha" = "$sha" ] || continue
 
-          if [ "$approved" -eq 0 ] && [ "$failed" -gt 0 ]; then
-            echo "::error::Every approval attempt failed. Check that COPILOT_ASSIGN_TOKEN is set and carries the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
-            exit 1
-          fi
+              echo "Approving $run_id — $name (PR #$pr)"
+              if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
+                approved=$((approved + 1))
+              elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
+                # Gated by GitHub but outside what the API will release. Nothing
+                # to retry, so say so once and move on.
+                echo "::notice::Run $run_id on PR #$pr cannot be approved through the API; leaving it."
+                skipped=$((skipped + 1))
+              else
+                echo "::error::Could not approve run $run_id on PR #$pr: $err"
+                echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
+                exit 1
+              fi
+            done <<< "$pending"
+          done <<< "$heads"
+
+          echo "Approved $approved run(s); skipped $skipped that the API will not release."

@@ -77,11 +77,19 @@ jobs:
 
             for run_id in $runs; do
               echo "Approving workflow run $run_id"
-              if ! gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null; then
-                echo "::error::Could not approve workflow run $run_id. Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
+              if err=$(gh api --method POST "repos/$REPO/actions/runs/$run_id/approve" 2>&1 >/dev/null); then
+                approved=$((approved + 1))
+              elif printf '%s' "$err" | grep -q "not from a fork pull request"; then
+                # The approve endpoint only accepts fork-PR runs and runs queued
+                # by the Actions bot. Anything else is stuck in `action_required`
+                # by design and no token can release it, so there is nothing to
+                # report and nothing to retry.
+                echo "::notice::Run $run_id cannot be approved through the API (not a fork PR or Actions-bot run); leaving it."
+              else
+                echo "::error::Could not approve workflow run $run_id: $err"
+                echo "::error::Set the COPILOT_ASSIGN_TOKEN secret to a token with the \`repo\` scope — the default GITHUB_TOKEN is not an accepted approver."
                 exit 1
               fi
-              approved=$((approved + 1))
             done
 
             if [ "$approved" -gt 0 ] || [ "$attempt" -eq 5 ]; then
