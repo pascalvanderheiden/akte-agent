@@ -498,6 +498,7 @@ class EvalService:
         self._registries = registries
         self._foundry_proxy = foundry_proxy
         self._tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
+        self._cancel_requests: set[tuple[str, str]] = set()
 
     # ── Hosted-agent invocation helper (uses Invocations protocol via FoundryAgentProxy) ──
 
@@ -622,19 +623,12 @@ class EvalService:
         self,
         use_case: str,
         mode: EvalMode,
-        scenario_names: list[str] | None,
+        scenario_names: list[str],
         started_by: str = "",
     ) -> EvalRun:
         """Create an EvalRun record, persist it, and kick off the background task."""
         require_available(use_case, self._registries)
         run_id = uuid.uuid4().hex
-
-        # Resolve scenario list
-        if scenario_names:
-            scenarios = scenario_names
-        else:
-            all_scenarios = await self._storage.list_scenarios(use_case)
-            scenarios = [s.name for s in all_scenarios]
 
         now = _now()
         run = EvalRun(
@@ -642,7 +636,7 @@ class EvalService:
             use_case=use_case,
             mode=mode,
             status=EvalRunStatus.PENDING,
-            scenarios=scenarios,
+            scenarios=scenario_names,
             created_at=now,
             updated_at=now,
             started_by=started_by,
@@ -654,10 +648,17 @@ class EvalService:
             self._execute_run(run),
             name=f"eval-{use_case}-{run_id}",
         )
-        self._tasks[(use_case, run_id)] = task
-        task.add_done_callback(lambda t: self._tasks.pop((use_case, run_id), None))
+        key = (use_case, run_id)
+        self._tasks[key] = task
+        task.add_done_callback(lambda _task: self._cleanup_run(key))
 
-        logger.info("Started eval run %s for '%s' (mode=%s, %d scenarios)", run_id, use_case, mode, len(scenarios))
+        logger.info(
+            "Started eval run %s for '%s' (mode=%s, %d scenarios)",
+            run_id,
+            use_case,
+            mode,
+            len(scenario_names),
+        )
         return run
 
     async def get_run(self, use_case: str, run_id: str) -> EvalRun | None:
@@ -665,6 +666,34 @@ class EvalService:
 
     async def list_runs(self, use_case: str, limit: int = 50) -> list[EvalRun]:
         return await self._storage.list_runs(use_case, limit)
+
+    async def cancel_run(self, use_case: str, run_id: str) -> EvalRun | None:
+        """Request cancellation of a pending or in-flight eval run."""
+        run = await self._storage.load_run(use_case, run_id)
+        if run is None:
+            return None
+        if run.status == EvalRunStatus.CANCELLED:
+            return run
+        if run.status in {EvalRunStatus.COMPLETED, EvalRunStatus.FAILED}:
+            raise ValueError(f"Run '{run_id}' has already finished")
+
+        self._cancel_requests.add((use_case, run_id))
+        run.status = EvalRunStatus.CANCELLED
+        run.error = ""
+        await self._storage.save_run(run)
+        return run
+
+    def _cleanup_run(self, key: tuple[str, str]) -> None:
+        self._tasks.pop(key, None)
+        self._cancel_requests.discard(key)
+
+    async def _stop_if_cancelled(self, run: EvalRun) -> bool:
+        if (run.use_case, run.run_id) not in self._cancel_requests:
+            return False
+        run.status = EvalRunStatus.CANCELLED
+        run.error = ""
+        await self._storage.save_run(run)
+        return True
 
     async def shutdown(self) -> None:
         """Cancel all in-flight eval tasks gracefully."""
@@ -687,8 +716,8 @@ class EvalService:
             await self._do_execute_run(run)
         except asyncio.CancelledError:
             logger.info("Eval run %s cancelled", run_id)
-            run.status = EvalRunStatus.FAILED
-            run.error = "Cancelled"
+            run.status = EvalRunStatus.CANCELLED
+            run.error = ""
             await self._storage.save_run(run)
         except Exception as exc:
             logger.exception("Eval run %s failed", run_id)
@@ -714,6 +743,8 @@ class EvalService:
 
         if not scenarios_to_run:
             raise RuntimeError("No valid scenarios found for this run.")
+        if await self._stop_if_cancelled(run):
+            return
 
         # ── Phase 1: INVOKING ─────────────────────────────────────────────
         run.status = EvalRunStatus.INVOKING
@@ -726,6 +757,8 @@ class EvalService:
         logger.info("[eval %s] warmup start (max %d attempts)", run_id, _WARMUP_ATTEMPTS)
         backoff = _WARMUP_BACKOFF_S
         for attempt in range(1, _WARMUP_ATTEMPTS + 1):
+            if await self._stop_if_cancelled(run):
+                return
             try:
                 wtext, _, werr, _ = await self._invoke_hosted_agent(
                     message="ping",
@@ -752,6 +785,8 @@ class EvalService:
         # Sequential invocation
         total = len(scenarios_to_run)
         for idx, scenario in enumerate(scenarios_to_run):
+            if await self._stop_if_cancelled(run):
+                return
             t_start = time.monotonic()
             try:
                 resp_text, raw_tool_calls, err, answer_models = await self._invoke_hosted_agent(
@@ -822,10 +857,14 @@ class EvalService:
                     "duration_ms": result.duration_ms,
                 },
             )
+            if await self._stop_if_cancelled(run):
+                return
 
             # Persist run meta periodically (every 5 scenarios or at end)
             if (idx + 1) % 5 == 0 or (idx + 1) == total:
                 await self._storage.save_run(run)
+                if await self._stop_if_cancelled(run):
+                    return
 
             # Pace invocations per foundry-evals guidance
             if idx < total - 1:
@@ -837,11 +876,15 @@ class EvalService:
         # is empty and the eval panel can't render per-evaluator bars.
         # Scoring is best-effort enrichment; never let a scoring failure
         # mark the whole run as failed when invocations succeeded.
+        if await self._stop_if_cancelled(run):
+            return
         try:
             await self._score_run(run, scenarios_to_run, use_case, run_id)
         except Exception as exc:
             logger.exception("[eval %s] scoring failed (invocations OK)", run_id)
             run.error = f"Scoring failed: {exc}"
+        if await self._stop_if_cancelled(run):
+            return
 
         # ── Phase 3: Write report ─────────────────────────────────────────
         report = self._build_report(run, use_case)

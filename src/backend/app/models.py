@@ -559,6 +559,7 @@ class EvalRunStatus(str, Enum):
     SCORING = "scoring"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class EvalRunRequest(BaseModel):
@@ -566,8 +567,8 @@ class EvalRunRequest(BaseModel):
 
     mode: EvalMode = EvalMode.VALIDATION
     scenarios: list[str] = Field(
-        default_factory=list,
-        description="Subset of scenario names to run. Empty = all scenarios for the use-case.",
+        min_length=1,
+        description="Scenario names to run.",
     )
 
 

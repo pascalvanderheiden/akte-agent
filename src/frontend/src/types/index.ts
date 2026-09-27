@@ -286,7 +286,8 @@ export type EvalRunStatus =
   | "invoking"
   | "scoring"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface ScenarioResult {
   scenario: string;
