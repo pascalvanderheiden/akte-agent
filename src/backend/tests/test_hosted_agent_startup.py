@@ -81,7 +81,7 @@ async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, av
     assert len(records) == expected_count
     if records:
         record = records[0]
-        assert record.failure_reason == "TimeoutError"
+        assert record.failure_reason == reason
         assert record.environment == "test"
         assert record.model_deployment == "test-model"
         assert datetime.fromisoformat(record.timestamp).tzinfo is not None

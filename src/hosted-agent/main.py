@@ -161,18 +161,19 @@ async def _startup() -> None:
 
     if blob_service.unavailability_reason:
         timestamp = datetime.now(UTC).isoformat()
+        model_deployment = _settings.foundry_model_deployment or "(empty)"
         logger.warning(
             "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
             blob_service.unavailability_reason,
             timestamp,
             _settings.environment,
-            _settings.foundry_model_deployment or "(empty)",
+            model_deployment,
             extra={
                 "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
                 "failure_reason": blob_service.unavailability_reason,
                 "timestamp": timestamp,
                 "environment": _settings.environment,
-                "model_deployment": _settings.foundry_model_deployment or "(empty)",
+                "model_deployment": model_deployment,
             },
         )
 

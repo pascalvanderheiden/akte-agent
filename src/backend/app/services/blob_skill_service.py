@@ -75,6 +75,7 @@ class BlobSkillService:
         (Managed Identity / dev Entra ID). If neither is configured the
         service no-ops.
         """
+        self._unavailability_reason = None
         conn_str = self.settings.blob_storage_connection_string
         endpoint = self.settings.blob_storage_endpoint
         container = self.settings.blob_skills_container
@@ -144,6 +145,7 @@ class BlobSkillService:
 
     @property
     def unavailability_reason(self) -> str | None:
+        """Return the exception type from the last failed reachability probe."""
         return self._unavailability_reason
 
     def local_dir(self, use_case: str) -> Path:
