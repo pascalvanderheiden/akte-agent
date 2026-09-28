@@ -172,22 +172,25 @@ class AgentServiceModelEnvironmentTests(unittest.TestCase):
             if resource["type"] == "Microsoft.App/containerApps"
         )
         environment = app["properties"]["template"]["containers"][0]["env"]
-        values = {item["name"]: item["value"] for item in environment}
-        self.assertEqual(
-            "[parameters('orchestratorModelDeployment')]",
-            values["MODEL_DEPLOYMENT_ORCHESTRATOR"],
+        self.assertIn(
+            "createObject('name', 'MODEL_DEPLOYMENT_ORCHESTRATOR', "
+            "'value', parameters('orchestratorModelDeployment'))",
+            environment,
         )
-        self.assertEqual(
-            "[parameters('deepReasoningModelDeployment')]",
-            values["MODEL_DEPLOYMENT_DEEP_REASONING"],
+        self.assertIn(
+            "createObject('name', 'MODEL_DEPLOYMENT_DEEP_REASONING', "
+            "'value', parameters('deepReasoningModelDeployment'))",
+            environment,
         )
-        self.assertEqual(
-            "[parameters('fastModelDeployment')]",
-            values["MODEL_DEPLOYMENT_FAST"],
+        self.assertIn(
+            "createObject('name', 'MODEL_DEPLOYMENT_FAST', "
+            "'value', parameters('fastModelDeployment'))",
+            environment,
         )
-        self.assertEqual(
-            "[parameters('foundryModelDeployment')]",
-            values["FOUNDRY_MODEL_DEPLOYMENT"],
+        self.assertIn(
+            "createObject('name', 'FOUNDRY_MODEL_DEPLOYMENT', "
+            "'value', parameters('foundryModelDeployment'))",
+            environment,
         )
 
     def test_main_wires_role_outputs_into_agent_service_and_azd_outputs(self):
