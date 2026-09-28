@@ -27,29 +27,40 @@ def hosted(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("available", "reason", "expected_reason"),
+    ("available", "reason", "list_error", "expected_reason"),
     [
-        (False, "TimeoutError", "TimeoutError"),
-        (False, None, "not_configured"),
-        (True, None, None),
+        (False, "TimeoutError", None, "TimeoutError"),
+        (False, None, None, "not_configured"),
+        (True, None, None, None),
+        (True, None, TimeoutError(), "TimeoutError"),
     ],
 )
-@pytest.mark.asyncio
-async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, available, reason, expected_reason):
+async def test_startup_blob_local_only_telemetry(
+    hosted, monkeypatch, caplog, available, reason, list_error, expected_reason
+):
     class FakeBlobSkillService:
         def __init__(self, settings):
-            pass
+            self._available = available
+            self._unavailability_reason = reason
 
         @property
         def is_available(self):
-            return available
+            return self._available
 
         @property
         def unavailability_reason(self):
-            return reason
+            return self._unavailability_reason
 
         async def initialize(self):
             pass
+
+        async def _disable(self):
+            self._available = False
+
+        async def list_use_cases(self):
+            if list_error:
+                raise list_error
+            return []
 
         async def seed_from_local(self):
             return []

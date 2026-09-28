@@ -22,6 +22,12 @@ import time
 import uuid
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ServiceRequestError,
+    ServiceResponseError,
+)
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
@@ -118,6 +124,96 @@ app = InvocationAgentServerHost()
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 
+def _is_blob_unreachable(exc: BaseException) -> bool:
+    """True when *exc* means this instance cannot use the storage account at all.
+
+    Network failures, credential failures and outright authorization denials are
+    account-level: this compute simply cannot talk to the account (the hosted
+    agent's Foundry-managed compute typically sits outside the storage account's
+    private endpoint). Anything else — a 404, a conflict, a 5xx — is treated as
+    per-request and leaves blob enabled.
+
+    This is only applied to a *read* (list) call. ``seed_from_local`` also
+    uploads, and a read-capable identity without write permission can 403 on
+    an upload alone — that says nothing about whether reads work, so a write
+    failure must never disable blob (see :func:`_seed_or_disable_blob`).
+    """
+    if isinstance(
+        exc,
+        TimeoutError
+        | ServiceRequestError
+        | ServiceResponseError
+        | ClientAuthenticationError,
+    ):
+        return True
+    return isinstance(exc, HttpResponseError) and exc.status_code in (401, 403)
+
+
+async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
+    """Seed local use-cases into blob, disabling blob only if reads are unreachable.
+
+    ``list_use_cases`` is called first, on its own, purely to establish
+    reachability: it is a read, so a failure here means this compute cannot
+    reach the account at all (the hosted agent's Foundry-managed compute
+    typically sits outside the storage account's private endpoint). Reusing
+    ``BlobSkillService._disable()`` records that verdict once — in the same
+    place ``initialize()`` records it — so :func:`_ensure_registry` goes
+    straight to the baked-in ``use-cases/`` directory from then on.
+
+    Once reads are confirmed to work, ``seed_from_local`` (which lists again,
+    then uploads any missing use-case) is attempted separately. A failure
+    there — e.g. a read-capable identity denied on upload — is a write-only
+    problem and must not disable blob: later reads still have a good chance
+    of succeeding.
+    """
+    try:
+        await blob_service.list_use_cases()
+    except Exception as exc:
+        if _is_blob_unreachable(exc):
+            logger.warning(
+                "Blob storage unreachable at startup (%s) — loading use-cases from local disk only",
+                type(exc).__name__,
+            )
+            if hasattr(blob_service, "_unavailability_reason"):
+                blob_service._unavailability_reason = type(exc).__name__  # noqa: SLF001
+            await blob_service._disable()  # noqa: SLF001
+        else:
+            logger.exception("Failed to verify blob reachability at startup")
+        return
+
+    try:
+        seeded = await blob_service.seed_from_local()
+        if seeded:
+            logger.info("Seeded %d use-case(s) into blob", len(seeded))
+    except Exception:
+        # Reads just succeeded above, so the account is reachable; this is a
+        # write-scoped failure. Leave blob enabled — later reads (and thus the
+        # per-use-case lazy loads) still have a chance to succeed.
+        logger.exception("Failed to seed use-cases into blob storage")
+
+
+def _emit_blob_local_only_telemetry(
+    blob_service: BlobSkillService, settings: Settings
+) -> None:
+    failure_reason = blob_service.unavailability_reason or "not_configured"
+    timestamp = datetime.now(UTC).isoformat()
+    model_deployment = settings.foundry_model_deployment or "(empty)"
+    logger.warning(
+        "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
+        failure_reason,
+        timestamp,
+        settings.environment,
+        model_deployment,
+        extra={
+            "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
+            "failure_reason": failure_reason,
+            "event_timestamp": timestamp,
+            "environment": settings.environment,
+            "model_deployment": model_deployment,
+        },
+    )
+
+
 async def _startup() -> None:
     """Initialise the shared core — mirrors the FastAPI lifespan startup.
 
@@ -164,24 +260,10 @@ async def _startup() -> None:
     _copilot_agent.set_cosmos_service(_cosmos_service)
     _mark("core_parallel", t0)
 
+    emitted_blob_local_only = False
     if not blob_service.is_available:
-        failure_reason = blob_service.unavailability_reason or "not_configured"
-        timestamp = datetime.now(UTC).isoformat()
-        model_deployment = _settings.foundry_model_deployment or "(empty)"
-        logger.warning(
-            "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
-            failure_reason,
-            timestamp,
-            _settings.environment,
-            model_deployment,
-            extra={
-                "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
-                "failure_reason": failure_reason,
-                "event_timestamp": timestamp,
-                "environment": _settings.environment,
-                "model_deployment": model_deployment,
-            },
-        )
+        _emit_blob_local_only_telemetry(blob_service, _settings)
+        emitted_blob_local_only = True
 
     # Seed local use-cases into blob if the container is empty. This only
     # uploads use-cases that are missing (a fast list + skip when already
@@ -189,13 +271,10 @@ async def _startup() -> None:
     # lazy per-use-case loads below can pull skills from blob.
     if blob_service.is_available:
         t0 = _time.monotonic()
-        try:
-            seeded = await blob_service.seed_from_local()
-            if seeded:
-                logger.info("Seeded %d use-case(s) into blob", len(seeded))
-        except Exception:
-            logger.exception("Failed to seed use-cases into blob storage")
+        await _seed_or_disable_blob(blob_service)
         _mark("seed", t0)
+        if not blob_service.is_available and not emitted_blob_local_only:
+            _emit_blob_local_only_telemetry(blob_service, _settings)
 
     _startup_phases = phases
     _startup_total_ms = round((_time.monotonic() - t_start) * 1000, 1)
@@ -215,6 +294,10 @@ async def _ensure_registry(use_case: str) -> None:
     Loading is guarded by a lock and cached in ``_registries`` so concurrent or
     repeat requests for the same use-case load it only once. Falls back to the
     baked-in local ``use-cases/`` directory when blob is unavailable.
+
+    Reachability is decided once, at startup (:func:`_startup`), and recorded on
+    the blob service itself — so when blob is known-unreachable this makes no
+    blob call at all and loads at local-disk speed.
     """
     require_not_retired(use_case)
     if use_case in _registries:

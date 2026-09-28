@@ -23,6 +23,7 @@ from azure.core.exceptions import (
     HttpResponseError,
     ResourceExistsError,
     ServiceRequestError,
+    ServiceResponseError,
 )
 from azure.identity.aio import DefaultAzureCredential
 from azure.storage.blob.aio import ContainerClient
@@ -113,7 +114,7 @@ class BlobSkillService:
             )
         except ResourceExistsError:
             pass  # already provisioned — the account answered, so it is reachable
-        except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+        except (TimeoutError, ServiceRequestError, ServiceResponseError, ClientAuthenticationError) as exc:
             # ClientAuthenticationError subclasses HttpResponseError, so this
             # branch must be checked first or auth failures would be swallowed
             # by the broader "refused but reachable" handler below.
