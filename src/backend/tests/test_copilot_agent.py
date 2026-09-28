@@ -1,6 +1,5 @@
 """Tests for the Copilot SDK agent service."""
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,7 +114,7 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     span = MagicMock()
     telemetry = InvocationTelemetry(
         invocation_id="synthetic-invocation",
-        handler_started_at=time.monotonic(),
+        handler_started_at=0.0,
     )
 
     with (
@@ -146,7 +145,8 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     assert start_span.call_args.kwargs["end_on_exit"] is False
     assert telemetry.handler_duration_ms is None
 
-    telemetry.complete(42)
+    with patch("app.services.copilot_agent.time.monotonic", return_value=0.042):
+        telemetry.complete()
 
     span.set_attribute.assert_any_call("kratos.handler_duration_ms", 42)
     span.end.assert_called_once()

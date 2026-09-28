@@ -299,10 +299,9 @@ async def _stream_response(
     model_selection: str = "auto",
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
-    start_time = time.monotonic()
     invocation_telemetry = InvocationTelemetry(
         invocation_id=invocation_id,
-        handler_started_at=start_time,
+        handler_started_at=time.monotonic(),
     )
     total_tool_calls = 0
 
@@ -396,8 +395,7 @@ async def _stream_response(
             yield f"data: {json.dumps(file_event)}\n\n".encode()
 
         stats = _copilot_agent.get_run_stats(conversation_id)
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        invocation_telemetry.complete(elapsed_ms)
+        elapsed_ms = invocation_telemetry.complete()
         run_stats = {
             "totalDurationMs": elapsed_ms,
             "totalToolCalls": total_tool_calls,
@@ -447,7 +445,7 @@ async def _stream_response(
         error = ErrorEvent(message="An internal error occurred", code="AGENT_ERROR")
         yield f"data: {json.dumps({'event': 'error', 'data': error.model_dump()})}\n\n".encode()
     finally:
-        invocation_telemetry.complete(int((time.monotonic() - start_time) * 1000))
+        invocation_telemetry.complete()
 
     # Final done signal for the invocations protocol
     yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id, 'conversation_id': conversation_id})}\n\n".encode()

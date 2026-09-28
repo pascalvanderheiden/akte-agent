@@ -64,14 +64,15 @@ class InvocationTelemetry:
     def attach_span(self, span: trace.Span) -> None:
         self._span = span
 
-    def complete(self, handler_duration_ms: int) -> None:
+    def complete(self) -> int:
         if self.handler_duration_ms is not None:
-            return
-        self.handler_duration_ms = handler_duration_ms
+            return self.handler_duration_ms
+        self.handler_duration_ms = int((time.monotonic() - self.handler_started_at) * 1000)
         if self._span:
-            self._span.set_attribute("kratos.handler_duration_ms", handler_duration_ms)
+            self._span.set_attribute("kratos.handler_duration_ms", self.handler_duration_ms)
             self._span.end()
             self._span = None
+        return self.handler_duration_ms
 
 
 def get_bearer_token_provider(credential, scope: str):
