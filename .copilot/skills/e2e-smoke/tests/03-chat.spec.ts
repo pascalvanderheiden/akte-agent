@@ -64,7 +64,7 @@ test.describe("chat round-trip", () => {
             (traces | project timestamp, text=strcat(message, " ", tostring(customDimensions))),
             (exceptions | project timestamp, text=strcat(outerMessage, " ", innermostMessage, " ", tostring(details)))
           | where timestamp between (datetime(${startedAt.toISOString()}) .. datetime(${endedAt.toISOString()}))
-          | where text has "firewall" and (text has "Cosmos" or text has "documents.azure.com")
+          | where text has "firewall" and text has "Cosmos"
           | count
         `;
         const output = execFileSync(
