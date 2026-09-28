@@ -42,6 +42,17 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
         cls.templates = {module: compile_template(module) for module in cls.modules}
         cls.bootstrap_template = compile_template(INFRA / "modules" / "container-app-image.bicep")
 
+    def test_azd_resource_exists_flags_preserve_deployed_images(self):
+        parameters = json.loads((INFRA / "main.parameters.json").read_text())["parameters"]
+        self.assertEqual(
+            "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}",
+            parameters["agentServiceExists"]["value"],
+        )
+        self.assertEqual(
+            "${SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS=false}",
+            parameters["oboMcpServerExists"]["value"],
+        )
+
     def test_modules_with_container_apps_are_discovered(self):
         self.assertTrue(self.modules, "No Container App modules found to validate")
 
