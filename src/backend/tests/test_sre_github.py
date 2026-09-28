@@ -405,9 +405,7 @@ def test_existing_manual_name_is_reused(fake_bin: Path, log: Path) -> None:
 
 
 @pytest.mark.parametrize("registered_branch", [None, "main"])
-def test_existing_healthy_registration_is_ready(
-    registered_branch: str | None, fake_bin: Path, log: Path
-) -> None:
+def test_existing_healthy_registration_is_ready(registered_branch: str | None, fake_bin: Path, log: Path) -> None:
     items = sequence(existing=True)
     for repo in (items[3]["body"]["value"][0], items[-1]["body"]):
         repo["name"] = "operator-repo"
