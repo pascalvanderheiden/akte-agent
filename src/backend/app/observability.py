@@ -117,22 +117,13 @@ def setup_telemetry(settings: Settings) -> None:
             resource=resource,
             metric_readers=[metric_reader],
             views=[
-                View(
-                    instrument_name="gen_ai.client.token.usage",
-                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOKEN_BUCKETS),
-                ),
-                View(
-                    instrument_name="gen_ai.client.operation.duration",
-                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
-                ),
-                View(
-                    instrument_name="gen_ai.agent.tool_calls",
-                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
-                ),
-                View(
-                    instrument_name="gen_ai.tool.duration",
-                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
-                ),
+                View(instrument_name=name, aggregation=ExplicitBucketHistogramAggregation(boundaries=buckets))
+                for name, buckets in (
+                    ("gen_ai.client.token.usage", _TOKEN_BUCKETS),
+                    ("gen_ai.client.operation.duration", _DURATION_BUCKETS),
+                    ("gen_ai.agent.tool_calls", _TOOL_CALL_BUCKETS),
+                    ("gen_ai.tool.duration", _DURATION_BUCKETS),
+                )
             ],
         )
         metrics.set_meter_provider(meter_provider)
