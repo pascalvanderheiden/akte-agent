@@ -124,9 +124,13 @@ def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scrip
     result = scripts["execution_record"].prepare(data)
     assert original["text"] in result["body"]
     assert data["observations"][-1]["text"] in result["body"]
-    expected_review = scripts["execution_record"].TEXT[locale]["revision_required"].format(
-        affected=scripts["artifact"].inline(original["id"]),
-        correcting=scripts["artifact"].inline(data["observations"][-1]["id"]),
+    expected_review = (
+        scripts["execution_record"]
+        .TEXT[locale]["revision_required"]
+        .format(
+            affected=scripts["artifact"].inline(original["id"]),
+            correcting=scripts["artifact"].inline(data["observations"][-1]["id"]),
+        )
     )
     assert review_marker in expected_review
     assert expected_review in result["body"]
