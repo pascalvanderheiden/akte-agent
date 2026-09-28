@@ -188,7 +188,10 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
             )
 
     def test_modules_with_container_apps_are_discovered(self):
-        self.assertTrue(self.modules, "No Container App modules found to validate")
+        self.assertTrue(
+            list(self.apps(exists=False)),
+            "No compiled Container App resources found to validate",
+        )
 
     def test_first_provision_images_listen_on_the_ingress_target_port(self):
         for app, container in self.apps(exists=False):
