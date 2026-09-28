@@ -64,14 +64,21 @@ var deployedImage = exists ? deployedApp!.properties.template.containers[0].imag
 // `exists` only says the Container App resource is there, so the read-back can
 // legitimately be a bootstrap image — a provision whose `azd deploy` never ran
 // or failed. Treat that as still bootstrapping, or the next provision would
-// re-render the stand-in image without the port variables it needs. Matched on
-// the repository rather than the exact reference, so re-pinning the digest
-// above does not mistake an older stand-in for an application image. The
-// repository is the part before the digest (`repo@sha256:…`) or the tag
-// (`repo:tag`), so both forms of pin classify the same way. Application images
-// come from this environment's ACR, never from the bootstrap repository.
+// re-render the stand-in image without the port variables it needs. Also treat
+// legacy port-80 placeholders as bootstrapping, so environments created before
+// this module can self-heal to a port-8000-safe first revision. Matched on the
+// repository rather than the exact reference, so re-pinning the digest above
+// does not mistake an older stand-in for an application image. The repository
+// is the part before the digest (`repo@sha256:…`) or the tag (`repo:tag`), so
+// both forms of pin classify the same way. Application images come from this
+// environment's ACR, never from these bootstrap repositories.
 var bootstrapRepository = split(split(bootstrapImage, '@')[0], ':')[0]
-var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}@') || startsWith(deployedImage, '${bootstrapRepository}:')
+var legacyBootstrapRepositories = [
+  'mcr.microsoft.com/azuredocs/containerapps-helloworld'
+]
+var bootstrapRepositories = concat([bootstrapRepository], legacyBootstrapRepositories)
+var deployedRepository = split(split(deployedImage, '@')[0], ':')[0]
+var isBootstrap = empty(deployedImage) || contains(bootstrapRepositories, deployedRepository)
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage

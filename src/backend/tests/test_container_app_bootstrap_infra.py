@@ -114,7 +114,8 @@ def _image_deployment(template: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.parametrize("module", SERVICE_MODULES)
 def test_no_port_80_placeholder_image_is_rendered(module: str, service_templates: dict[str, Any]) -> None:
-    body = json.dumps(service_templates[module])
+    container = _container_app(service_templates[module])["properties"]["template"]["containers"][0]
+    body = json.dumps(container["image"])
     for image in PORT_80_IMAGES:
         assert image not in body, f"{module} renders {image}, which cannot answer on port {TARGET_PORT}"
 
@@ -212,7 +213,7 @@ def test_bootstrap_image_serves_http_on_the_requested_port(image_template: dict[
         f"the bootstrap listening port must come from the ingress target port: {bootstrap_env}"
     )
     default_image = image_template["parameters"]["bootstrapImage"]["defaultValue"]
-    assert default_image.split("/")[0] == "mcr.microsoft.com"
+    assert default_image.split("@", 1)[0] == "mcr.microsoft.com/dotnet/samples"
     # Digest-pinned: servicing tags are republished in place, so only a digest
     # makes first-provision behaviour reproducible.
     assert re.fullmatch(r"[^@:]+@sha256:[0-9a-f]{64}", default_image), (
@@ -234,7 +235,7 @@ def test_a_read_back_bootstrap_image_still_counts_as_bootstrapping(image_templat
     rendering it again without its port variables would fail activation."""
     for output in ("image", "bootstrapEnv"):
         value = image_template["outputs"][output]["value"]
-        assert "startsWith(" in value and "bootstrapRepository" in value, (
+        assert "contains(" in value and "bootstrapRepositories" in value, (
             f"output {output} does not treat a read-back bootstrap image as still bootstrapping"
         )
 
@@ -249,6 +250,15 @@ def test_the_bootstrap_repository_is_parsed_from_a_digest_reference(image_templa
         r"split\(\s*split\(\s*parameters\('bootstrapImage'\)\s*,\s*'@'\)\[0\]\s*,\s*':'\)\[0\]",
         repository,
     ), f"bootstrapRepository does not strip a digest before a tag: {repository}"
+
+
+def test_legacy_port_80_placeholders_still_count_as_bootstrapping(image_template: dict[str, Any]) -> None:
+    """An existing app whose deploy never succeeded may still run the old
+    placeholder. Reprovisioning must replace it with the new port-aware
+    bootstrap image, not preserve the unhealthy port-80 image."""
+    legacy = image_template["variables"]["legacyBootstrapRepositories"]
+    assert "mcr.microsoft.com/azuredocs/containerapps-helloworld" in legacy
+    assert "legacyBootstrapRepositories" in image_template["variables"]["bootstrapRepositories"]
 
 
 def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, Any]) -> None:
