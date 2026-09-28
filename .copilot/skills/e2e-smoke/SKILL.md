@@ -30,6 +30,7 @@ load per use-case, chat round-trips, evals API, and traces API.
 | `04-evals.spec.ts` | `/api/use-cases/{uc}/evals/runs` | At least one completed validation run exists; per-run detail returns scenarios array |
 | `05-traces.spec.ts` | `/api/traces/operations` | ≥1 operation in lookback window; per-operation detail returns spans |
 | `06-ui.spec.ts` | browser | Frontend loads without console errors (smoke gate) |
+| `06-model-picker.spec.ts` | browser | Model catalogue loads, picker disables while streaming, selection persists, selected model shown on assistant messages |
 | `07-regression.spec.ts` | pre-existing core | `/api/use-cases` schema + all curated use-cases present, `/api/settings` Foundry config, conversation CRUD round-trip, `/api/admin/skills` catalogue + detail, `/api/admin/system-prompt` content. Guards against regressions in surfaces the evals/tracing branch did NOT touch |
 | `08-ux.spec.ts` | browser, interactive | **The UX itself.** Persona selector lists the curated use-cases & switches value; landing textarea + Send button starts a chat and the assistant responds; Skills admin opens; every admin tab (Skills / System Prompt / APM / Evals / Traces) renders its header; "Generate Scenarios" modal opens + closes; Traces "Refresh" renders ops/summary/empty-state |
 

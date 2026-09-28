@@ -2,6 +2,12 @@ import { defineConfig, devices } from "@playwright/test";
 
 const SKIP_BROWSER = process.env.SKIP_BROWSER === "1";
 
+// Specs that drive a real browser page (page.goto, locators, clicks, etc.).
+// Kept in one place so "api-only" (SKIP_BROWSER=1) and "browser" projects
+// can never drift out of sync — see issue #69.
+const BROWSER_SPECS =
+  /(06-model-picker|06-ui|08-ux|09-locale|10-akte|10-settings-locale|10-eval-trace|11-akte-legal|12-akte-execution|11-retirement|13-akte-handoff)\.spec\.ts$/;
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
@@ -21,12 +27,12 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   projects: SKIP_BROWSER
-    ? [{ name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte|10-settings-locale|10-eval-trace|11-akte-legal|12-akte-execution|11-retirement|13-akte-handoff)\.spec\.ts$/ }]
+    ? [{ name: "api-only", testIgnore: BROWSER_SPECS }]
     : [
-        { name: "api-only", testIgnore: /(06-ui|08-ux|09-locale|10-akte|10-settings-locale|10-eval-trace|11-akte-legal|12-akte-execution|11-retirement|13-akte-handoff)\.spec\.ts$/ },
+        { name: "api-only", testIgnore: BROWSER_SPECS },
         {
           name: "browser",
-          testMatch: /(06-ui|08-ux|09-locale|10-akte|10-settings-locale|10-eval-trace|11-akte-legal|12-akte-execution|11-retirement|13-akte-handoff)\.spec\.ts$/,
+          testMatch: BROWSER_SPECS,
           use: { ...devices["Desktop Chrome"] },
         },
       ],
