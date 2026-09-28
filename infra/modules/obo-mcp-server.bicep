@@ -48,6 +48,20 @@ param graphScopes string = 'https://graph.microsoft.com/User.Read'
 @description('Space-separated client app ids allowed to call this server (azp/appid allow-list)')
 param allowedClientAppIds string = ''
 
+@description('True once azd has deployed the OBO MCP server application image')
+param exists bool = false
+
+var ingressTargetPort = 8000
+
+module containerImage './container-app-image.bicep' = {
+  name: '${name}-image'
+  params: {
+    containerAppName: name
+    exists: exists
+    targetPort: ingressTargetPort
+  }
+}
+
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 var acrName = replace(containerRegistryName, '-', '')
 
@@ -88,7 +102,7 @@ resource oboMcpServer 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: ingressTargetPort
         transport: 'http'
       }
     }
@@ -96,22 +110,25 @@ resource oboMcpServer 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'obo-mcp-server'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          image: containerImage.outputs.image
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
           }
-          env: [
-            { name: 'AZURE_TENANT_ID', value: tenantId }
-            { name: 'OBO_API_CLIENT_ID', value: oboApiClientId }
-            // Runtime identity: selects the UAMI for the token-exchange assertion.
-            { name: 'AZURE_CLIENT_ID', value: oboIdentityClientId }
-            { name: 'GRAPH_SCOPES', value: graphScopes }
-            { name: 'ALLOWED_CLIENT_APP_IDS', value: allowedClientAppIds }
-            { name: 'ENVIRONMENT', value: 'production' }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-            { name: 'PORT', value: '8000' }
-          ]
+          env: concat(
+            [
+              { name: 'AZURE_TENANT_ID', value: tenantId }
+              { name: 'OBO_API_CLIENT_ID', value: oboApiClientId }
+              // Runtime identity: selects the UAMI for the token-exchange assertion.
+              { name: 'AZURE_CLIENT_ID', value: oboIdentityClientId }
+              { name: 'GRAPH_SCOPES', value: graphScopes }
+              { name: 'ALLOWED_CLIENT_APP_IDS', value: allowedClientAppIds }
+              { name: 'ENVIRONMENT', value: 'production' }
+              { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+              { name: 'PORT', value: '${ingressTargetPort}' }
+            ],
+            containerImage.outputs.bootstrapEnv
+          )
         }
       ]
       scale: {
