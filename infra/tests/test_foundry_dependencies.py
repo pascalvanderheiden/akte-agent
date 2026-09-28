@@ -1,9 +1,56 @@
 """Check provisioning order in the compiled ARM template."""
 
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
+from typing import Any
+
+# Start of an env entry inside a compiled ARM expression; the value
+# expression that follows is read off by balancing parentheses.
+ARM_ENV_ENTRY = re.compile(r"createObject\('name', '([^']+)', 'value', ")
+
+
+def _arm_value(expression: str, start: int) -> str:
+    """Read one value expression out of `expression`, starting at `start`."""
+    depth = 0
+    quoted = False
+    for index in range(start, len(expression)):
+        character = expression[index]
+        if character == "'":
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                return expression[start:index]
+            depth -= 1
+    raise AssertionError(f"unterminated env value at offset {start}")
+
+
+def container_env(container: dict[str, Any]) -> dict[str, str]:
+    """Return the container's env as a name -> value mapping.
+
+    A literal Bicep array compiles to a list of objects, but an array built
+    with `concat()` compiles to a single ARM expression string, so the
+    name/value pairs have to be read back out of that expression.
+    """
+    environment = container["env"]
+    if isinstance(environment, list):
+        return {item["name"]: item["value"] for item in environment}
+    values: dict[str, str] = {}
+    for match in ARM_ENV_ENTRY.finditer(environment):
+        value = _arm_value(environment, match.end())
+        values[match.group(1)] = (
+            value[1:-1] if value.startswith("'") and value.endswith("'") else f"[{value}]"
+        )
+    # Fail loudly rather than dropping an entry whose shape we cannot read.
+    assert len(values) == environment.count("createObject('name'"), environment
+    return values
+
 
 
 class FoundryDependenciesTests(unittest.TestCase):
@@ -171,17 +218,23 @@ class AgentServiceModelEnvironmentTests(unittest.TestCase):
             for resource in self.template["resources"]
             if resource["type"] == "Microsoft.App/containerApps"
         )
-        environment = app["properties"]["template"]["containers"][0]["env"]
-        for name, parameter in (
-            ("MODEL_DEPLOYMENT_ORCHESTRATOR", "orchestratorModelDeployment"),
-            ("MODEL_DEPLOYMENT_DEEP_REASONING", "deepReasoningModelDeployment"),
-            ("MODEL_DEPLOYMENT_FAST", "fastModelDeployment"),
-            ("FOUNDRY_MODEL_DEPLOYMENT", "foundryModelDeployment"),
-        ):
-            self.assertRegex(
-                environment,
-                rf"createObject\('name',\s*'{name}',\s*'value',\s*parameters\('{parameter}'\)\)",
-            )
+        values = container_env(app["properties"]["template"]["containers"][0])
+        self.assertEqual(
+            "[parameters('orchestratorModelDeployment')]",
+            values["MODEL_DEPLOYMENT_ORCHESTRATOR"],
+        )
+        self.assertEqual(
+            "[parameters('deepReasoningModelDeployment')]",
+            values["MODEL_DEPLOYMENT_DEEP_REASONING"],
+        )
+        self.assertEqual(
+            "[parameters('fastModelDeployment')]",
+            values["MODEL_DEPLOYMENT_FAST"],
+        )
+        self.assertEqual(
+            "[parameters('foundryModelDeployment')]",
+            values["FOUNDRY_MODEL_DEPLOYMENT"],
+        )
 
     def test_main_wires_role_outputs_into_agent_service_and_azd_outputs(self):
         main = (Path(__file__).resolve().parents[1] / "main.bicep").read_text()

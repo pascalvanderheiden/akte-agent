@@ -245,7 +245,6 @@ jobs:
             exit 1
           fi
 
-          # The API answers 200 even when it quietly ignores the request, so
           # confirm rather than trust the status code. Confirm on the timeline,
           # not `requested_reviewers`, for the reason given above; the event can
           # take a few seconds to appear.

@@ -32,10 +32,10 @@ param resourcePrefix string = ''
 @description('Path prefix for the agent API on the gateway (set during Foundry portal registration)')
 param agentApiPath string = 'kratos-agent'
 
-@description('True once azd has deployed the agent-service application image')
+@description('True once azd has deployed the agent-service application image (azd sets SERVICE_AGENT_SERVICE_RESOURCE_EXISTS). Lets provisioning preserve the running image instead of resetting it to the bootstrap image.')
 param agentServiceExists bool = false
 
-@description('True once azd has deployed the obo-mcp-server application image')
+@description('True once azd has deployed the obo-mcp-server application image (azd sets SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS). Lets provisioning preserve the running image instead of resetting it to the bootstrap image.')
 param oboMcpServerExists bool = false
 
 @description('Deploy the OBO MCP server and its Entra app registrations. Requires directory permission to register Entra applications. Set to false in tenants/subscriptions where the deploying identity cannot create app registrations.')

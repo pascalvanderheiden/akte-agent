@@ -48,11 +48,18 @@ param graphScopes string = 'https://graph.microsoft.com/User.Read'
 @description('Space-separated client app ids allowed to call this server (azp/appid allow-list)')
 param allowedClientAppIds string = ''
 
-@description('True once azd has deployed the OBO MCP server application image')
+@description('True once azd has deployed an application image to this Container App (SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS)')
 param exists bool = false
 
+// Ingress port and bootstrap listener port are the same value by construction.
 var ingressTargetPort = 8000
 
+// ─── Container image ───
+// Never hardcode an image here. container-app-image.bicep keeps the first
+// provision bootable on a stand-in image that listens on this module's own
+// ingress port, and leaves an already-deployed application image untouched
+// on every later provision; its header explains why a fixed placeholder
+// breaks both cases. agent-service.bicep uses the identical mechanism.
 module containerImage './container-app-image.bicep' = {
   name: '${name}-image'
   params: {
@@ -127,6 +134,9 @@ resource oboMcpServer 'Microsoft.App/containerApps@2024-03-01' = {
               { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
               { name: 'PORT', value: '${ingressTargetPort}' }
             ],
+            // Only non-empty while the bootstrap image is in use; it takes its
+            // listening port from these. Nothing here overrides the container
+            // command, which `azd deploy` would carry over onto the real image.
             containerImage.outputs.bootstrapEnv
           )
         }

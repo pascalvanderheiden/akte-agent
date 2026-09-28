@@ -2,10 +2,45 @@
   Resolves the container image a Container App renders to, for both of this
   template's `host: containerapp` services (agent-service, obo-mcp-server).
 
-  A first provision happens before azd builds the application image, so it
-  needs a stand-in that listens on the ingress port. Later provisions must
-  retain the deployed application image rather than replacing it with that
-  stand-in.
+  Two things have to be true at once, and a hardcoded image satisfies neither:
+
+  1. FIRST PROVISION — the application image does not exist in ACR yet, because
+     `azd deploy` builds it after `azd provision`. The app still has to come up,
+     and the platform probes it on the ingress `targetPort`. A bootstrap image
+     that listens on some *other* port (the classic
+     `containerapps-helloworld`, which hardcodes port 80 and ignores `PORT`)
+     leaves the first revision stuck in `ActivationFailed`. The bootstrap image
+     here listens on whichever port it is told to, and it is told the same
+     value the ingress declares — the caller passes one value that feeds both,
+     so the two cannot drift.
+
+  2. EVERY LATER PROVISION — `azd provision` runs again (CI does it before each
+     deploy). Rendering the bootstrap image again would tear a healthy
+     application revision down and replace it with the stand-in. So the image
+     currently on the Container App is read back and returned unchanged, making
+     provisioning a no-op for the running application.
+
+  The bootstrap port is set through environment variables and NEVER through a
+  `command`/`args` override: `azd deploy` swaps `template.containers[0].image`
+  on the existing app and leaves the rest of the container definition alone, so
+  a command set here would survive the deploy and run against the application
+  image — the app would start the stand-in's web server instead of itself.
+  Leftover environment variables are inert by comparison, and the next
+  provision drops them.
+
+  Scope: this module is called from the container app modules themselves, so
+  the lookup resolves in the same resource group as the Container App it is
+  resolving an image for. Calling it from anywhere else needs that scope passed
+  in explicitly, or it reads the wrong app.
+
+  `exists` is `SERVICE_<NAME>_RESOURCE_EXISTS`; ARM cannot read a resource that
+  may not exist, hence the flag rather than a probe. azd records it after a
+  deploy, but it lives in gitignored `.azure/` state that a fresh CI runner does
+  not have — so hooks/detect-container-apps.sh re-derives it from Azure itself
+  before every provision, and a missing local environment can no longer report a
+  live application as absent. ARM evaluates only the
+  taken branch of a conditional whose condition is known up front, so the
+  `exists ? ... : ''` below never attempts the read on a first provision.
 */
 
 @description('Name of the Container App whose currently-deployed image must be preserved')
@@ -17,14 +52,26 @@ param exists bool
 @description('Ingress target port; the bootstrap image is told to listen on exactly this port')
 param targetPort int
 
-@description('Image used only until the first real application image is deployed')
-param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp-10.0'
+@description('Image used only until the first real application image is deployed. Must take its listening port from the environment variables below rather than hardcoding one. Pinned by digest (mcr.microsoft.com/dotnet/samples:aspnetapp-10.0 at the time of pinning): servicing tags are republished in place, so only a digest makes first-provision behaviour reproducible.')
+param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples@sha256:aacefb8b6fc1fc743531d518ebd9b3849ae3223f9de3e642ebcc0d3e5921cd66'
 
 resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exists) {
   name: containerAppName
 }
 
 var deployedImage = exists ? deployedApp!.properties.template.containers[0].image : ''
+
+// `exists` only says the Container App resource is there, so the read-back can
+// legitimately be a bootstrap image — a provision whose `azd deploy` never ran
+// or failed. Treat that as still bootstrapping, or the next provision would
+// re-render the stand-in image without the port variables it needs. Also treat
+// legacy port-80 placeholders as bootstrapping, so environments created before
+// this module can self-heal to a port-8000-safe first revision. Matched on the
+// repository rather than the exact reference, so re-pinning the digest above
+// does not mistake an older stand-in for an application image. The repository
+// is the part before the digest (`repo@sha256:…`) or the tag (`repo:tag`), so
+// both forms of pin classify the same way. Application images come from this
+// environment's ACR, never from these bootstrap repositories.
 var bootstrapImageWithoutDigest = split(bootstrapImage, '@')[0]
 var bootstrapTagSeparator = lastIndexOf(bootstrapImageWithoutDigest, ':')
 var bootstrapPathSeparator = lastIndexOf(bootstrapImageWithoutDigest, '/')
@@ -32,7 +79,13 @@ var bootstrapRepository = bootstrapTagSeparator > bootstrapPathSeparator
   ? substring(bootstrapImageWithoutDigest, 0, bootstrapTagSeparator)
   : bootstrapImageWithoutDigest
 var legacyBootstrapRepository = 'mcr.microsoft.com/azuredocs/containerapps-helloworld'
-var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:') || startsWith(deployedImage, '${legacyBootstrapRepository}:')
+var deployedImageWithoutDigest = split(deployedImage, '@')[0]
+var deployedTagSeparator = lastIndexOf(deployedImageWithoutDigest, ':')
+var deployedPathSeparator = lastIndexOf(deployedImageWithoutDigest, '/')
+var deployedRepository = deployedTagSeparator > deployedPathSeparator
+  ? substring(deployedImageWithoutDigest, 0, deployedTagSeparator)
+  : deployedImageWithoutDigest
+var isBootstrap = empty(deployedImage) || deployedRepository == bootstrapRepository || deployedRepository == legacyBootstrapRepository
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage
@@ -44,3 +97,6 @@ output bootstrapEnv array = isBootstrap
       { name: 'ASPNETCORE_URLS', value: 'http://+:${targetPort}' }
     ]
   : []
+
+@description('True when the bootstrap image is being used rather than a deployed application image')
+output isBootstrap bool = isBootstrap

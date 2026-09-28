@@ -175,5 +175,12 @@ hooks:
             # `|| exit 1` because the shell block's exit status is that of its
             # LAST command — without it a failed preflight would be masked.
             ./hooks/sre-preflight.sh || exit 1
+            # Ask Azure — not the gitignored .azure/ state, which a fresh CI
+            # runner does not have — which container apps already exist, so
+            # provisioning preserves a running image instead of pushing the
+            # bootstrap stand-in over it. Fails the provision when that answer
+            # cannot be established, because the fallback is the `false` that
+            # overwrites a running image.
+            ./hooks/detect-container-apps.sh || exit 1
             ./hooks/select-use-cases.sh
         interactive: true

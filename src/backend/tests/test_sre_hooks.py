@@ -641,7 +641,13 @@ def lifecycle_workspace(tmp_path: Path) -> Path:
     hooks.mkdir(parents=True)
     for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh", "sre-telemetry.sh", "sre-github.py"):
         shutil.copy2(HOOKS / name, hooks / name)
-    for name in ("select-use-cases", "grant-obo-consent", "assign-agent-roles", "postdeploy"):
+    for name in (
+        "select-use-cases",
+        "detect-container-apps",
+        "grant-obo-consent",
+        "assign-agent-roles",
+        "postdeploy",
+    ):
         file = hooks / f"{name}.sh"
         file.write_text(f'#!/usr/bin/env bash\nprintf "{name} %s\\n" "$*"\nexit "${{STUB_EXIT:-0}}"\n')
         file.chmod(0o755)
