@@ -153,7 +153,8 @@ jobs:
             echo "Removing existing reviewers: users=$drop_users teams=$drop_teams"
             jq -nc --argjson r "$drop_users" --argjson t "$drop_teams" \
               '{reviewers: $r, team_reviewers: $t}' \
-              | gh api --method DELETE "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null
+              | gh api --method DELETE "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null \
+              || echo "::notice::Could not remove $drop_users from #$PR; carrying on."
           fi
 
           # GitHub accepts a review request on a draft with 200 OK and then
