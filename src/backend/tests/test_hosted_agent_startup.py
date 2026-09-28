@@ -33,11 +33,19 @@ def hosted(monkeypatch):
         (True, None, 0),
     ],
 )
+@pytest.mark.asyncio
 async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, available, reason, expected_count):
     class FakeBlobSkillService:
         def __init__(self, settings):
-            self.is_available = available
-            self.unavailability_reason = reason
+            pass
+
+        @property
+        def is_available(self):
+            return available
+
+        @property
+        def unavailability_reason(self):
+            return reason
 
         async def initialize(self):
             pass
