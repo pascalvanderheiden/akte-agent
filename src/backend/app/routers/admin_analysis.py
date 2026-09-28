@@ -8,6 +8,7 @@ import time
 import httpx
 from azure.identity.aio import DefaultAzureCredential
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from app.auth import require_authenticated_user
@@ -37,6 +38,26 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+def _trace_id() -> str | None:
+    """Return the current OpenTelemetry trace id, or None when no span context exists."""
+    try:
+        span_context = trace.get_current_span().get_span_context()
+        if not span_context.trace_id:
+            return None
+        return trace.format_trace_id(span_context.trace_id)
+    except Exception:  # pragma: no cover - never let telemetry break a response
+        return None
+
+
+def _http_error(status_code: int, message: str) -> HTTPException:
+    """Build an HTTPException whose detail carries the current correlation trace id."""
+    detail: dict[str, str] = {"message": message}
+    trace_id = _trace_id()
+    if trace_id:
+        detail["traceId"] = trace_id
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 def _get_registry(request: Request, use_case: str) -> SkillRegistry:
     """Resolve the SkillRegistry for the given use-case."""
     from app.personas import require_not_retired
@@ -47,7 +68,7 @@ def _get_registry(request: Request, use_case: str) -> SkillRegistry:
     if registry is None:
         registry = getattr(request.app.state, "skill_registry", None)
     if registry is None:
-        raise HTTPException(status_code=404, detail=f"Use-case '{use_case}' not found")
+        raise _http_error(404, f"Use-case '{use_case}' not found")
     return registry
 
 
@@ -115,6 +136,7 @@ class AnalysisResponse(BaseModel):
     issues: list[AnalysisIssue]
     strengths: list[str] = Field(default_factory=list)
     durationMs: int = 0
+    traceId: str | None = Field(default=None, description="Correlation id of the serving trace")
 
 
 class ApplyFixRequest(BaseModel):
@@ -141,6 +163,7 @@ class ApplyFixResponse(BaseModel):
     success: bool
     changes: list[FixChange] = Field(default_factory=list)
     error: str = ""
+    traceId: str | None = Field(default=None, description="Correlation id of the serving trace")
 
 
 FIX_SYSTEM_PROMPT = """You are an expert AI configuration editor. You will receive:
@@ -197,7 +220,7 @@ def _build_analysis_content(registry: SkillRegistry, include_disabled: bool) -> 
     return "\n".join(parts)
 
 
-@router.post("/consistency", response_model=AnalysisResponse)
+@router.post("/consistency", response_model=AnalysisResponse, response_model_exclude_none=True)
 async def analyze_consistency(
     request: Request,
     body: AnalysisRequest | None = None,
@@ -216,8 +239,8 @@ async def analyze_consistency(
     try:
         result = json.loads(raw_content)
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse analysis response: %s", e)
-        raise HTTPException(status_code=502, detail="Failed to parse LLM response") from e
+        logger.error("Failed to parse analysis response (trace=%s): %s", _trace_id(), e)
+        raise _http_error(502, "Failed to parse LLM response") from e
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
@@ -227,6 +250,7 @@ async def analyze_consistency(
         issues=[AnalysisIssue(**issue) for issue in result.get("issues", [])],
         strengths=result.get("strengths", []),
         durationMs=duration_ms,
+        traceId=_trace_id(),
     )
 
 
@@ -239,14 +263,15 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
     try:
         chat_url = routing.auxiliary_chat_url(AuxiliaryTask.ADMIN_ANALYSIS)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.error("Model routing unavailable (trace=%s): %s", _trace_id(), exc)
+        raise _http_error(503, str(exc)) from exc
 
     try:
         credential = _get_credential()
         token = await credential.get_token("https://cognitiveservices.azure.com/.default")
     except Exception as e:
-        logger.error("Auth failed: %s", e)
-        raise HTTPException(status_code=503, detail=f"Authentication failed: {e}") from e
+        logger.error("Auth failed (trace=%s): %s", _trace_id(), e)
+        raise _http_error(503, f"Authentication failed: {e}") from e
 
     payload: dict = {
         "messages": [
@@ -271,11 +296,11 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
         )
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
-        logger.error("Foundry API error: %s %s", e.response.status_code, e.response.text[:500])
-        raise HTTPException(status_code=502, detail=f"LLM API error: {e.response.status_code}") from e
+        logger.error("Foundry API error (trace=%s): %s %s", _trace_id(), e.response.status_code, e.response.text[:500])
+        raise _http_error(502, f"LLM API error: {e.response.status_code}") from e
     except Exception as e:
-        logger.error("Failed to call Foundry: %s", e)
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}") from e
+        logger.error("Failed to call Foundry (trace=%s): %s", _trace_id(), e)
+        raise _http_error(502, f"LLM call failed: {e}") from e
 
     data = resp.json()
     return data["choices"][0]["message"]["content"]
@@ -289,7 +314,7 @@ def _reset_sessions(request: Request) -> None:
     logger.debug("Session reset skipped — Copilot SDK runs in hosted agent")
 
 
-@router.post("/apply-fix", response_model=ApplyFixResponse)
+@router.post("/apply-fix", response_model=ApplyFixResponse, response_model_exclude_none=True)
 async def apply_fix(
     request: Request,
     body: ApplyFixRequest,
@@ -314,8 +339,8 @@ async def apply_fix(
                 )
         if changes:
             _reset_sessions(request)
-            return ApplyFixResponse(success=True, changes=changes)
-        return ApplyFixResponse(success=False, error="No matching enabled skills found to disable")
+            return ApplyFixResponse(success=True, changes=changes, traceId=_trace_id())
+        return ApplyFixResponse(success=False, error="No matching enabled skills found to disable", traceId=_trace_id())
 
     # ── Determine what to fix ──
     targets_prompt = _issue_touches_prompt(body)
@@ -387,9 +412,13 @@ async def apply_fix(
 
     if changes:
         _reset_sessions(request)
-        return ApplyFixResponse(success=True, changes=changes)
+        return ApplyFixResponse(success=True, changes=changes, traceId=_trace_id())
 
-    return ApplyFixResponse(success=False, error="No changes were needed or the LLM returned identical content")
+    return ApplyFixResponse(
+        success=False,
+        error="No changes were needed or the LLM returned identical content",
+        traceId=_trace_id(),
+    )
 
 
 def _issue_touches_prompt(issue: ApplyFixRequest) -> bool:

@@ -9,7 +9,7 @@ import { TracesAdminPanel } from "./TracesAdminPanel";
 import { SourceBadge } from "./SourceBadge";
 import { useLocale } from "./LocaleProvider";
 import { localizeUseCase } from "@/lib/i18n";
-import { errorCode, type ErrorCode } from "@/lib/errors";
+import { errorCode, errorTraceId, type ErrorCode } from "@/lib/errors";
 
 type Tab = "skills" | "prompt" | "mcp" | "consistency" | "evals" | "traces" | "deploy";
 
@@ -28,7 +28,14 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
   const [tab, setTab] = useState<Tab>("skills");
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<ErrorCode | null>(null);
+  const [error, setErrorState] = useState<ErrorCode | null>(null);
+  const [errorTrace, setErrorTrace] = useState<string | undefined>(undefined);
+  // Every error clears the previous correlation id so the banner never pairs a
+  // fresh message with a stale trace.
+  const setError = (code: ErrorCode | null, traceId?: string) => {
+    setErrorState(code);
+    setErrorTrace(code ? traceId : undefined);
+  };
   const [mutating, setMutating] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
@@ -486,7 +493,7 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
       const result = await analyzeConsistency(useCase, includeDisabled);
       setAnalysisResult(result);
     } catch (err) {
-      setError(errorCode(err, "ANALYSIS_ERROR"));
+      setError(errorCode(err, "ANALYSIS_ERROR"), errorTraceId(err));
     } finally {
       setAnalysisLoading(false);
     }
@@ -504,7 +511,7 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
     } catch (err) {
       setFixResults((prev) => ({
         ...prev,
-        [issueIdx]: { success: false, changes: [], error: errorCode(err, "ANALYSIS_ERROR") },
+        [issueIdx]: { success: false, changes: [], error: errorCode(err, "ANALYSIS_ERROR"), traceId: errorTraceId(err) },
       }));
     } finally {
       setFixingIssue(null);
@@ -783,7 +790,18 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
         {/* Error banner */}
         {error && (
           <div role="alert" className="mx-4 sm:mx-8 mt-4 px-4 py-3 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 text-sm rounded-xl border border-red-100 dark:border-red-500/20 animate-fade-in flex items-center justify-between">
-            <span>{t(`error.${error}`)}</span>
+            <span className="flex items-center gap-2 min-w-0">
+              <span>{t(`error.${error}`)}</span>
+              {errorTrace && (
+                <code
+                  title={t("skills.traceId")}
+                  aria-label={t("skills.traceId")}
+                  className="text-[10px] font-mono select-all px-1.5 py-0.5 rounded-sm bg-red-100/60 dark:bg-red-500/15 text-red-700 dark:text-red-300 truncate"
+                >
+                  {errorTrace}
+                </code>
+              )}
+            </span>
             <button aria-label={t("dismiss")} onClick={() => setError(null)} className="text-red-400 hover:text-red-600 transition-colors">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1409,6 +1427,15 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
                                           <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                                         </svg>
                                         <span className="text-xs text-red-700 dark:text-red-400">{t(`error.${errorCode(fixResults[originalIdx].error, "ANALYSIS_ERROR")}`)}</span>
+                                        {fixResults[originalIdx].traceId && (
+                                          <code
+                                            title={t("skills.traceId")}
+                                            aria-label={t("skills.traceId")}
+                                            className="text-[10px] font-mono select-all px-1.5 py-0.5 rounded-sm bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-300 truncate"
+                                          >
+                                            {fixResults[originalIdx].traceId}
+                                          </code>
+                                        )}
                                       </div>
                                     )}
                                   </div>
