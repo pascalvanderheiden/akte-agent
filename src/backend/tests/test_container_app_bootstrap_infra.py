@@ -168,7 +168,7 @@ def test_module_explains_the_bootstrap_image_strategy(module: str) -> None:
     """A comment so an incident responder does not 'fix' this back to a placeholder."""
     source = (MODULES / module).read_text()
     assert IMAGE_MODULE in source
-    comments = [line.strip() for line in source.splitlines() if line.strip().startswith("//")]
+    comments = [line.strip() for line in source.splitlines() if line.strip().startswith(("//", "/*", "*"))]
     assert any(IMAGE_MODULE in line for line in comments), (
         f"{module} does not explain why its image comes from {IMAGE_MODULE}"
     )
@@ -219,6 +219,16 @@ def test_a_deployed_application_image_is_read_back_and_preserved(image_template:
     assert "reference(resourceId('Microsoft.App/containerApps', parameters('containerAppName'))" in image
     assert ".template.containers[0].image" in image
     assert "parameters('bootstrapImage')" in image
+
+
+def test_a_read_back_bootstrap_image_still_counts_as_bootstrapping(image_template: dict[str, Any]) -> None:
+    """A provision whose deploy never ran leaves the stand-in image on the app;
+    rendering it again without its port variables would fail activation."""
+    for output in ("image", "bootstrapEnv"):
+        value = image_template["outputs"][output]["value"]
+        assert "parameters('bootstrapImage'))" in value, (
+            f"{output} does not treat a read-back bootstrap image as still bootstrapping"
+        )
 
 
 def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, Any]) -> None:
