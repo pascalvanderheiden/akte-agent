@@ -129,6 +129,7 @@ jobs:
           fi
 
           reviewed=false
+          override=false
           if echo "$pr_json" | jq -e --arg head "$head" '
                 .reviews[] | select(
                   (.author.login | startswith("copilot-pull-request-reviewer")) and
@@ -138,6 +139,7 @@ jobs:
             # A human applied the label deliberately; take them at their word.
             echo "No Copilot review of $head, but 'ready-to-merge' was applied by hand."
             reviewed=true
+            override=true
           fi
 
           if [ "$reviewed" != "true" ]; then
@@ -145,9 +147,48 @@ jobs:
             exit 0
           fi
 
+          # "Copilot reviewed this head" is not the same as "Copilot was happy
+          # with it". A `COMMENTED` review with open threads used to sail
+          # straight through this gate, merging code the review had objected to.
+          # `pr-address-review` hands those back to the coding agent; this is the
+          # gate that gives it time to answer.
+          #
+          # `isOutdated` threads are anchored to lines that have since changed,
+          # so they are about code that no longer exists — blocking on them would
+          # never clear. Review threads are GraphQL-only, hence the second call.
+          if [ "$override" != "true" ]; then
+            # `$owner`/`$name`/`$number` are GraphQL variables, not shell ones.
+            # shellcheck disable=SC2016
+            unresolved=$(gh api graphql \
+              -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$PR" \
+              -f query='
+                query($owner:String!, $name:String!, $number:Int!) {
+                  repository(owner:$owner, name:$name) {
+                    pullRequest(number:$number) {
+                      reviewThreads(first:100) {
+                        nodes {
+                          isResolved
+                          isOutdated
+                          comments(first:1) { nodes { author { login } } }
+                        }
+                      }
+                    }
+                  }
+                }' \
+              --jq '[ .data.repository.pullRequest.reviewThreads.nodes[]
+                      | select(.isResolved == false and .isOutdated == false)
+                      | select(.comments.nodes[0].author.login
+                               | startswith("copilot-pull-request-reviewer")) ] | length')
+
+            if [ "$unresolved" -gt 0 ]; then
+              echo "PR #$PR has $unresolved unresolved Copilot review thread(s); not merging."
+              exit 0
+            fi
+          fi
+
           # This workflow and its siblings report their own check runs against the
           # PR head, so excluding them is what stops the gate waiting on itself.
-          ignore='["PR review by Copilot","PR reviewed by Copilot","Auto-merge reviewed PRs","Close parent issues"]'
+          ignore='["PR review by Copilot","PR reviewed by Copilot","Address Copilot review comments","Auto-merge reviewed PRs","Close parent issues"]'
 
           # `$w` is bound before the membership test: inside `$ignore | index(...)`
           # the `.` context is the ignore array, not the check run.

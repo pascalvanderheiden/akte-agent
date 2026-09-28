@@ -1,19 +1,24 @@
 # PR automation
 
-Five plain GitHub Actions carry a pull request from "opened" to "merged, with
+Six plain GitHub Actions carry a pull request from "opened" to "merged, with
 every completed parent issue closed". None of them needs an LLM, so none is an
-agentic workflow.
+agentic workflow — where reasoning is genuinely required, the work is handed to
+the Copilot coding agent rather than done here.
 
 ```
 pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
+                            |               ^
+                            v               |
+                     pr-address-review ------+  (loops back via the coding agent)
                     approve-gated-runs (safety net)
 ```
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` labels when the head commit moves. |
+| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
-| `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head and every CI check is green. |
+| `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
+| `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
 | `approve-gated-runs.yml` | `schedule`, every 10 minutes, plus `workflow_dispatch` | Safety net. Takes any non-Copilot reviewer back out of the queue, applies the `reviewed` label, and releases held runs. **Its schedule does not fire reliably** — see "The schedule trigger is unreliable". |
 
@@ -182,11 +187,55 @@ skipped. A human then sat in the review queue for hours. `approve-gated-runs`
 strips foreign reviewers as well, so the relief does not depend on a held run
 being released.
 
+## Reviews that are not approvals
+
+Copilot's review comes back `APPROVED` when it is happy and `COMMENTED` when it
+is not. `pr-auto-merge` originally asked only "did Copilot review this head",
+never "what did it say", so a PR with open review comments merged anyway. It now
+also requires that no review thread is left unresolved.
+
+That gate alone would just stall the PR forever, because the thing that clears a
+review comment is a code change, and nothing was making one:
+
+- The coding agent does pick up review feedback and push fixes — but only from
+  **humans**. A review by `copilot-pull-request-reviewer[bot]` is bot-to-bot and
+  does not wake it.
+- So the PR sits `reviewed`, unmergeable, with nobody assigned to the comments.
+
+`pr-address-review` closes that loop. When Copilot has reviewed the current head
+and left unresolved comments, it posts an `@copilot` comment listing them, which
+does wake the coding agent. The agent pushes a fix, `pr-copilot-review` drops the
+stale labels and re-requests review, and the cycle repeats until the review comes
+back clean.
+
+Three things keep that loop from running away:
+
+- **Only live comments count.** A thread is ignored once it is resolved, and once
+  it is `isOutdated` — outdated means the lines it was anchored to are gone, so
+  the comment is about code that no longer exists and would never clear.
+- **One delegation per head commit.** The comment it posts carries a
+  `<!-- pr-address-review: <sha> -->` marker, and the workflow exits if that
+  marker is already present. Re-runs and duplicate triggers are free.
+- **A round cap.** After `MAX_ROUNDS` (3) delegations on one PR it stops, applies
+  `needs-human`, and leaves it alone. Three failed attempts means the review
+  comment needs a person, not another lap.
+
+It must post with `COPILOT_ASSIGN_TOKEN`. An `@copilot` mention written with
+`GITHUB_TOKEN` hits the same recursion guard as everything else here and wakes
+nothing.
+
+Unlike the rest of the chain, this one runs on drafts, because that is exactly
+where the coding agent's PRs spend their review cycles.
+
 ## Labels
 
 | Label | Applied by | Meaning |
 | --- | --- | --- |
 | `reviewed` | `pr-reviewed` | Copilot has submitted a review. |
-| `ready-to-merge` | `pr-auto-merge` | Reviewed and green; being merged. Applying it by hand overrides the review gate. |
+| `needs-fixes` | `pr-address-review` | The review left unresolved comments; the coding agent has been asked to fix them. |
+| `needs-human` | `pr-address-review` | `MAX_ROUNDS` delegations did not clear the comments. Automation has stopped; a person needs to look. |
+| `ready-to-merge` | `pr-auto-merge` | Reviewed, green and no open comments; being merged. Applying it by hand overrides both the review gate and the unresolved-comments gate. |
 
-Both are removed by `pr-copilot-review` when a new commit invalidates them.
+`reviewed`, `ready-to-merge` and `needs-fixes` are removed by
+`pr-copilot-review` when a new commit invalidates them. `needs-human` is not —
+it is deliberately sticky, and has to be taken off by hand.

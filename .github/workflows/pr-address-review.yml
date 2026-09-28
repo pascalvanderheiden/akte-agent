@@ -1,0 +1,163 @@
+name: Address Copilot review comments
+
+# Step 2.5 of the PR automation chain, between the review and the merge.
+#
+# Copilot's code review does not always approve. When it leaves inline comments
+# the pull request is reviewed but not *finished*, and before this workflow
+# existed it simply stopped there: `pr-auto-merge` only asked "did Copilot
+# review this head commit", never "what did it say", so a `COMMENTED` review
+# with open threads either merged anyway or sat untouched.
+#
+# The coding agent picks up review feedback on its own pull requests, but in
+# practice only when a human leaves it. A review from
+# `copilot-pull-request-reviewer[bot]` is one bot talking to another and does
+# not wake it, which is why those pull requests stall. This workflow closes that
+# gap by asking, explicitly and in a comment the agent will act on.
+#
+# Deterministic — it decides *whether* to delegate, never what the fix is — so a
+# plain GitHub Action rather than an agentic workflow. The reasoning belongs to
+# the coding agent, which already wrote the branch and has the context.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_target:
+    types: [ready_for_review, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to hand back to the coding agent
+        required: true
+        type: number
+
+concurrency:
+  group: pr-address-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  address:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the coding agent to address the review
+        env:
+          # Must be a user PAT. A mention posted with GITHUB_TOKEN is the same
+          # recursion guard that stops a label raising a `labeled` event — the
+          # comment appears but wakes nothing, which would make this workflow
+          # silently do nothing at all.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          REPO: ${{ github.repository }}
+          # A fix can itself be reviewed and commented on. Cap the round trips so
+          # a disagreement the agent cannot resolve stops rather than ping-ponging
+          # against the review bot forever.
+          MAX_ROUNDS: "3"
+        run: |
+          set -euo pipefail
+
+          reviewer='copilot-pull-request-reviewer'
+
+          # `$owner`/`$name`/`$number` are GraphQL variables, not shell ones.
+          # shellcheck disable=SC2016
+          pr_json=$(gh api graphql \
+            -f owner="$OWNER" -f name="$NAME" -F number="$PR" \
+            -f query='
+              query($owner:String!, $name:String!, $number:Int!) {
+                repository(owner:$owner, name:$name) {
+                  pullRequest(number:$number) {
+                    state isDraft headRefOid
+                    reviews(last:20) {
+                      nodes { author { login } state commit { oid } }
+                    }
+                    reviewThreads(first:100) {
+                      nodes {
+                        isResolved
+                        isOutdated
+                        comments(first:1) {
+                          nodes { author { login } path body }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' --jq '.data.repository.pullRequest')
+
+          state=$(echo "$pr_json" | jq -r .state)
+          if [ "$state" != "OPEN" ]; then
+            echo "PR #$PR is $state; nothing to address."
+            exit 0
+          fi
+
+          head=$(echo "$pr_json" | jq -r .headRefOid)
+
+          # Drafts are deliberately included. The coding agent reviews and
+          # comments on its pull requests long before marking them ready, and
+          # making it wait until `ready_for_review` would leave known problems
+          # sitting in the branch for the whole drafting period.
+
+          # Only act on a review of the commit that is actually on the branch.
+          # A review of an older head has already been answered by whatever push
+          # replaced it.
+          if ! echo "$pr_json" | jq -e --arg head "$head" --arg r "$reviewer" '
+                .reviews.nodes[] | select(
+                  (.author.login | startswith($r)) and .commit.oid == $head)' >/dev/null; then
+            echo "Copilot has not reviewed $head on #$PR; nothing to address yet."
+            exit 0
+          fi
+
+          # `isOutdated` means the lines the comment was anchored to have since
+          # changed, so the thread is about code that no longer exists. Treating
+          # those as outstanding would block a pull request on feedback that has
+          # already been overtaken.
+          open_threads=$(echo "$pr_json" | jq -c --arg r "$reviewer" '
+            [ .reviewThreads.nodes[]
+              | select(.isResolved == false and .isOutdated == false)
+              | .comments.nodes[0]
+              | select(.author.login | startswith($r))
+              | {path, body} ]')
+
+          count=$(echo "$open_threads" | jq 'length')
+          if [ "$count" -eq 0 ]; then
+            echo "PR #$PR has no unresolved Copilot review threads on $head."
+            exit 0
+          fi
+
+          # One request per head commit. Without this every `synchronize` on the
+          # branch would post another mention for feedback already being worked.
+          marker="<!-- pr-address-review: $head -->"
+          comments=$(gh api "repos/$REPO/issues/$PR/comments" --paginate)
+
+          if echo "$comments" | jq -e --arg m "$marker" '.[] | select(.body | contains($m))' >/dev/null; then
+            echo "Already asked the coding agent to address $head on #$PR."
+            exit 0
+          fi
+
+          rounds=$(echo "$comments" | jq '[.[] | select(.body | contains("<!-- pr-address-review:"))] | length')
+          if [ "$rounds" -ge "$MAX_ROUNDS" ]; then
+            echo "::warning::PR #$PR has already been through $rounds review-fix rounds; leaving it for a human."
+            gh pr edit "$PR" --repo "$REPO" --add-label needs-human >/dev/null
+            exit 0
+          fi
+
+          body=$(mktemp)
+          {
+            echo "@copilot the code review left $count unresolved comment(s) on this pull request. Please address them and push the fix to this branch."
+            echo
+            echo "$open_threads" | jq -r '.[] | "- **\(.path)** — \(.body | split("\n")[0])"'
+            echo
+            echo "$marker"
+          } > "$body"
+
+          gh pr comment "$PR" --repo "$REPO" --body-file "$body" >/dev/null
+          rm -f "$body"
+
+          # `pr-auto-merge` reads the threads directly rather than this label, so
+          # the label is for humans scanning the PR list — it is not a gate.
+          gh pr edit "$PR" --repo "$REPO" --add-label needs-fixes >/dev/null
+
+          echo "Asked the coding agent to address $count comment(s) on #$PR (round $((rounds + 1)) of $MAX_ROUNDS)."

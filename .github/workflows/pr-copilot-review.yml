@@ -118,7 +118,7 @@ jobs:
 
           # The head moved past whatever was reviewed, so any state the later
           # steps of the chain wrote is stale.
-          for stale in reviewed ready-to-merge; do
+          for stale in reviewed ready-to-merge needs-fixes; do
             if echo "$pr_json" | jq -e --arg l "$stale" '.labels[] | select(.name == $l)' >/dev/null; then
               echo "Dropping stale '$stale' label — $head has not been reviewed."
               gh pr edit "$PR" --repo "$REPO" --remove-label "$stale"
