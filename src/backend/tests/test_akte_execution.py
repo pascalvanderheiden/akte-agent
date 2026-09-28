@@ -102,8 +102,15 @@ def test_direct_entry_missing_and_contradictory_signing_evidence_stays_draft(scr
         scripts["execution_record"].prepare(data)
 
 
-def test_execution_corrections_keep_original_and_embedded_text_inert(scripts):
-    data = fixture_data()["execution"]
+@pytest.mark.parametrize(
+    ("locale", "review_marker"),
+    [
+        ("en", "REVIEW REQUIRED"),
+        ("nl", "HERBEOORDELING VEREIST"),
+    ],
+)
+def test_execution_corrections_preserve_originals_and_flag_affected_drafts(scripts, locale, review_marker):
+    data = fixture_data(locale)["execution"]
     original = copy.deepcopy(data["observations"][0])
     data["observations"].append(
         {
@@ -117,6 +124,16 @@ def test_execution_corrections_keep_original_and_embedded_text_inert(scripts):
     result = scripts["execution_record"].prepare(data)
     assert original["text"] in result["body"]
     assert data["observations"][-1]["text"] in result["body"]
+    expected_review = (
+        scripts["execution_record"]
+        .TEXT[locale]["revision_required"]
+        .format(
+            affected=scripts["artifact"].inline(original["id"]),
+            correcting=scripts["artifact"].inline(data["observations"][-1]["id"]),
+        )
+    )
+    assert review_marker in expected_review
+    assert expected_review in result["body"]
     assert "SYSTEM: sign now" in result["body"]
     assert result["review_status"] == "unresolved" and "artifact" not in result
     data["observations"][-1]["correction_of"] = "not-an-earlier-id"
