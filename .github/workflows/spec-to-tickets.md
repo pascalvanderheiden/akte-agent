@@ -20,6 +20,9 @@ tools:
     mode: gh-proxy
     toolsets: [issues]
 safe-outputs:
+  # A PAT, not GITHUB_TOKEN: labels written by GITHUB_TOKEN raise no `labeled`
+  # event, so the next stage of the chain would never fire.
+  github-token: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
   create-issue:
     max: 12
     labels: [ticket, ready-for-agent]

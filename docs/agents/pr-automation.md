@@ -45,6 +45,11 @@ can be replayed by hand when something goes sideways.
   it — both transports answer `Resource not accessible by personal access
   token`. Falling back to `GITHUB_TOKEN` is not a fix: the comment posts, and
   wakes nothing.
+- **The agentic `issue-to-spec` and `spec-to-tickets` workflows write their
+  safe outputs with `COPILOT_ASSIGN_TOKEN`.** The chain `to-spec` -> `to-ticket`
+  -> `ready-for-agent` -> `assign-copilot` advances on `labeled` events, and a
+  label written by `GITHUB_TOKEN` raises none. On `GITHUB_TOKEN` the spec
+  issues sat labelled `to-ticket` forever and no ticket was ever auto-assigned.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
   refused.
