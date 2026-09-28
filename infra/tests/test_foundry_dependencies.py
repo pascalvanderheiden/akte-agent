@@ -1,9 +1,31 @@
 """Check provisioning order in the compiled ARM template."""
 
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
+
+# `createObject('name', 'FOO', 'value', <literal or parameters(...)>)`
+ARM_ENV_ENTRY = re.compile(
+    r"createObject\('name', '([^']+)', 'value', (parameters\('[^']+'\)|'[^']*')\)"
+)
+
+
+def container_env(container):
+    """Return the container's env as a name -> value mapping.
+
+    A literal Bicep array compiles to a list of objects, but an array built
+    with `concat()` compiles to a single ARM expression string, so the
+    name/value pairs have to be read back out of that expression.
+    """
+    environment = container["env"]
+    if isinstance(environment, list):
+        return {item["name"]: item["value"] for item in environment}
+    return {
+        name: value[1:-1] if value.startswith("'") else f"[{value}]"
+        for name, value in ARM_ENV_ENTRY.findall(environment)
+    }
 
 
 class FoundryDependenciesTests(unittest.TestCase):
@@ -171,8 +193,7 @@ class AgentServiceModelEnvironmentTests(unittest.TestCase):
             for resource in self.template["resources"]
             if resource["type"] == "Microsoft.App/containerApps"
         )
-        environment = app["properties"]["template"]["containers"][0]["env"]
-        values = {item["name"]: item["value"] for item in environment}
+        values = container_env(app["properties"]["template"]["containers"][0])
         self.assertEqual(
             "[parameters('orchestratorModelDeployment')]",
             values["MODEL_DEPLOYMENT_ORCHESTRATOR"],
