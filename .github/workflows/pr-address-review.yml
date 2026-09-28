@@ -140,7 +140,8 @@ jobs:
           rounds=$(echo "$comments" | jq '[.[] | select(.body | contains("<!-- pr-address-review:"))] | length')
           if [ "$rounds" -ge "$MAX_ROUNDS" ]; then
             echo "::warning::PR #$PR has already been through $rounds review-fix rounds; leaving it for a human."
-            gh pr edit "$PR" --repo "$REPO" --add-label needs-human >/dev/null
+            gh api "repos/$REPO/issues/$PR/labels" \
+              -f "labels[]=needs-human" >/dev/null
             exit 0
           fi
 
@@ -153,11 +154,21 @@ jobs:
             echo "$marker"
           } > "$body"
 
-          gh pr comment "$PR" --repo "$REPO" --body-file "$body" >/dev/null
+          # `gh pr comment` posts via the GraphQL `addComment` mutation, which a
+          # fine-grained PAT can only use with `Issues: write`. The REST endpoint
+          # below is the same comment, but is reachable with `Pull requests:
+          # write` alone, which is all `COPILOT_ASSIGN_TOKEN` carries.
+          gh api "repos/$REPO/issues/$PR/comments" \
+            -f body="$(cat "$body")" >/dev/null
           rm -f "$body"
 
           # `pr-auto-merge` reads the threads directly rather than this label, so
           # the label is for humans scanning the PR list — it is not a gate.
-          gh pr edit "$PR" --repo "$REPO" --add-label needs-fixes >/dev/null
+          # Never fatal: losing the label costs nothing, losing the delegation
+          # above would cost a round.
+          if ! gh api "repos/$REPO/issues/$PR/labels" \
+                 -f "labels[]=needs-fixes" >/dev/null; then
+            echo "::notice::Could not apply the needs-fixes label to #$PR."
+          fi
 
           echo "Asked the coding agent to address $count comment(s) on #$PR (round $((rounds + 1)) of $MAX_ROUNDS)."
