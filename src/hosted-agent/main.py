@@ -159,18 +159,19 @@ async def _startup() -> None:
     _copilot_agent.set_cosmos_service(_cosmos_service)
     _mark("core_parallel", t0)
 
-    if blob_service.unavailability_reason:
+    if not blob_service.is_available:
+        failure_reason = blob_service.unavailability_reason or "not_configured"
         timestamp = datetime.now(UTC).isoformat()
         model_deployment = _settings.foundry_model_deployment or "(empty)"
         logger.warning(
             "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
-            blob_service.unavailability_reason,
+            failure_reason,
             timestamp,
             _settings.environment,
             model_deployment,
             extra={
                 "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
-                "failure_reason": blob_service.unavailability_reason,
+                "failure_reason": failure_reason,
                 "event_timestamp": timestamp,
                 "environment": _settings.environment,
                 "model_deployment": model_deployment,
