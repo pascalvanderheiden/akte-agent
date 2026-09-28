@@ -66,7 +66,7 @@ def _use_span(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 def _registry() -> SimpleNamespace:
-    return SimpleNamespace(system_prompt="Be helpful.", skills={})
+    return SimpleNamespace(system_prompt="Be helpful.", skills={}, get_skill=lambda _name: None)
 
 
 @pytest.mark.asyncio
@@ -95,6 +95,19 @@ async def test_analysis_failure_carries_trace_id(monkeypatch: pytest.MonkeyPatch
         await admin_analysis._call_llm("system", "user")
 
     assert exc_info.value.detail["traceId"] == expected
+
+
+@pytest.mark.asyncio
+async def test_apply_fix_carries_trace_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _use_span(monkeypatch)
+    monkeypatch.setattr(admin_analysis, "_get_registry", lambda _request, _use_case: _registry())
+
+    body = admin_analysis.ApplyFixRequest(category="unused", title="t", description="d", affectedSkills=["missing"])
+
+    result = await admin_analysis.apply_fix(SimpleNamespace(), body, "akte-agent")
+
+    assert result.success is False
+    assert result.traceId == expected
 
 
 def test_trace_id_omitted_without_span_context(monkeypatch: pytest.MonkeyPatch) -> None:

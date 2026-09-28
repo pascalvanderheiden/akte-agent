@@ -271,7 +271,7 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
         token = await credential.get_token("https://cognitiveservices.azure.com/.default")
     except Exception as e:
         logger.error("Auth failed (trace=%s): %s", _trace_id(), e)
-        raise _http_error(503, f"Authentication failed: {e}") from e
+        raise _http_error(503, "Authentication failed") from e
 
     payload: dict = {
         "messages": [
@@ -300,7 +300,7 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
         raise _http_error(502, f"LLM API error: {e.response.status_code}") from e
     except Exception as e:
         logger.error("Failed to call Foundry (trace=%s): %s", _trace_id(), e)
-        raise _http_error(502, f"LLM call failed: {e}") from e
+        raise _http_error(502, "LLM call failed") from e
 
     data = resp.json()
     return data["choices"][0]["message"]["content"]

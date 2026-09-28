@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { listSkills, createSkill, updateSkill, deleteSkill, getSystemPrompt, updateSystemPrompt, resetSystemPrompt, listSkillFiles, upsertSkillFile, deleteSkillFile, getMCPConfig, updateMCPConfig, analyzeConsistency, applyAnalysisFix, exportUseCase } from "@/lib/api";
 import type { AnalysisResult, AnalysisIssue, ApplyFixResult, MCPConfig, Skill, SkillFile, UseCase } from "@/types";
 import { useTheme } from "./ThemeProvider";
@@ -32,10 +32,10 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
   const [errorTrace, setErrorTrace] = useState<string | undefined>(undefined);
   // Every error clears the previous correlation id so the banner never pairs a
   // fresh message with a stale trace.
-  const setError = (code: ErrorCode | null, traceId?: string) => {
+  const setError = useCallback((code: ErrorCode | null, traceId?: string) => {
     setErrorState(code);
     setErrorTrace(code ? traceId : undefined);
-  };
+  }, []);
   const [mutating, setMutating] = useState(false);
   const [saved, setSaved] = useState(false);
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
@@ -395,7 +395,7 @@ export function SkillsAdminPanel({ onClose, useCase = "akte-agent", useCases = [
       setSkillFiles([]);
       setExpandedFile(null);
     }
-  }, [editingSkill?.name, useCase]);
+  }, [editingSkill?.name, useCase, setError]);
 
   const handleSaveFile = async (file: SkillFile) => {
     if (!editingSkill || fileSaving) return;
