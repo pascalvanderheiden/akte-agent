@@ -139,10 +139,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Returns 0 only when the PR was actually merged, so the caller can
-          # stop at the first success. Every gate is a `return 1`, which on the
-          # sweep means "try the next candidate" and on a single-PR event means
-          # "nothing to do" — same logic either way.
+          # Invoked as a simple command, never as an `if` condition: a function
+          # call in a condition disarms `errexit` for its entire body, so a
+          # failed `gh pr merge` would fall through to `merged=true` and cascade
+          # `close-parents` for a merge that never happened. Success is reported
+          # out of band through `MERGED` instead, which leaves every `gh`/`jq`
+          # failure inside the function fatal. A gate miss is a normal `return
+          # 0` — on the sweep that means "try the next candidate", on a
+          # single-PR event "nothing to do".
+          MERGED=false
+
           evaluate_pr() {
             local PR="$1"
           pr_json=$(gh pr view "$PR" --repo "$REPO" \
@@ -154,7 +160,7 @@ jobs:
 
             if [ "$state" != "OPEN" ]; then
               echo "PR #$PR is $state; not merging."
-              return 1
+              return 0
             fi
 
             # A draft is not disqualifying on its own. Copilot's automatic code
@@ -184,7 +190,7 @@ jobs:
 
             if [ "$reviewed" != "true" ]; then
               echo "Copilot has not reviewed $head yet; not merging."
-              return 1
+              return 0
             fi
 
             # "Copilot reviewed this head" is not the same as "Copilot was happy
@@ -222,7 +228,7 @@ jobs:
 
               if [ "$unresolved" -gt 0 ]; then
                 echo "PR #$PR has $unresolved unresolved Copilot review thread(s); not merging."
-                return 1
+                return 0
               fi
             fi
 
@@ -238,7 +244,7 @@ jobs:
             total=$(echo "$checks" | jq 'length')
             if [ "$total" -eq 0 ]; then
               echo "PR #$PR has no CI checks yet; not merging."
-              return 1
+              return 0
             fi
 
             # ACTION_REQUIRED is a run still awaiting approval, which `pr-reviewed`
@@ -260,12 +266,12 @@ jobs:
 
             if [ "$(echo "$failed" | jq 'length')" -gt 0 ]; then
               echo "::warning::PR #$PR has failing checks: $(echo "$failed" | jq -r 'join(", ")'). Not merging."
-              return 1
+              return 0
             fi
 
             if [ "$pending" -gt 0 ]; then
               echo "PR #$PR still has $pending check(s) running; not merging yet."
-              return 1
+              return 0
             fi
 
             gh pr edit "$PR" --repo "$REPO" --add-label ready-to-merge
@@ -278,14 +284,14 @@ jobs:
             # catches up; merging on UNKNOWN just fails the job noisily.
             mergeable=$(echo "$pr_json" | jq -r .mergeable)
             for _ in 1 2 3 4 5; do
-              [ "$mergeable" != "UNKNOWN" ] && break
+              if [ "$mergeable" != "UNKNOWN" ]; then break; fi
               sleep 5
               mergeable=$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq .mergeable)
             done
 
             if [ "$mergeable" != "MERGEABLE" ]; then
               echo "::warning::PR #$PR is $mergeable and needs a human. Not merging."
-              return 1
+              return 0
             fi
 
             # Deferred until everything else has passed, so a PR that fails a gate
@@ -298,6 +304,7 @@ jobs:
             fi
 
             gh pr merge "$PR" --repo "$REPO" --squash
+            MERGED=true
             echo "Squash-merged #$PR."
             echo "pr=$PR" >> "$GITHUB_OUTPUT"
             echo "merged=true" >> "$GITHUB_OUTPUT"
@@ -316,7 +323,8 @@ jobs:
           # and every remaining candidate is now behind a moved `main` anyway —
           # the next sweep re-evaluates them against the new base.
           for candidate in $PRS; do
-            if evaluate_pr "$candidate"; then
+            evaluate_pr "$candidate"
+            if [ "$MERGED" = "true" ]; then
               exit 0
             fi
           done
