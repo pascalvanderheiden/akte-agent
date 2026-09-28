@@ -73,10 +73,19 @@ or endpoints). From **inside the running Container App**, resolve the hostname
 in `COSMOS_DB_ENDPOINT` (for example with `az containerapp exec` and Python's
 `socket.getaddrinfo`); confirm it returns a private endpoint IP, not a public
 address. Check the private endpoint connection, DNS zone link to the app VNet,
-and Cosmos public-network setting. Then run the deployed
-`.copilot/skills/e2e-smoke/run.sh` persistence check using synthetic
-conversations and confirm both user and assistant messages are read back.
-Successful HTTP responses alone do **not** prove persistence: writes are
+and Cosmos public-network setting. The current smoke suite does not verify
+persisted message contents, so perform this manual round-trip with synthetic data:
+
+1. In the deployed UI, create a new conversation and send a unique synthetic
+   prompt. Wait for a non-empty assistant response, and note the conversation ID.
+2. Reload or reopen that conversation so its messages are fetched again from the
+   backend. In the browser's Network panel, inspect the response from
+   `GET /api/conversations/{conversation_id}/messages`.
+3. Confirm the returned JSON contains the exact user prompt with `role: "user"`
+   and the non-empty assistant reply with `role: "assistant"`.
+
+Repeat with representative synthetic conversations during the observation
+window. Successful HTTP responses alone do **not** prove persistence: writes are
 fail-open. If DNS is public, investigate VNet DNS and service-endpoint routing
 before changing RBAC. If DNS is private but writes fail, inspect the exception:
 firewall/network-denial text (including a 403) is not proof of an RBAC error.
@@ -114,16 +123,19 @@ incident, but do not paste raw traces (which may contain identifiers or data)
 into the public repo. An empty result without representative traffic or
 working telemetry is inconclusive.
 
-Measure latency over the **same** window with the existing duration metric
-(seconds), filtering to `invoke_agent` rather than all GenAI operations:
+Measure latency over the **same** window from individual top-level
+`invoke_agent` spans (the duration field is a per-span duration in
+`dependencies`/`requests`):
 
 ```kusto
-customMetrics
+union requests, dependencies
 | where timestamp between (datetime(<start-UTC>) .. datetime(<end-UTC>))
-| where name == "gen_ai.client.operation.duration"
+| where name == "invoke_agent kratos-agent"
 | where tostring(customDimensions["gen_ai.operation.name"]) == "invoke_agent"
-| summarize requests = count(), p50_s = percentile(value, 50),
-            p95_s = percentile(value, 95)
+| summarize arg_max(timestamp, *) by id
+| extend duration_s = duration / 1s
+| summarize requests = count(), p50_s = percentile(duration_s, 50),
+            p95_s = percentile(duration_s, 95)
 ```
 
 Compare against the pre-rollout incident baseline (p50 **0.111 s**, p95
@@ -136,6 +148,10 @@ attribute the regression; if the gap remains without denials, open a separate
 issue with sanitized, isolated traces and the before/after sample counts.
 Track Blob registry-loading authorization failures separately: the local-disk
 fallback can mask them, and they are not evidence of healthy Blob access.
+This section is a runbook, not evidence that the live checks passed. Keep issue
+#126 open until the post-deployment result is recorded, latency is attributed
+(or a residual-latency issue is opened), and a separate Blob follow-up issue is
+created.
 
 ## Run locally
 
