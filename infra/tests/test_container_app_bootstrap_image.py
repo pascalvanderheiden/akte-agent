@@ -13,7 +13,8 @@ import unittest
 from pathlib import Path
 
 CONTAINER_APP_TYPE = "Microsoft.App/containerApps"
-PLACEHOLDER_IMAGE = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+PLACEHOLDER_IMAGE = "containerapps-helloworld"
+INGRESS_PORT = 8000
 MODULES = Path(__file__).resolve().parents[1] / "modules"
 
 
@@ -55,18 +56,22 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                     continue
                 properties = resource.get("properties", {})
                 ingress = properties.get("configuration", {}).get("ingress") or {}
-                if ingress.get("targetPort") != 8000:
+                target_port = ingress.get("targetPort")
+                # A non-literal port compiles to an ARM expression, so the value is
+                # unknown here and the placeholder image stays suspect either way.
+                if isinstance(target_port, int) and target_port != INGRESS_PORT:
                     continue
                 images = [
-                    container.get("image")
+                    container.get("image") or ""
                     for container in properties.get("template", {}).get("containers", [])
                 ]
-                self.assertNotIn(
-                    PLACEHOLDER_IMAGE,
-                    images,
+                placeholders = [image for image in images if PLACEHOLDER_IMAGE in image]
+                self.assertEqual(
+                    [],
+                    placeholders,
                     f"{module.name}: {resource.get('name')} boots the placeholder image, "
-                    "which does not listen on targetPort 8000, so its first revision "
-                    "fails the readiness probe",
+                    f"which does not listen on targetPort {target_port!r}, so its first "
+                    "revision fails the readiness probe",
                 )
 
 
