@@ -105,17 +105,26 @@ jobs:
 
           copilot='copilot-pull-request-reviewer[bot]'
 
-          # True when the timeline's most recent Copilot review event is a
-          # request (not a submitted review) made at or after `$2`. A submitted
-          # review counts too, since the request was plainly honoured.
+          # True when Copilot has an outstanding request, or has reviewed at or
+          # after `$2` (the head commit's date).
+          #
+          # An outstanding request counts however old it is: GitHub treats a
+          # second request while one is pending as a no-op and records no new
+          # timeline event, so demanding a request newer than the head would
+          # report every push during a pending review as "silently dropped".
+          # Copilot reviews whatever the head is when it gets to the request.
           copilot_request_pending() {
-            local pr="$1" since="$2" last
+            local pr="$1" since="$2" last when kind
             last=$(gh api "repos/$REPO/issues/$pr/timeline" --paginate --jq '
               .[] | select(
                 (.event == "review_requested" and .requested_reviewer.login == "Copilot") or
                 (.event == "reviewed" and (.user.login // "" | test("^(Copilot|copilot-pull-request-reviewer)"))))
               | [(.created_at // .submitted_at), .event] | @tsv' | sort | tail -n 1)
-            [ -n "$last" ] && [[ "${last%%$'\t'*}" > "$since" || "${last%%$'\t'*}" == "$since" ]]
+            [ -n "$last" ] || return 1
+            when="${last%%$'\t'*}"
+            kind="${last##*$'\t'}"
+            [ "$kind" = "review_requested" ] && return 0
+            [[ "$when" > "$since" || "$when" == "$since" ]]
           }
 
           evaluate_pr() {
