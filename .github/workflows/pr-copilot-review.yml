@@ -139,8 +139,19 @@ jobs:
 
           # The API answers 200 even when it quietly ignores the request, so
           # confirm rather than trust the status code.
-          if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
-               | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
+          reviewer_requested=false
+          for attempt in 1 2 3 4 5 6; do
+            if gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
+                 | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
+              reviewer_requested=true
+              break
+            fi
+            if [ "$attempt" -lt 6 ]; then
+              sleep 5
+            fi
+          done
+
+          if [ "$reviewer_requested" != "true" ]; then
             echo "::error::GitHub accepted the request but Copilot is not a reviewer on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
             exit 1
           fi
