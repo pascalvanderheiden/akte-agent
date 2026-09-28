@@ -404,6 +404,28 @@ def test_existing_manual_name_is_reused(fake_bin: Path, log: Path) -> None:
     assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
 
 
+@pytest.mark.parametrize("registered_branch", [None, "main"])
+def test_existing_healthy_registration_is_ready(registered_branch: str | None, fake_bin: Path, log: Path) -> None:
+    items = sequence(existing=True)
+    for repo in (items[3]["body"]["value"][0], items[-1]["body"]):
+        repo["name"] = "operator-repo"
+        repo["properties"]["branch"] = registered_branch
+        repo["properties"]["isHealthy"] = True
+    items[-1]["url"] = ENDPOINT + "/api/v2/repos/operator-repo"
+    proc = run_hook(SETUP, fake_bin, log, settings(items))
+    check(proc, fake_bin, "ready")
+    assert "Rerun ./hooks/sre-setup.sh" not in proc.stderr
+    assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
+
+
+def test_new_healthy_registration_still_requires_fresh_access_acceptance(fake_bin: Path, log: Path) -> None:
+    items = sequence(existing=False)
+    items[-1]["body"]["properties"]["isHealthy"] = True
+    check(run_hook(SETUP, fake_bin, log, settings(items)), fake_bin, "pending")
+    writes = [json.loads(line) for line in log.read_text().splitlines() if json.loads(line).get("method") == "PUT"]
+    assert len(writes) == 1
+
+
 @pytest.mark.parametrize("raw", ['""', "null", "5", '"bad\\nvalue"'])
 def test_malformed_token_never_reaches_http(raw: str, fake_bin: Path, log: Path) -> None:
     check(run_hook(SETUP, fake_bin, log, settings([], FAKE_TOKEN=raw)), fake_bin, "failed", 1)

@@ -41,6 +41,10 @@ def pending(message: str) -> NoReturn:
     raise SetupResultError("pending", message)
 
 
+def ready(message: str) -> NoReturn:
+    raise SetupResultError("ready", message)
+
+
 def parse_json(raw: str) -> object:
     try:
         return json.loads(raw)
@@ -81,6 +85,11 @@ def branch_name(value: object) -> str:
     ):
         fail("Invalid SRE_GITHUB_BRANCH; supply a valid Git branch name, not a checkout expression.")
     return value
+
+
+def repo_branch_matches(value: object, branch: str, branch_is_discovered_default: bool) -> bool:
+    """Treat a null data-plane branch as default only when this hook discovered the default branch."""
+    return value == branch or (value is None and branch_is_discovered_default)
 
 
 def bounded_integer(name: str, default: str, maximum: int, minimum: int = 0) -> int:
@@ -299,6 +308,7 @@ class GitHubSetup:
     def setup(self) -> None:
         url, host, slug = repository_url(os.environ.get("SRE_GITHUB_REPOSITORY_URL") or DEFAULT_REPOSITORY)
         branch = os.environ.get("SRE_GITHUB_BRANCH") or ""
+        branch_is_discovered_default = False
         if branch:
             branch = branch_name(branch)
         self.resolve_endpoint()
@@ -326,6 +336,7 @@ class GitHubSetup:
             if not isinstance(data, dict) or "default_branch" not in data:
                 fail("Malformed default-branch discovery response.")
             branch = branch_name(data["default_branch"])
+            branch_is_discovered_default = True
 
         status, data = self.github(host, f"/repos/{slug}/branches/{quote(branch, safe='')}")
         expected_commit = ""
@@ -342,6 +353,7 @@ class GitHubSetup:
         repos = result.get("value") if isinstance(result, dict) else result
         if not isinstance(repos, list) or (isinstance(result, dict) and result.get("nextLink")):
             fail("Malformed or paginated repository collection; refusing an incomplete registration check.")
+
         matches = []
         for repo in repos:
             if (
@@ -356,11 +368,12 @@ class GitHubSetup:
                 props.get("type") == "GitHub"
                 and isinstance(props.get("url"), str)
                 and props["url"].rstrip("/").removesuffix(".git").lower() == url
-                and props.get("branch") == branch
+                and repo_branch_matches(props.get("branch"), branch, branch_is_discovered_default)
             ):
                 matches.append(repo)
         if len(matches) > 1:
             fail("Duplicate target repository/branch registrations; resolve them manually before retrying.")
+        reused_existing_registration = bool(matches)
         name = (
             matches[0]["name"] if matches else "github-" + hashlib.sha256(f"{url}\n{branch}".encode()).hexdigest()[:24]
         )
@@ -388,12 +401,16 @@ class GitHubSetup:
             props = repo["properties"]
             if (
                 props.get("type") != "GitHub"
-                or props.get("branch") != branch
+                or not repo_branch_matches(props.get("branch"), branch, branch_is_discovered_default)
                 or repository_url(props.get("url"))[0] != url
             ):
                 fail("Repository readback does not match the requested repository and branch.")
             clone = props.get("cloneStatus")
             commit = props.get("latestCommit")
+            # For existing registrations, isHealthy is the SRE data-plane connection health signal.
+            # It is stronger evidence than a cached cloneStatus/latestCommit pair alone.
+            if reused_existing_registration and clone == "Ready" and props.get("isHealthy") is True:
+                ready("Existing GitHub repository registration is healthy in the SRE data plane.")
             if (
                 clone == "Ready"
                 and isinstance(commit, str)
@@ -451,7 +468,8 @@ def main() -> int:
         fail("GitHub setup ended without an explicit verification result.")
     except SetupResultError as result:
         print(f"GitHub {result.state}: {result.message}", file=sys.stderr)
-        print(RETRY_HELP, file=sys.stderr)
+        if result.state != "ready":
+            print(RETRY_HELP, file=sys.stderr)
         print(result.state)
         return 1 if result.state == "failed" else 0
     except (OSError, ValueError, KeyError, UnicodeError):
