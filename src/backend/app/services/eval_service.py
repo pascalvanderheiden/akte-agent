@@ -725,6 +725,7 @@ class EvalService:
         """
         if await self._cancellation_requested(run):
             run.status = EvalRunStatus.CANCELLED
+            run.error = ""
         await self._storage.save_run(run)
         return run.status == EvalRunStatus.CANCELLED
 
