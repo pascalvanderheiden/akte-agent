@@ -1,12 +1,13 @@
 """Tests for the Copilot SDK agent service."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.config import Settings
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent
-from app.services.copilot_agent import CopilotAgent
+from app.services.copilot_agent import CopilotAgent, InvocationTelemetry
 
 
 @pytest.fixture
@@ -96,6 +97,55 @@ async def test_copilot_agent_run_streams_content(copilot_agent):
     assert len(events) == 1
     assert isinstance(events[0], ContentEvent)
     assert events[0].content == "Hello, world!"
+
+
+@pytest.mark.asyncio
+async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session = AsyncMock(return_value=mock_session)
+
+    def fake_on(callback):
+        idle_event = MagicMock()
+        idle_event.type.value = "session.idle"
+        callback(idle_event)
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+    span = MagicMock()
+    telemetry = InvocationTelemetry(
+        invocation_id="synthetic-invocation",
+        handler_started_at=time.monotonic(),
+    )
+
+    with (
+        patch("app.services.copilot_agent.CopilotClient", return_value=mock_client),
+        patch("app.services.copilot_agent.ManagedIdentityCredential", return_value=AsyncMock()),
+        patch("app.services.copilot_agent._HAS_CLI_CREDENTIAL", False),
+        patch("app.services.copilot_agent.get_bearer_token_provider", return_value=lambda: "token"),
+        patch("app.services.copilot_agent.tracer.start_as_current_span") as start_span,
+    ):
+        start_span.return_value.__enter__.return_value = span
+        await copilot_agent.start()
+        async for _ in copilot_agent.run(
+            message="Hello",
+            conversation_id="synthetic-conversation",
+            use_case="synthetic-use-case",
+            eval_run_id="synthetic-eval",
+            invocation_telemetry=telemetry,
+        ):
+            pass
+
+    attributes = start_span.call_args.kwargs["attributes"]
+    assert attributes["gen_ai.operation.name"] == "invoke_agent"
+    assert attributes["gen_ai.conversation.id"] == "synthetic-conversation"
+    assert attributes["kratos.invocation_id"] == "synthetic-invocation"
+    assert attributes["kratos.request_stage"] == "in-handler"
+    span.set_attribute.assert_any_call("kratos.use_case", "synthetic-use-case")
+    span.set_attribute.assert_any_call("kratos.eval_run_id", "synthetic-eval")
+    span.set_attribute.assert_any_call("kratos.handler_duration_ms", telemetry.handler_duration_ms)
+    assert telemetry.handler_duration_ms is not None
+    assert telemetry.handler_duration_ms >= 0
 
 
 @pytest.mark.asyncio

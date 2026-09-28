@@ -71,7 +71,7 @@ from app.personas import (
     resolve_use_case,
 )
 from app.services.blob_skill_service import BlobSkillService
-from app.services.copilot_agent import CopilotAgent
+from app.services.copilot_agent import CopilotAgent, InvocationTelemetry
 from app.services.cosmos_service import CosmosService
 from app.services.skill_registry import SkillRegistry
 
@@ -300,6 +300,10 @@ async def _stream_response(
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     start_time = time.monotonic()
+    invocation_telemetry = InvocationTelemetry(
+        invocation_id=invocation_id,
+        handler_started_at=start_time,
+    )
     total_tool_calls = 0
 
     # Associate conversation with use-case
@@ -345,6 +349,7 @@ async def _stream_response(
             locale=locale,
             use_case=use_case,
             model_selection=model_selection,
+            invocation_telemetry=invocation_telemetry,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -391,7 +396,9 @@ async def _stream_response(
             yield f"data: {json.dumps(file_event)}\n\n".encode()
 
         stats = _copilot_agent.get_run_stats(conversation_id)
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        elapsed_ms = invocation_telemetry.handler_duration_ms
+        if elapsed_ms is None:
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
         run_stats = {
             "totalDurationMs": elapsed_ms,
             "totalToolCalls": total_tool_calls,

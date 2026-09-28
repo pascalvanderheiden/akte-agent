@@ -15,6 +15,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -44,6 +45,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass
+class InvocationTelemetry:
+    invocation_id: str
+    handler_started_at: float
+    handler_duration_ms: int | None = None
 
 
 def get_bearer_token_provider(credential, scope: str):
@@ -890,6 +898,7 @@ class CopilotAgent:
         eval_run_id: str | None = None,
         locale: Locale | None = None,
         model_selection: str | None = None,
+        invocation_telemetry: InvocationTelemetry | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events."""
         from app.personas import RETIRED_PERSONAS
@@ -934,8 +943,11 @@ class CopilotAgent:
             "gen_ai.agent.version": "0.1.0",
             "gen_ai.conversation.id": conversation_id,
             "kratos.conversation_id": conversation_id,
+            "kratos.request_stage": "in-handler",
             "server.address": _server_addr,
         }
+        if invocation_telemetry:
+            _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
             attributes=_invoke_span_attrs,
@@ -1446,6 +1458,12 @@ class CopilotAgent:
                 if self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
+                if invocation_telemetry:
+                    invocation_telemetry.handler_duration_ms = max(
+                        0,
+                        int((time.monotonic() - invocation_telemetry.handler_started_at) * 1000),
+                    )
+                    span.set_attribute("kratos.handler_duration_ms", invocation_telemetry.handler_duration_ms)
                 self._queues.pop(conversation_id, None)
 
     def get_run_stats(self, conversation_id: str) -> dict:
