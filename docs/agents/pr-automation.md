@@ -39,6 +39,12 @@ can be replayed by hand when something goes sideways.
   `repo`-scoped PAT is refused too, for a different reason (see below).
   `COPILOT_ASSIGN_TOKEN` is still used by `pr-copilot-review` and
   `assign-copilot.yml` for pull-request writes.
+- **`COPILOT_ASSIGN_TOKEN` needs `Issues: Read and write`**, not just `Pull
+  requests`. A pull-request comment is an issue comment to both REST and
+  GraphQL, so `pr-address-review` cannot post its `@copilot` delegation without
+  it — both transports answer `Resource not accessible by personal access
+  token`. Falling back to `GITHUB_TOKEN` is not a fix: the comment posts, and
+  wakes nothing.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
   refused.
