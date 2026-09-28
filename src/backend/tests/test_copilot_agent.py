@@ -298,10 +298,11 @@ async def test_subagent_events_include_name_and_actual_model(copilot_agent):
     assert all(event.model == "gpt-6-sol" for event in (*thoughts, *tools))
 
 
-def _usage_event(model, prompt, completion, reasoning, parent_tool_call_id=None):
+def _usage_event(model, prompt, completion, reasoning, parent_tool_call_id=None, data_agent_id=None):
     event = MagicMock()
     event.type.value = "assistant.usage"
     event.agent_id = None
+    event.data.agent_id = data_agent_id
     event.data.model = model
     event.data.prompt_tokens = prompt
     event.data.completion_tokens = completion
@@ -387,3 +388,18 @@ async def test_metrics_segment_subagent_delegation_by_role(copilot_agent):
         ("deep-reasoning", "gpt-6-sol", "reasoning"): 80,
     }
     assert duration_dims == [("deep-reasoning", "gpt-6-sol"), ("orchestrator", "gpt-6-luna")]
+
+
+@pytest.mark.asyncio
+async def test_metrics_attribute_subagent_from_data_agent_id(copilot_agent):
+    events = [
+        _usage_event("gpt-6-sol", 200, 60, 40, data_agent_id="deep-reasoning-analyst"),
+    ]
+
+    token_records, _ = await _run_with_events(copilot_agent, events)
+
+    assert token_records == {
+        ("deep-reasoning", "gpt-6-sol", "input"): 200,
+        ("deep-reasoning", "gpt-6-sol", "output"): 60,
+        ("deep-reasoning", "gpt-6-sol", "reasoning"): 40,
+    }

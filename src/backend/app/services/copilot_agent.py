@@ -1106,6 +1106,7 @@ class CopilotAgent:
                                     )
                                     for ref in (
                                         getattr(event, "agent_id", None),
+                                        getattr(data, "agent_id", None),
                                         getattr(data, "parent_tool_call_id", None),
                                     ):
                                         if isinstance(ref, str) and ref:
@@ -1402,6 +1403,8 @@ class CopilotAgent:
                                     orphan_span.end()
                                 _tool_span_stack.clear()
                                 _tool_spans.clear()
+                                _subagent_names.clear()
+                                _subagent_starts.clear()
 
                                 logger.error(
                                     "Session error conversation=%s message=%s",
