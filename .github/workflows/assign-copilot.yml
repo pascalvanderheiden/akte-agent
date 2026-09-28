@@ -14,8 +14,15 @@ on:
         required: true
         type: number
 
+# The label is part of the group on purpose. Safe outputs apply several labels
+# at once (`ticket`, `ready-for-agent`, `feature`), each raising its own
+# `labeled` event. GitHub keeps only one *pending* run per group, so with a
+# per-issue group the no-op runs for the other labels displaced the one for
+# `ready-for-agent` and the ticket was never assigned.
 concurrency:
-  group: assign-copilot-${{ github.event.issue.number || inputs.issue_number }}
+  group: >-
+    assign-copilot-${{ github.event.issue.number || inputs.issue_number }}-${{
+      github.event.label.name || 'dispatch' }}
   cancel-in-progress: false
 
 permissions:
