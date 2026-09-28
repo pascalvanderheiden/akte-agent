@@ -19,7 +19,7 @@ from typing import Any
 import aiosqlite
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
 from azure.cosmos.aio import CosmosClient
-from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 from azure.identity.aio import DefaultAzureCredential
 
 from app.config import Settings
@@ -286,6 +286,12 @@ class CosmosService:
         return [Conversation(**item) async for item in items]
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> None:
+        """Delete a conversation and every message in its partition.
+
+        Messages are deleted first so a failure leaves the conversation in
+        place and the delete can be retried rather than orphaning messages.
+        """
+        await self.delete_messages(conversation_id)
         if self._using_sqlite():
             await self._sqlite_delete("conversations", conversation_id, user_id)
             return
@@ -330,6 +336,27 @@ class CosmosService:
         if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
             logger.warning("Slow Cosmos operation: list_messages took %.0f ms (%d items)", elapsed_ms, len(results))
         return results
+
+    async def delete_messages(self, conversation_id: str) -> None:
+        """Delete every message stored in a conversation's partition."""
+        if self._using_sqlite():
+            assert self._sqlite_db is not None
+            await self._sqlite_db.execute("DELETE FROM messages WHERE partition_key = ?", (conversation_id,))
+            await self._sqlite_db.commit()
+            return
+        if not self._messages_container:
+            return
+        items = self._messages_container.query_items(
+            query="SELECT c.id FROM c WHERE c.conversationId = @cid",
+            parameters=[{"name": "@cid", "value": conversation_id}],
+            partition_key=conversation_id,
+        )
+        message_ids = [item["id"] async for item in items]
+        for message_id in message_ids:
+            try:
+                await self._messages_container.delete_item(item=message_id, partition_key=conversation_id)
+            except CosmosResourceNotFoundError:
+                continue
 
     # ─── Settings ─────────────────────────────────────────────────────────────
 
