@@ -49,6 +49,12 @@ tracer = trace.get_tracer(__name__)
 
 @dataclass
 class InvocationTelemetry:
+    """Hosted invocation timing populated by ``run``.
+
+    ``handler_started_at`` is a ``time.monotonic()`` reading from this process;
+    ``handler_duration_ms`` is set when the invoke span completes.
+    """
+
     invocation_id: str
     handler_started_at: float
     handler_duration_ms: int | None = None
@@ -943,11 +949,11 @@ class CopilotAgent:
             "gen_ai.agent.version": "0.1.0",
             "gen_ai.conversation.id": conversation_id,
             "kratos.conversation_id": conversation_id,
-            "kratos.request_stage": "in-handler",
             "server.address": _server_addr,
         }
         if invocation_telemetry:
             _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
+            _invoke_span_attrs["kratos.request_stage"] = "in-handler"
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
             attributes=_invoke_span_attrs,
