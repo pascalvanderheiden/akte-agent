@@ -33,7 +33,7 @@ def iter_resources(template):
         resources = list(resources.values())
     for resource in resources:
         yield resource
-        nested = resource.get("properties", {}).get("template")
+        nested = (resource.get("properties") or {}).get("template")
         if resource.get("type") == "Microsoft.Resources/deployments" and isinstance(nested, dict):
             yield from iter_resources(nested)
 
@@ -58,8 +58,8 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
             for resource in iter_resources(template):
                 if resource.get("type") != CONTAINER_APP_TYPE:
                     continue
-                properties = resource.get("properties", {})
-                ingress = properties.get("configuration", {}).get("ingress") or {}
+                properties = resource.get("properties") or {}
+                ingress = (properties.get("configuration") or {}).get("ingress") or {}
                 target_port = ingress.get("targetPort")
                 # A non-literal port compiles to an ARM expression, so the value is
                 # unknown here and the placeholder image stays suspect either way.
@@ -67,7 +67,7 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                     continue
                 images = [
                     container.get("image") or ""
-                    for container in properties.get("template", {}).get("containers", [])
+                    for container in (properties.get("template") or {}).get("containers", [])
                 ]
                 placeholders = [image for image in images if PLACEHOLDER_IMAGE in image]
                 self.assertEqual(
