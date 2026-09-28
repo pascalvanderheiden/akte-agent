@@ -129,21 +129,29 @@ retries anyway. But this only works if something drives the sweep — see below.
 
 ## The schedule trigger is unreliable
 
-`approve-gated-runs` is scheduled `*/10`. In this repository that schedule has
-produced **zero** runs — not delayed runs, none at all — while
-`workflow_dispatch` runs of the same file succeed immediately. This matches a
-large cluster of unresolved reports from other repositories over the same
-period, and it is consistent with GitHub's own documented behaviour: scheduled
-runs are best-effort, and *"if the load is sufficiently high enough, some queued
-jobs may be dropped"*.
+`approve-gated-runs` is scheduled `*/10`. That cadence is fiction. The schedule
+was once observed producing **zero** runs in this repository; it does fire now,
+but heavily throttled — five runs in the twelve hours to 2026-09-28T02:48Z, so
+roughly one every two to three hours against a requested six per hour, then a
+four-hour gap. `workflow_dispatch` runs of the same file succeed immediately.
+This is consistent with GitHub's own documented behaviour: scheduled runs are
+best-effort, and *"if the load is sufficiently high enough, some queued jobs may
+be dropped"*.
 
-The consequence is that **the sweeper must not be load-bearing**. With the
-Copilot gate disabled it is a genuine safety net again, which is the only
-configuration this chain should be run in. If the gate is ever re-enabled,
-expect to dispatch the sweeper by hand:
+The consequence is that **no sweeper may be load-bearing for latency**. A
+schedule is fine as a backstop that eventually catches a stalled PR, and useless
+as the thing that makes a PR merge promptly. `pr-auto-merge` is built that way
+on purpose: the events are the fast path and the sweep only exists for the
+ordering no event covers.
+
+Both sweepers can be driven by hand, and `pr-auto-merge` takes an empty
+`pr_number` to sweep every open PR — which is also the only way to exercise the
+scheduled code path without waiting for a tick:
 
 ```bash
 gh workflow run approve-gated-runs.yml
+gh workflow run pr-auto-merge.yml          # sweep every open PR
+gh workflow run pr-auto-merge.yml -f pr_number=123   # just one
 ```
 
 Two details about held `workflow_run` runs, both learned the hard way:
