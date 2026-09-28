@@ -210,7 +210,7 @@ class ModelRouting:
 
     def subagent_roles(self, routing: PersonaRoutingConfig | None) -> dict[str, ModelRole]:
         """Map each configured subagent name to its routing role (for telemetry)."""
-        roles = {item["name"]: ModelRole(item["role"]) for item in DEFAULT_SUBAGENTS}
+        roles: dict[str, ModelRole] = {str(item["name"]): ModelRole(str(item["role"])) for item in DEFAULT_SUBAGENTS}
         for item in routing.extraSubagents if routing else []:
             roles[item.name] = ModelRole(item.role)
         return roles
