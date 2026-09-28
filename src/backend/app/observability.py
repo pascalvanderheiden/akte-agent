@@ -9,7 +9,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.aggregation import ExplicitBucketHistogramAggregation
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
@@ -90,7 +92,20 @@ def setup_telemetry(settings: Settings) -> None:
             # Metrics → AppInsights 'customMetrics' table
             metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
             metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
-            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+            meter_provider = MeterProvider(
+                resource=resource,
+                metric_readers=[metric_reader],
+                views=[
+                    View(
+                        instrument_name="gen_ai.agent.tool_calls",
+                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+                    ),
+                    View(
+                        instrument_name="gen_ai.tool.duration",
+                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+                    ),
+                ],
+            )
             metrics.set_meter_provider(meter_provider)
             logger.info("Azure Monitor metric exporter configured")
 
@@ -156,5 +171,17 @@ token_usage_histogram = _meter.create_histogram(
 operation_duration_histogram = _meter.create_histogram(
     name="gen_ai.client.operation.duration",
     description="GenAI operation duration",
+    unit="s",
+)
+
+tool_call_count_histogram = _meter.create_histogram(
+    name="gen_ai.agent.tool_calls",
+    description="Number of tool calls made by an agent invocation",
+    unit="{tool}",
+)
+
+tool_duration_histogram = _meter.create_histogram(
+    name="gen_ai.tool.duration",
+    description="GenAI tool execution duration",
     unit="s",
 )

@@ -35,7 +35,12 @@ from opentelemetry import trace
 from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
-from app.observability import operation_duration_histogram, token_usage_histogram
+from app.observability import (
+    operation_duration_histogram,
+    token_usage_histogram,
+    tool_call_count_histogram,
+    tool_duration_histogram,
+)
 from app.services.model_routing import ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
@@ -1280,6 +1285,15 @@ class CopilotAgent:
                                     else:
                                         tool_span.set_status(trace.StatusCode.OK)
                                     tool_span.end()
+                                tool_duration_histogram.record(
+                                    duration_ms / 1000,
+                                    {
+                                        "gen_ai.tool.name": tool_name,
+                                        "gen_ai.operation.name": "execute_tool",
+                                        "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
+                                        "gen_ai.request.model": self.settings.foundry_model_deployment,
+                                    },
+                                )
                                 q.put_nowait(
                                     ToolCallEvent(
                                         skillName=tool_name,
@@ -1427,6 +1441,7 @@ class CopilotAgent:
                     token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
+                tool_call_count_histogram.record(tool_events, _metric_attrs)
                 elapsed_s = time.monotonic() - self._send_time
                 operation_duration_histogram.record(elapsed_s, _metric_attrs)
 
