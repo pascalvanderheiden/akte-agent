@@ -35,7 +35,13 @@ from opentelemetry import trace
 from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
-from app.observability import input_token_source_histogram, operation_duration_histogram, token_usage_histogram
+from app.observability import (
+    input_token_source_histogram,
+    operation_duration_histogram,
+    token_usage_histogram,
+    tool_call_count_histogram,
+    tool_duration_histogram,
+)
 from app.services.model_routing import ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
@@ -966,6 +972,10 @@ class CopilotAgent:
             if _github
             else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
         )
+        _metric_base_attrs = {
+            "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
+            "gen_ai.request.model": self.settings.foundry_model_deployment,
+        }
         _invoke_span_attrs: dict = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.system": "github" if _github else "openai",
@@ -1335,6 +1345,14 @@ class CopilotAgent:
                                     else:
                                         tool_span.set_status(trace.StatusCode.OK)
                                     tool_span.end()
+                                tool_duration_histogram.record(
+                                    duration_ms / 1000,
+                                    {
+                                        "gen_ai.tool.name": tool_name,
+                                        "gen_ai.operation.name": "execute_tool",
+                                        **_metric_base_attrs,
+                                    },
+                                )
                                 q.put_nowait(
                                     ToolCallEvent(
                                         skillName=tool_name,
@@ -1423,12 +1441,12 @@ class CopilotAgent:
                         break
                     yield item
 
-                tool_events = self._tool_counters.get(conversation_id, 0)
+                tool_call_count = self._tool_counters.get(conversation_id, 0)
                 # Enrich the span with usage and tool call counts
                 usage = self._usage.get(conversation_id, {})
                 span.set_attribute("gen_ai.usage.input_tokens", usage.get("prompt", 0))
                 span.set_attribute("gen_ai.usage.output_tokens", usage.get("completion", 0))
-                span.set_attribute("gen_ai.agent.tool_calls", tool_events)
+                span.set_attribute("gen_ai.agent.tool_calls", tool_call_count)
 
                 # Reasoning tokens (non-standard but useful for o-series / GPT-5)
                 reasoning_t = usage.get("reasoning", 0)
@@ -1464,7 +1482,7 @@ class CopilotAgent:
                             ]
                         ),
                     )
-                if tool_events == 0:
+                if tool_call_count == 0:
                     logger.warning(
                         "No tool events observed for conversation=%s prompt=%r",
                         conversation_id,
@@ -1474,14 +1492,14 @@ class CopilotAgent:
                 # Record GenAI metrics (token usage + operation duration)
                 _metric_attrs = {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
-                    "gen_ai.request.model": self.settings.foundry_model_deployment,
+                    **_metric_base_attrs,
                     "server.address": _server_addr,
                 }
                 if usage.get("prompt", 0):
                     token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
+                tool_call_count_histogram.record(tool_call_count, _metric_attrs)
                 source_estimates = {
                     **self._context_token_estimates.get(conversation_id, {}),
                     "persona_system": _estimate_token_count(

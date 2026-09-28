@@ -33,7 +33,10 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 # Foundry reserves all FOUNDRY_* env vars; remap our non-reserved names.
 # The platform auto-injects FOUNDRY_PROJECT_ENDPOINT but our Settings class reads FOUNDRY_ENDPOINT.
-if "MODEL_DEPLOYMENT_NAME" in os.environ and "FOUNDRY_MODEL_DEPLOYMENT" not in os.environ:
+if (
+    "MODEL_DEPLOYMENT_NAME" in os.environ
+    and "FOUNDRY_MODEL_DEPLOYMENT" not in os.environ
+):
     os.environ["FOUNDRY_MODEL_DEPLOYMENT"] = os.environ["MODEL_DEPLOYMENT_NAME"]
 if "FOUNDRY_ENDPOINT" not in os.environ:
     # Platform injects FOUNDRY_PROJECT_ENDPOINT (e.g. https://host/api/projects/proj).
@@ -51,7 +54,7 @@ if "FOUNDRY_ENDPOINT" not in os.environ:
 # Add the backend app to the Python path so we can reuse all existing modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
 from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
@@ -86,7 +89,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
+    logging.WARNING
+)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
@@ -133,7 +138,13 @@ def _is_blob_unreachable(exc: BaseException) -> bool:
     an upload alone — that says nothing about whether reads work, so a write
     failure must never disable blob (see :func:`_seed_or_disable_blob`).
     """
-    if isinstance(exc, TimeoutError | ServiceRequestError | ServiceResponseError | ClientAuthenticationError):
+    if isinstance(
+        exc,
+        TimeoutError
+        | ServiceRequestError
+        | ServiceResponseError
+        | ClientAuthenticationError,
+    ):
         return True
     return isinstance(exc, HttpResponseError) and exc.status_code in (401, 403)
 
@@ -163,6 +174,8 @@ async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
                 "Blob storage unreachable at startup (%s) — loading use-cases from local disk only",
                 type(exc).__name__,
             )
+            if hasattr(blob_service, "_unavailability_reason"):
+                blob_service._unavailability_reason = type(exc).__name__  # noqa: SLF001
             await blob_service._disable()  # noqa: SLF001
         else:
             logger.exception("Failed to verify blob reachability at startup")
@@ -177,6 +190,28 @@ async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
         # write-scoped failure. Leave blob enabled — later reads (and thus the
         # per-use-case lazy loads) still have a chance to succeed.
         logger.exception("Failed to seed use-cases into blob storage")
+
+
+def _emit_blob_local_only_telemetry(
+    blob_service: BlobSkillService, settings: Settings
+) -> None:
+    failure_reason = blob_service.unavailability_reason or "not_configured"
+    timestamp = datetime.now(UTC).isoformat()
+    model_deployment = settings.foundry_model_deployment or "(empty)"
+    logger.warning(
+        "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
+        failure_reason,
+        timestamp,
+        settings.environment,
+        model_deployment,
+        extra={
+            "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
+            "failure_reason": failure_reason,
+            "event_timestamp": timestamp,
+            "environment": settings.environment,
+            "model_deployment": model_deployment,
+        },
+    )
 
 
 async def _startup() -> None:
@@ -225,6 +260,11 @@ async def _startup() -> None:
     _copilot_agent.set_cosmos_service(_cosmos_service)
     _mark("core_parallel", t0)
 
+    emitted_blob_local_only = False
+    if not blob_service.is_available:
+        _emit_blob_local_only_telemetry(blob_service, _settings)
+        emitted_blob_local_only = True
+
     # Seed local use-cases into blob if the container is empty. This only
     # uploads use-cases that are missing (a fast list + skip when already
     # seeded by a prior deploy / the backend), and is required so that the
@@ -233,6 +273,8 @@ async def _startup() -> None:
         t0 = _time.monotonic()
         await _seed_or_disable_blob(blob_service)
         _mark("seed", t0)
+        if not blob_service.is_available and not emitted_blob_local_only:
+            _emit_blob_local_only_telemetry(blob_service, _settings)
 
     _startup_phases = phases
     _startup_total_ms = round((_time.monotonic() - t_start) * 1000, 1)
@@ -285,10 +327,15 @@ async def _ensure_registry(use_case: str) -> None:
                     registry = candidate
                 else:
                     logger.warning(
-                        "Blob load for '%s' returned no skills/prompt — falling back to local disk", use_case
+                        "Blob load for '%s' returned no skills/prompt — falling back to local disk",
+                        use_case,
                     )
             except Exception:
-                logger.warning("Blob load failed for '%s' — falling back to local disk", use_case, exc_info=True)
+                logger.warning(
+                    "Blob load failed for '%s' — falling back to local disk",
+                    use_case,
+                    exc_info=True,
+                )
 
         if registry is None:
             try:
@@ -296,7 +343,9 @@ async def _ensure_registry(use_case: str) -> None:
                 await candidate.load(use_case, local_root=local_root)
                 registry = candidate
             except Exception:
-                logger.exception("Failed to lazy-load use-case '%s' from local disk", use_case)
+                logger.exception(
+                    "Failed to lazy-load use-case '%s' from local disk", use_case
+                )
                 raise
 
         if not registry.system_prompt:
@@ -346,9 +395,13 @@ def _collect_generated_files(response_text: str) -> list[tuple[str, bytes]]:
             with open(local_path, "rb") as f:
                 data = f.read()
             files.append((rel_path, data))
-            logger.info("Collected generated file: %s (%d bytes)", local_path, len(data))
+            logger.info(
+                "Collected generated file: %s (%d bytes)", local_path, len(data)
+            )
         except OSError:
-            logger.warning("Failed to read generated file %s", local_path, exc_info=True)
+            logger.warning(
+                "Failed to read generated file %s", local_path, exc_info=True
+            )
             raise
     return files
 
@@ -395,7 +448,9 @@ async def _stream_response(
         try:
             await _cosmos_service.upsert_message(user_message)
         except Exception:
-            logger.warning("Failed to persist user message to Cosmos (non-fatal)", exc_info=True)
+            logger.warning(
+                "Failed to persist user message to Cosmos (non-fatal)", exc_info=True
+            )
 
         # Stream events from CopilotAgent
         assistant_content_parts: list[str] = []
@@ -451,7 +506,10 @@ async def _stream_response(
         for filename, data in generated_files:
             file_event = {
                 "event": "file_content",
-                "data": {"filename": filename, "content": base64.b64encode(data).decode("ascii")},
+                "data": {
+                    "filename": filename,
+                    "content": base64.b64encode(data).decode("ascii"),
+                },
             }
             yield f"data: {json.dumps(file_event)}\n\n".encode()
 
@@ -484,7 +542,10 @@ async def _stream_response(
         try:
             await _cosmos_service.upsert_message(assistant_message)
         except Exception:
-            logger.warning("Failed to persist assistant message to Cosmos (non-fatal)", exc_info=True)
+            logger.warning(
+                "Failed to persist assistant message to Cosmos (non-fatal)",
+                exc_info=True,
+            )
 
         # Done event
         done = DoneEvent(
@@ -551,7 +612,9 @@ async def handle_invoke(request: Request) -> Response:
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
         use_case = data.get("useCase")
-        model_selection = data.get("selectedModelId") or data.get("modelSelection", "auto")
+        model_selection = data.get("selectedModelId") or data.get(
+            "modelSelection", "auto"
+        )
         runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
         runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
 
@@ -576,7 +639,10 @@ async def handle_invoke(request: Request) -> Response:
             if uc_match:
                 if use_case is None or use_case == DEFAULT_USE_CASE:
                     use_case = uc_match.group(1)
-                    logger.info("Parsed useCase='%s' from input tag (gateway fallback)", use_case)
+                    logger.info(
+                        "Parsed useCase='%s' from input tag (gateway fallback)",
+                        use_case,
+                    )
                 message = message[: uc_match.start()] + message[uc_match.end() :]
 
             # Strip <system_instructions> — the hosted agent sets the system
@@ -618,7 +684,9 @@ async def handle_invoke(request: Request) -> Response:
             # Clean up leading/trailing whitespace from tag removal
             message = message.strip()
 
-        conversation_match = re.match(r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL)
+        conversation_match = re.match(
+            r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL
+        )
         if conversation_match:
             from html import unescape
 
@@ -653,12 +721,17 @@ async def handle_invoke(request: Request) -> Response:
     try:
         if runtime_foundry_endpoint and (
             runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
-            or runtime_foundry_deployment != _copilot_agent.settings.foundry_model_deployment
+            or runtime_foundry_deployment
+            != _copilot_agent.settings.foundry_model_deployment
         ):
-            await _copilot_agent.update_config(runtime_foundry_endpoint, runtime_foundry_deployment)
+            await _copilot_agent.update_config(
+                runtime_foundry_endpoint, runtime_foundry_deployment
+            )
         stored_use_case = None
         if _cosmos_service is not None:
-            existing = await _cosmos_service.get_conversation(conversation_id, "default-user")
+            existing = await _cosmos_service.get_conversation(
+                conversation_id, "default-user"
+            )
             if existing:
                 require_identified_history(existing.useCase)
                 require_not_retired(existing.useCase)
@@ -691,7 +764,11 @@ async def handle_invoke(request: Request) -> Response:
                 # Confirms the agent's LLM calls are routed through the APIM AI
                 # gateway (so prompts/completions are captured). Empty => the
                 # sandbox calls Foundry directly.
-                "llm_gateway_host": (os.environ.get("LLM_GATEWAY_BASE_URL", "").split("//")[-1].split("/")[0]),
+                "llm_gateway_host": (
+                    os.environ.get("LLM_GATEWAY_BASE_URL", "")
+                    .split("//")[-1]
+                    .split("/")[0]
+                ),
             },
         ),
         media_type="text/event-stream",

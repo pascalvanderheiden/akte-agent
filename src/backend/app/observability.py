@@ -10,6 +10,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
@@ -72,6 +73,7 @@ def setup_telemetry(settings: Settings) -> None:
 
     provider = TracerProvider(resource=resource)
 
+    metric_reader = None
     if settings.applicationinsights_connection_string:
         try:
             from azure.monitor.opentelemetry.exporter import (
@@ -82,33 +84,56 @@ def setup_telemetry(settings: Settings) -> None:
 
             conn_str = settings.applicationinsights_connection_string
 
-            # Traces → AppInsights 'dependencies' and 'requests' tables
-            trace_exporter = AzureMonitorTraceExporter(connection_string=conn_str)
-            provider.add_span_processor(FilteringSpanProcessor(trace_exporter))
-            logger.info("Azure Monitor trace exporter configured")
+            try:
+                # Traces → AppInsights 'dependencies' and 'requests' tables
+                trace_exporter = AzureMonitorTraceExporter(connection_string=conn_str)
+                provider.add_span_processor(FilteringSpanProcessor(trace_exporter))
+                logger.info("Azure Monitor trace exporter configured")
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor trace exporter", exc_info=True)
 
-            # Metrics → AppInsights 'customMetrics' table
-            metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
-            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
-            meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-            metrics.set_meter_provider(meter_provider)
-            logger.info("Azure Monitor metric exporter configured")
+            try:
+                # Metrics → AppInsights 'customMetrics' table
+                metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
+                metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor metric exporter", exc_info=True)
 
-            # Logs/Events → AppInsights 'traces' and 'customEvents' tables
-            log_exporter = AzureMonitorLogExporter(connection_string=conn_str)
-            log_provider = LoggerProvider(resource=resource)
-            log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            _logs.set_logger_provider(log_provider)
+            try:
+                # Logs/Events → AppInsights 'traces' and 'customEvents' tables
+                log_exporter = AzureMonitorLogExporter(connection_string=conn_str)
+                log_provider = LoggerProvider(resource=resource)
+                log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+                _logs.set_logger_provider(log_provider)
 
-            # Bridge Python logging → OTel Logs → AppInsights 'traces' table.
-            # This captures all app logs (copilot_agent events, skill calls, etc.)
-            # and correlates them with the active trace context.
-            otel_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
-            logging.getLogger().addHandler(otel_handler)
-            logger.info("Azure Monitor log/events exporter configured (with Python logging bridge)")
+                # Bridge Python logging → OTel Logs → AppInsights 'traces' table.
+                # This captures all app logs (copilot_agent events, skill calls, etc.)
+                # and correlates them with the active trace context.
+                otel_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
+                logging.getLogger().addHandler(otel_handler)
+                logger.info("Azure Monitor log/events exporter configured (with Python logging bridge)")
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor log/events exporter", exc_info=True)
 
         except Exception:
-            logger.warning("Failed to configure Azure Monitor exporters", exc_info=True)
+            logger.warning("Failed to load Azure Monitor exporters", exc_info=True)
+
+    if metric_reader:
+        meter_provider = MeterProvider(
+            resource=resource,
+            metric_readers=[metric_reader],
+            views=[
+                View(instrument_name=name, aggregation=ExplicitBucketHistogramAggregation(boundaries=buckets))
+                for name, buckets in (
+                    ("gen_ai.client.token.usage", _TOKEN_BUCKETS),
+                    ("gen_ai.client.operation.duration", _DURATION_BUCKETS),
+                    ("gen_ai.agent.tool_calls", _DURATION_BUCKETS),
+                    ("gen_ai.tool.duration", _DURATION_BUCKETS),
+                )
+            ],
+        )
+        metrics.set_meter_provider(meter_provider)
+        logger.info("Azure Monitor metric exporter configured")
 
     trace.set_tracer_provider(provider)
     _tracer_provider = provider
@@ -162,5 +187,17 @@ input_token_source_histogram = _meter.create_histogram(
 operation_duration_histogram = _meter.create_histogram(
     name="gen_ai.client.operation.duration",
     description="GenAI operation duration",
+    unit="s",
+)
+
+tool_call_count_histogram = _meter.create_histogram(
+    name="gen_ai.agent.tool_calls",
+    description="Number of tool calls made by an agent invocation",
+    unit="{tool}",
+)
+
+tool_duration_histogram = _meter.create_histogram(
+    name="gen_ai.tool.duration",
+    description="GenAI tool execution duration",
     unit="s",
 )
