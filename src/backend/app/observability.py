@@ -108,12 +108,21 @@ def setup_telemetry(settings: Settings) -> None:
             logger.info("Azure Monitor log/events exporter configured (with Python logging bridge)")
 
         except Exception:
+            metric_reader = None
             logger.warning("Failed to configure Azure Monitor exporters", exc_info=True)
 
     meter_provider = MeterProvider(
         resource=resource,
         metric_readers=[metric_reader] if metric_reader else [],
         views=[
+            View(
+                instrument_name="gen_ai.client.token.usage",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOKEN_BUCKETS),
+            ),
+            View(
+                instrument_name="gen_ai.client.operation.duration",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+            ),
             View(
                 instrument_name="gen_ai.agent.tool_calls",
                 aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),

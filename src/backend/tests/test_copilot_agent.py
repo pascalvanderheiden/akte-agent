@@ -204,7 +204,14 @@ async def test_copilot_agent_records_tool_metrics(copilot_agent):
         await copilot_agent.start()
         events = [event async for event in copilot_agent.run("Use tools", "test-conv-metrics")]
 
-    assert len(events) == 6
+    assert [type(event) for event in events] == [
+        ThoughtEvent,
+        ToolCallEvent,
+        ToolCallEvent,
+        ThoughtEvent,
+        ToolCallEvent,
+        ToolCallEvent,
+    ]
     tool_duration_record.assert_has_calls(
         [
             call(
