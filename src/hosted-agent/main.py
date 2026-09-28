@@ -171,7 +171,7 @@ async def _startup() -> None:
             extra={
                 "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
                 "failure_reason": blob_service.unavailability_reason,
-                "timestamp": timestamp,
+                "event_timestamp": timestamp,
                 "environment": _settings.environment,
                 "model_deployment": model_deployment,
             },

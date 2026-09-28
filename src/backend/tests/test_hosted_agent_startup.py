@@ -27,21 +27,21 @@ def hosted(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("available", "reason", "expected_count"),
+    ("reason", "expected_count"),
     [
-        (False, "TimeoutError", 1),
-        (True, None, 0),
+        ("TimeoutError", 1),
+        (None, 0),
     ],
 )
 @pytest.mark.asyncio
-async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, available, reason, expected_count):
+async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, reason, expected_count):
     class FakeBlobSkillService:
         def __init__(self, settings):
             pass
 
         @property
         def is_available(self):
-            return available
+            return reason is None
 
         @property
         def unavailability_reason(self):
@@ -92,4 +92,4 @@ async def test_startup_blob_local_only_telemetry(hosted, monkeypatch, caplog, av
         assert record.failure_reason == reason
         assert record.environment == "test"
         assert record.model_deployment == "test-model"
-        assert datetime.fromisoformat(record.timestamp).tzinfo is not None
+        assert datetime.fromisoformat(record.event_timestamp).tzinfo is not None
