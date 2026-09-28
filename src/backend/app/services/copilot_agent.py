@@ -49,11 +49,12 @@ tracer = trace.get_tracer(__name__)
 
 @dataclass
 class InvocationTelemetry:
-    """Hosted invocation timing attached to the ``run`` span.
+    """Hosted invocation timing attached to the ``invoke_agent kratos-agent`` span.
 
     ``handler_started_at`` must be a ``time.monotonic()`` reading from the same
     process and clock used by the hosted handler. The handler calls ``complete``
-    with its elapsed time after agent streaming and response preparation.
+    after agent streaming and response preparation. Callers must invoke
+    ``complete`` in a ``finally`` block so the deferred span is always ended.
     """
 
     invocation_id: str
@@ -921,7 +922,11 @@ class CopilotAgent:
         model_selection: str | None = None,
         invocation_telemetry: InvocationTelemetry | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
-        """Send a message and stream SDK events as typed SSE events."""
+        """Send a message and stream SDK events as typed SSE events.
+
+        Supplying ``invocation_telemetry`` transfers span completion to the
+        caller, which must call ``complete`` in a ``finally`` block.
+        """
         from app.personas import RETIRED_PERSONAS
 
         selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
