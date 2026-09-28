@@ -22,7 +22,12 @@ import time
 import uuid
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
-from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ServiceRequestError,
+    ServiceResponseError,
+)
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
@@ -123,7 +128,7 @@ def _is_blob_unreachable(exc: BaseException) -> bool:
     private endpoint). Anything else — a 404, a conflict, a 5xx — is treated as
     per-request and leaves blob enabled.
     """
-    if isinstance(exc, TimeoutError | ServiceRequestError | ClientAuthenticationError):
+    if isinstance(exc, TimeoutError | ServiceRequestError | ServiceResponseError | ClientAuthenticationError):
         return True
     return isinstance(exc, HttpResponseError) and exc.status_code in (401, 403)
 

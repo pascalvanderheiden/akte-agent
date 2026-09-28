@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -26,7 +27,7 @@ HOSTED_AGENT_MAIN = REPO / "src" / "hosted-agent" / "main.py"
 
 
 @pytest.fixture(scope="module")
-def hosted_main() -> ModuleType:
+def hosted_main() -> Iterator[ModuleType]:
     """Import ``src/hosted-agent/main.py`` with the agentserver runtime stubbed."""
     invocations = types.ModuleType("azure.ai.agentserver.invocations")
 
