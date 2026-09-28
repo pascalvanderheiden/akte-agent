@@ -200,6 +200,29 @@ class ApplicationInsightsAlertTests(unittest.TestCase):
             self.assertIn(signature, criterion["query"])
             self.assertIn(signature, hosted_agent)
 
+    def test_cosmos_persistence_alert_matches_the_firewall_denial_signature(self):
+        """The 2026-09-28 fault produced 403 exception rows, not warning traces.
+
+        A traces-only query never saw them, so the alert has to search
+        `exceptions` as well and carry the denial signatures emitted by the
+        Cosmos service itself.
+        """
+        query = self.alert["properties"]["criteria"]["allOf"][0]["query"]
+        cosmos_service = (
+            Path(__file__).resolve().parents[2] / "src" / "backend" / "app" / "services" / "cosmos_service.py"
+        ).read_text()
+
+        self.assertIn("exceptions", query)
+        self.assertIn("CosmosHttpResponseError", query)
+        for signature in (
+            "Cosmos persistence denied by network rules (firewall)",
+            "Cosmos persistence denied by RBAC role assignment",
+            "Cosmos persistence denied (unclassified 403)",
+            "Cosmos persistence unreachable (timed out)",
+        ):
+            self.assertIn(signature, query)
+            self.assertIn(signature, cosmos_service)
+
 
 class AgentServiceModelEnvironmentTests(unittest.TestCase):
     @classmethod

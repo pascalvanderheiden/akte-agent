@@ -6,6 +6,9 @@ persistence falls back to a local SQLite database so the full backend is
 usable for development without any Azure dependency.
 
 Partition keys: conversations -> /userId, messages -> /conversationId, skills -> /name
+
+Denial signatures and the per-operation latency bound are documented in
+``docs/cosmos-persistence.md``.
 """
 
 import asyncio
@@ -13,8 +16,9 @@ import contextlib
 import json
 import logging
 import time
+from collections.abc import Awaitable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import aiosqlite
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
@@ -27,6 +31,8 @@ from app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # Log a warning if a Cosmos operation takes longer than this (ms)
 _SLOW_OPERATION_THRESHOLD_MS = 500
 
@@ -36,6 +42,55 @@ _SLOW_OPERATION_THRESHOLD_MS = 500
 # surfacing anything. Ten seconds is far above a healthy in-VNet container read
 # and far below the blackhole cost.
 _COSMOS_PROBE_TIMEOUT_S = 10
+
+# Bound on a single item read or write once the account has been accepted as
+# reachable. The account can still become unreachable mid-process (a routing or
+# DNS change moves traffic off the private endpoint), and the SDK's own retry
+# ladder then stalls each call for ~40s. Two seconds is four times the
+# slow-operation threshold above, so it never trips a healthy call, while
+# capping what a blocked Cosmos can add to one response.
+_COSMOS_OPERATION_TIMEOUT_S = 2
+
+# Substrings that identify the two distinct reasons Cosmos answers 403. The
+# network denial is the account firewall rejecting the source of the request
+# (public network access disabled, traffic arriving off the private endpoint);
+# the RBAC denial is a recognised caller without the data-plane role.
+_NETWORK_DENIAL_MARKERS = (
+    "firewall",
+    "public internet",
+    "network rules",
+    "virtual network",
+    "endpoint is blocked",
+)
+_RBAC_DENIAL_MARKERS = (
+    "rbac",
+    "request blocked by auth",
+    "not authorized to perform action",
+    "principal",
+)
+
+# Persistence-failure log signatures. Keep these synchronized with the alert
+# query in infra/modules/app-insights.bicep.
+NETWORK_DENIAL_SIGNATURE = "Cosmos persistence denied by network rules (firewall)"
+RBAC_DENIAL_SIGNATURE = "Cosmos persistence denied by RBAC role assignment"
+UNCLASSIFIED_DENIAL_SIGNATURE = "Cosmos persistence denied (unclassified 403)"
+UNREACHABLE_SIGNATURE = "Cosmos persistence unreachable (timed out)"
+
+
+def _denial_signature(exc: CosmosHttpResponseError) -> str:
+    """Return the log signature for a 403, split by *why* Cosmos refused.
+
+    A network denial means the request never had a valid path to the account
+    and is an infrastructure fault; an RBAC denial means the path was fine and
+    the identity is missing a data-plane role. Chasing the wrong one costs
+    hours, so they never share a message.
+    """
+    detail = f"{exc.message or ''}".lower()
+    if any(marker in detail for marker in _NETWORK_DENIAL_MARKERS):
+        return NETWORK_DENIAL_SIGNATURE
+    if any(marker in detail for marker in _RBAC_DENIAL_MARKERS):
+        return RBAC_DENIAL_SIGNATURE
+    return UNCLASSIFIED_DENIAL_SIGNATURE
 
 
 class CosmosService:
@@ -133,6 +188,51 @@ class CosmosService:
             )
             return False
         return True
+
+    async def _bounded(self, operation: str, call: Awaitable[T]) -> T:
+        """Run one Cosmos item call under the per-operation latency bound.
+
+        Two failure modes are made explicit here so neither is silent and
+        neither is slow:
+
+        * a blackholed account (no route to the private endpoint) never
+          answers, and the SDK's retry ladder would stall the caller for ~40s.
+          ``asyncio.wait_for`` caps that at ``_COSMOS_OPERATION_TIMEOUT_S``.
+        * a 403 is logged under a signature that names *why* Cosmos refused —
+          network (firewall) or RBAC — because the two have different owners.
+
+        The exception is re-raised either way: callers decide whether to fail
+        open, and this method does not change that.
+        """
+        try:
+            return await asyncio.wait_for(call, timeout=_COSMOS_OPERATION_TIMEOUT_S)
+        except TimeoutError:
+            logger.error(
+                "%s: operation=%s got no response within %ss — the account is not reachable from this host",
+                UNREACHABLE_SIGNATURE,
+                operation,
+                _COSMOS_OPERATION_TIMEOUT_S,
+            )
+            raise
+        except CosmosHttpResponseError as exc:
+            detail = next(iter((exc.message or "").splitlines()), "")
+            if exc.status_code == 403:
+                logger.error(
+                    "%s: operation=%s status=%s substatus=%s detail=%s",
+                    _denial_signature(exc),
+                    operation,
+                    exc.status_code,
+                    getattr(exc, "sub_status", None),
+                    detail,
+                )
+            else:
+                logger.error(
+                    "Cosmos %s failed: status=%s, message=%s",
+                    operation,
+                    exc.status_code,
+                    detail,
+                )
+            raise
 
     async def _fallback_to_sqlite(self) -> None:
         """Tear down the unusable Cosmos client and open the SQLite backend."""
@@ -251,10 +351,10 @@ class CosmosService:
             return
         start = time.monotonic()
         try:
-            await self._conversations_container.upsert_item(conversation.model_dump(mode="json"))
-        except CosmosHttpResponseError as exc:
-            logger.error("Cosmos upsert_conversation failed: status=%s, message=%s", exc.status_code, exc.message)
-            raise
+            await self._bounded(
+                "upsert_conversation",
+                self._conversations_container.upsert_item(conversation.model_dump(mode="json")),
+            )
         finally:
             elapsed_ms = (time.monotonic() - start) * 1000
             if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
@@ -267,7 +367,10 @@ class CosmosService:
         if not self._conversations_container:
             return None
         try:
-            item = await self._conversations_container.read_item(item=conversation_id, partition_key=user_id)
+            item = await self._bounded(
+                "get_conversation",
+                self._conversations_container.read_item(item=conversation_id, partition_key=user_id),
+            )
             return Conversation(**item)
         except Exception:
             return None
@@ -304,10 +407,10 @@ class CosmosService:
             return
         start = time.monotonic()
         try:
-            await self._messages_container.upsert_item(message.model_dump(mode="json"))
-        except CosmosHttpResponseError as exc:
-            logger.error("Cosmos upsert_message failed: status=%s, message=%s", exc.status_code, exc.message)
-            raise
+            await self._bounded(
+                "upsert_message",
+                self._messages_container.upsert_item(message.model_dump(mode="json")),
+            )
         finally:
             elapsed_ms = (time.monotonic() - start) * 1000
             if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
@@ -379,7 +482,7 @@ class CosmosService:
             return
         if not self._sessions_container:
             return
-        await self._sessions_container.upsert_item(doc)
+        await self._bounded("upsert_session_mapping", self._sessions_container.upsert_item(doc))
 
     async def get_session_mapping(self, conversation_id: str) -> str | None:
         """Return the gateway agent session ID for a conversation, or None."""
@@ -389,7 +492,10 @@ class CosmosService:
         if not self._sessions_container:
             return None
         try:
-            item = await self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id)
+            item = await self._bounded(
+                "get_session_mapping",
+                self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id),
+            )
             return item.get("agentSessionId")
         except Exception:
             return None
