@@ -20,6 +20,7 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 | `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled, `schedule` every 10 minutes | Relabels `ready-to-merge`, takes the PR out of draft if it still is one, and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
+| `pr-auto-merge.yml` → `deploy` job | after a successful merge | Dispatches `deploy.yml` on `main`. Needed because a `GITHUB_TOKEN` merge raises no `push` event, so `deploy.yml`'s push trigger never fires for auto-merges. |
 | `approve-gated-runs.yml` | `schedule`, every 10 minutes, plus `workflow_dispatch` | Safety net. Takes any non-Copilot reviewer back out of the queue, applies the `reviewed` label, and releases held runs. **Its schedule does not fire reliably** — see "The schedule trigger is unreliable". |
 
 Every workflow also takes a `workflow_dispatch` with a `pr_number`, so any step

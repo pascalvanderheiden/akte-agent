@@ -1,8 +1,16 @@
 name: Deploy
 
-# Manual-only. Deployment is deliberately NOT wired to `push` — a green build
-# does not imply the infrastructure, credentials, and environment values needed
-# to deploy are in place, and an unattended push should never reach production.
+# Runs automatically after every merge into `main`, plus manual dispatch.
+#
+# Two automatic entry points, because a merge made with GITHUB_TOKEN raises no
+# `push` event (recursion guard):
+#   - `push` to main       covers merges a human performs.
+#   - `workflow_dispatch`  sent by `pr-auto-merge` right after it merges, which
+#                          covers the bot merges. `workflow_dispatch` is exempt
+#                          from the recursion guard.
+# Both deploy to the default environment with the manual-run defaults. The PR's
+# CI was already required green before merge, so this does not wait on the
+# post-merge CI run. The concurrency group below serialises overlapping deploys.
 #
 # Prerequisites (per GitHub environment, under Settings > Environments):
 #   Secrets   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
@@ -18,6 +26,12 @@ name: Deploy
 # Add required reviewers to the `production` environment to gate releases.
 
 on:
+  push:
+    branches: [main]
+    # Nothing deployable changes when only prose does.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
     inputs:
       environment:
@@ -72,15 +86,16 @@ permissions:
   contents: read
 
 concurrency:
-  # Never let two deploys to the same environment overlap.
-  group: deploy-${{ inputs.environment }}
+  # Never let two deploys to the same environment overlap. On push, `inputs` is
+  # empty, so every `inputs.*` reference falls back to the manual-run default.
+  group: deploy-${{ inputs.environment || 'turbo-akte-agent' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to ${{ inputs.environment }}
+    name: Deploy to ${{ inputs.environment || 'turbo-akte-agent' }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment || 'turbo-akte-agent' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -97,8 +112,8 @@ jobs:
           [ -n "$AZURE_TENANT_ID" ]       || missing+=(AZURE_TENANT_ID)
           [ -n "$AZURE_SUBSCRIPTION_ID" ] || missing+=(AZURE_SUBSCRIPTION_ID)
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing secrets for environment '${{ inputs.environment }}': ${missing[*]}"
-            echo "Add them under Settings > Environments > ${{ inputs.environment }} > Environment secrets."
+            echo "::error::Missing secrets for environment '${{ inputs.environment || 'turbo-akte-agent' }}': ${missing[*]}"
+            echo "Add them under Settings > Environments > ${{ inputs.environment || 'turbo-akte-agent' }} > Environment secrets."
             exit 1
           fi
           echo "✅ All required credentials are present."
@@ -132,7 +147,7 @@ jobs:
 
       - name: Select azd environment
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
@@ -150,14 +165,14 @@ jobs:
       - name: Configure SRE Agent options
         if: inputs.provision
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           # Passed through env rather than interpolated into the script body,
           # so a value cannot be executed by the runner.
           DEPLOY_SRE_AGENT_INPUT: ${{ inputs.deploy_sre_agent }}
-          SRE_CONNECT_TELEMETRY_INPUT: ${{ inputs.sre_connect_telemetry }}
+          SRE_CONNECT_TELEMETRY_INPUT: ${{ github.event_name == 'push' || inputs.sre_connect_telemetry }}
           SRE_LOCATION_INPUT: ${{ inputs.sre_location }}
           SRE_AGENT_NAME_INPUT: ${{ inputs.sre_agent_name }}
-          SRE_CONNECT_GITHUB_INPUT: ${{ inputs.sre_connect_github }}
+          SRE_CONNECT_GITHUB_INPUT: ${{ github.event_name == 'push' || inputs.sre_connect_github }}
           SRE_GITHUB_REPOSITORY_URL_INPUT: ${{ inputs.sre_github_repository_url }}
           SRE_GITHUB_BRANCH_INPUT: ${{ inputs.sre_github_branch }}
         run: |
@@ -179,7 +194,7 @@ jobs:
       - name: Provision infrastructure
         if: inputs.provision
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: azd provision --no-prompt
@@ -187,7 +202,7 @@ jobs:
       - name: Refresh environment outputs
         if: ${{ !inputs.provision }}
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           # Hydrate endpoints/resource names from the already-provisioned infra;
@@ -197,15 +212,15 @@ jobs:
       # This is the only step allowed to receive the optional dedicated PAT.
       # The same entry point rechecks an existing core; it never provisions one.
       - name: Set up SRE GitHub access
-        if: inputs.sre_connect_github
+        if: github.event_name == 'push' || inputs.sre_connect_github
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           SRE_GITHUB_PAT: ${{ secrets.SRE_GITHUB_PAT }}
         run: ./hooks/sre-setup.sh --environment "$AZURE_ENV_NAME"
 
       - name: Deploy
         env:
-          AZURE_ENV_NAME: ${{ inputs.environment }}
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           KRATOS_AUTO_UPLOAD_USE_CASES: ${{ inputs.upload_use_cases && '1' || '0' }}
@@ -215,7 +230,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### Deploy to \`${{ inputs.environment }}\`"
+            echo "### Deploy to \`${{ inputs.environment || 'turbo-akte-agent' }}\`"
             echo ""
             echo "| Setting | Value |"
             echo "| --- | --- |"
@@ -230,8 +245,8 @@ jobs:
     name: Smoke Tests
     runs-on: ubuntu-latest
     needs: deploy
-    if: inputs.run_integration_tests
-    environment: ${{ inputs.environment }}
+    if: github.event_name == 'push' || inputs.run_integration_tests
+    environment: ${{ inputs.environment || 'turbo-akte-agent' }}
     steps:
       - uses: actions/checkout@v7
 

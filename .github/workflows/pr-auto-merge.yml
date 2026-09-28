@@ -59,6 +59,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  # `actions: write` is only for dispatching `deploy.yml` after a merge.
+  actions: write
   contents: write
   pull-requests: write
   issues: write
@@ -345,3 +347,18 @@ jobs:
     with:
       pr_number: ${{ fromJSON(needs.merge.outputs.pr) }}
     secrets: inherit
+
+  # A merge made with GITHUB_TOKEN raises no `push` event, so `deploy.yml`'s own
+  # push trigger never sees it. `workflow_dispatch` is exempt from that guard,
+  # so dispatch the deploy explicitly. A human merge is covered by the push
+  # trigger instead, which is why this lives here and not in deploy.yml.
+  deploy:
+    needs: merge
+    if: needs.merge.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Deploy for the new main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: gh workflow run deploy.yml --repo "$REPO" --ref main

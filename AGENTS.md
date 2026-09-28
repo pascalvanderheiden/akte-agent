@@ -76,14 +76,25 @@ SKIP_BROWSER=1 ./run.sh                           # API-only, no chromium
 so it always follows whichever env is active. See its `SKILL.md` for details.
 First run installs npm deps and Chromium (cached afterwards).
 
-## Deployment is manual, never automatic
+## Deployment runs after every merge into `main`
 
 `.github/workflows/ci-cd.yml` runs lint/test/build only. It does **not** deploy.
-Deployment lives in `.github/workflows/deploy.yml` and is `workflow_dispatch`
-only — pick an environment, optionally provision, optionally upload skills.
+Deployment lives in `.github/workflows/deploy.yml`. It runs automatically after
+each merge into `main`, always to the already-provisioned `turbo-akte-agent`
+environment with the manual-run defaults (no provision, no skills upload, smoke
+tests on). `workflow_dispatch` remains for everything else — another
+environment, provisioning, or a skills upload.
 
-Do not re-attach deploy jobs to `push`. A green build does not mean a deploy
-can succeed, because the target environment needs all of:
+Two entry points, and both are needed:
+
+- `push` to `main` covers merges a human performs.
+- `pr-auto-merge` dispatches `deploy.yml` right after it merges, because a merge
+  made with `GITHUB_TOKEN` raises no `push` event. Drop that job and every
+  auto-merged PR silently stops deploying.
+
+Only `turbo-akte-agent` may deploy unattended. Never point the automatic path
+at `staging` or `production`: a green build does not mean a deploy can
+succeed, because the target environment needs all of:
 
 - environment secrets `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
   `AZURE_SUBSCRIPTION_ID` (OIDC federated credential), and
