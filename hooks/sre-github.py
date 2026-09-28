@@ -468,7 +468,8 @@ def main() -> int:
         fail("GitHub setup ended without an explicit verification result.")
     except SetupResultError as result:
         print(f"GitHub {result.state}: {result.message}", file=sys.stderr)
-        print(RETRY_HELP, file=sys.stderr)
+        if result.state != "ready":
+            print(RETRY_HELP, file=sys.stderr)
         print(result.state)
         return 1 if result.state == "failed" else 0
     except (OSError, ValueError, KeyError, UnicodeError):

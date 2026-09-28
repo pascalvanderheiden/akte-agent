@@ -412,7 +412,9 @@ def test_existing_healthy_registration_is_ready(registered_branch: str | None, f
         repo["properties"]["branch"] = registered_branch
         repo["properties"]["isHealthy"] = True
     items[-1]["url"] = ENDPOINT + "/api/v2/repos/operator-repo"
-    check(run_hook(SETUP, fake_bin, log, settings(items)), fake_bin, "ready")
+    proc = run_hook(SETUP, fake_bin, log, settings(items))
+    check(proc, fake_bin, "ready")
+    assert "Rerun ./hooks/sre-setup.sh" not in proc.stderr
     assert all(json.loads(line).get("method") != "PUT" for line in log.read_text().splitlines())
 
 
