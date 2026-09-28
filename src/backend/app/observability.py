@@ -9,9 +9,8 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.aggregation import ExplicitBucketHistogramAggregation
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.metrics.view import View
+from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
@@ -55,7 +54,7 @@ class FilteringSpanProcessor(BatchSpanProcessor):
 # GenAI metric bucket boundaries per OTel semantic conventions
 _TOKEN_BUCKETS = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 _DURATION_BUCKETS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
-_TOOL_CALL_BUCKETS = (1, 2, 4, 8, 16, 32, 64)
+_TOOL_CALL_BUCKETS = (0, 1, 2, 4, 8, 16, 32, 64)
 
 # Module-level reference for the tracer provider (used by instrument_fastapi_app)
 _tracer_provider: TracerProvider | None = None
