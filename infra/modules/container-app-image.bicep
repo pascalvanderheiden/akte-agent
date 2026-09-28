@@ -59,10 +59,14 @@ resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exi
 var deployedImage = exists ? deployedApp!.properties.template.containers[0].image : ''
 
 // `exists` only says the Container App resource is there, so the read-back can
-// legitimately be the bootstrap image — a provision whose `azd deploy` never
-// ran or failed. Treat that as still bootstrapping, or the next provision would
-// re-render the stand-in image without the port variables it needs.
-var isBootstrap = empty(deployedImage) || deployedImage == bootstrapImage
+// legitimately be a bootstrap image — a provision whose `azd deploy` never ran
+// or failed. Treat that as still bootstrapping, or the next provision would
+// re-render the stand-in image without the port variables it needs. Matched on
+// the repository rather than the exact tag, so bumping the pin above does not
+// mistake an older stand-in for an application image. Application images come
+// from this environment's ACR, never from the bootstrap repository.
+var bootstrapRepository = split(bootstrapImage, ':')[0]
+var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:')
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage

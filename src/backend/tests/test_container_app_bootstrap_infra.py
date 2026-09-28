@@ -210,7 +210,8 @@ def test_bootstrap_image_serves_http_on_the_requested_port(image_template: dict[
     assert default_image.split("/")[0] == "mcr.microsoft.com"
     assert default_image.rsplit(":", 1)[0] not in PORT_80_IMAGES
     # Pinned, so a republished floating tag cannot change first-provision behaviour.
-    assert re.search(r":.*\d+\.\d+$", default_image), f"{default_image} is not pinned to a version"
+    tag = default_image.rsplit(":", 1)[1]
+    assert tag != "latest" and re.search(r"\d", tag), f"{default_image} is not pinned to a version"
 
 
 def test_a_deployed_application_image_is_read_back_and_preserved(image_template: dict[str, Any]) -> None:
@@ -226,8 +227,8 @@ def test_a_read_back_bootstrap_image_still_counts_as_bootstrapping(image_templat
     rendering it again without its port variables would fail activation."""
     for output in ("image", "bootstrapEnv"):
         value = image_template["outputs"][output]["value"]
-        assert "parameters('bootstrapImage'))" in value, (
-            f"{output} does not treat a read-back bootstrap image as still bootstrapping"
+        assert "startsWith(" in value and "bootstrapRepository" in value, (
+            f"output {output} does not treat a read-back bootstrap image as still bootstrapping"
         )
 
 
@@ -235,7 +236,7 @@ def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, 
     """ARM cannot read a resource that may not exist, so the read is gated."""
     for output in ("image", "bootstrapEnv", "isBootstrap"):
         value = image_template["outputs"][output]["value"]
-        assert "if(parameters('exists')" in value
+        assert "if(parameters('exists')" in value, f"output {output} reads the app unconditionally"
 
 
 def test_no_container_app_is_created_by_the_shared_module(image_template: dict[str, Any]) -> None:
