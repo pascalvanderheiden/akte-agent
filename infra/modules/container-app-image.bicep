@@ -33,9 +33,12 @@
   resolving an image for. Calling it from anywhere else needs that scope passed
   in explicitly, or it reads the wrong app.
 
-  `exists` comes from azd, which records `SERVICE_<NAME>_RESOURCE_EXISTS` in the
-  environment once a service has been deployed; ARM cannot read a resource that
-  may not exist, hence the flag rather than a probe. ARM evaluates only the
+  `exists` is `SERVICE_<NAME>_RESOURCE_EXISTS`; ARM cannot read a resource that
+  may not exist, hence the flag rather than a probe. azd records it after a
+  deploy, but it lives in gitignored `.azure/` state that a fresh CI runner does
+  not have — so hooks/detect-container-apps.sh re-derives it from Azure itself
+  before every provision, and a missing local environment can no longer report a
+  live application as absent. ARM evaluates only the
   taken branch of a conditional whose condition is known up front, so the
   `exists ? ... : ''` below never attempts the read on a first provision.
 */
@@ -49,8 +52,8 @@ param exists bool
 @description('Ingress target port; the bootstrap image is told to listen on exactly this port')
 param targetPort int
 
-@description('Image used only until the first real application image is deployed. Must take its listening port from the environment variables below rather than hardcoding one. Pinned to a major version so a republished floating tag cannot change first-provision behaviour.')
-param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp-10.0'
+@description('Image used only until the first real application image is deployed. Must take its listening port from the environment variables below rather than hardcoding one. Pinned by digest (mcr.microsoft.com/dotnet/samples:aspnetapp-10.0 at the time of pinning): servicing tags are republished in place, so only a digest makes first-provision behaviour reproducible.')
+param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples@sha256:aacefb8b6fc1fc743531d518ebd9b3849ae3223f9de3e642ebcc0d3e5921cd66'
 
 resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exists) {
   name: containerAppName
@@ -62,11 +65,13 @@ var deployedImage = exists ? deployedApp!.properties.template.containers[0].imag
 // legitimately be a bootstrap image — a provision whose `azd deploy` never ran
 // or failed. Treat that as still bootstrapping, or the next provision would
 // re-render the stand-in image without the port variables it needs. Matched on
-// the repository rather than the exact tag, so bumping the pin above does not
-// mistake an older stand-in for an application image. Application images come
-// from this environment's ACR, never from the bootstrap repository.
-var bootstrapRepository = split(bootstrapImage, ':')[0]
-var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:')
+// the repository rather than the exact reference, so re-pinning the digest
+// above does not mistake an older stand-in for an application image. The
+// repository is the part before the digest (`repo@sha256:…`) or the tag
+// (`repo:tag`), so both forms of pin classify the same way. Application images
+// come from this environment's ACR, never from the bootstrap repository.
+var bootstrapRepository = split(split(bootstrapImage, '@')[0], ':')[0]
+var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}@') || startsWith(deployedImage, '${bootstrapRepository}:')
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage

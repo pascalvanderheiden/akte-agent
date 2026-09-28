@@ -212,10 +212,12 @@ def test_bootstrap_image_serves_http_on_the_requested_port(image_template: dict[
     )
     default_image = image_template["parameters"]["bootstrapImage"]["defaultValue"]
     assert default_image.split("/")[0] == "mcr.microsoft.com"
-    assert default_image.rsplit(":", 1)[0] not in PORT_80_IMAGES
-    # Pinned, so a republished floating tag cannot change first-provision behaviour.
-    tag = default_image.rsplit(":", 1)[1]
-    assert tag != "latest" and re.search(r"\d", tag), f"{default_image} is not pinned to a version"
+    # Digest-pinned: servicing tags are republished in place, so only a digest
+    # makes first-provision behaviour reproducible.
+    assert re.fullmatch(r"[^@:]+@sha256:[0-9a-f]{64}", default_image), (
+        f"{default_image} is not pinned to an image digest"
+    )
+    assert default_image.split("@", 1)[0] not in PORT_80_IMAGES
 
 
 def test_a_deployed_application_image_is_read_back_and_preserved(image_template: dict[str, Any]) -> None:
@@ -236,6 +238,15 @@ def test_a_read_back_bootstrap_image_still_counts_as_bootstrapping(image_templat
         )
 
 
+def test_the_bootstrap_repository_is_parsed_from_a_digest_reference(image_template: dict[str, Any]) -> None:
+    """Classification strips the digest, so re-pinning cannot mistake an older
+    stand-in image for an application image."""
+    repository = image_template["variables"]["bootstrapRepository"]
+    assert "'@'" in repository and "':'" in repository, (
+        f"bootstrapRepository does not handle a digest-pinned reference: {repository}"
+    )
+
+
 def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, Any]) -> None:
     """ARM cannot read a resource that may not exist, so the read is gated."""
     for output in ("image", "bootstrapEnv", "isBootstrap"):
@@ -245,3 +256,68 @@ def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, 
 
 def test_no_container_app_is_created_by_the_shared_module(image_template: dict[str, Any]) -> None:
     assert _resources(image_template, "Microsoft.App/containerApps") == []
+
+
+# ---------------------------------------------------------------------------
+# Azure-side detection of the `exists` flags
+# ---------------------------------------------------------------------------
+
+DETECT_HOOK = REPO_ROOT / "hooks" / "detect-container-apps.sh"
+
+AZ_STUB = """#!/usr/bin/env bash
+case "$1 $2" in
+  "group exists") echo "{group_exists}" ;;
+  "containerapp list") printf '%s' "{tags}" ;;
+  *) exit 1 ;;
+esac
+exit {az_status}
+"""
+
+AZD_STUB = """#!/usr/bin/env bash
+echo "$*" >> "$AZD_LOG"
+"""
+
+
+def _run_detect_hook(tmp_path: Path, *, group_exists: str, tags: str, az_status: int = 0) -> list[str]:
+    """Run the detection hook against stubbed `az`/`azd`; return the azd env sets."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "az").write_text(AZ_STUB.format(group_exists=group_exists, tags=tags, az_status=az_status))
+    (bin_dir / "azd").write_text(AZD_STUB)
+    for stub in ("az", "azd"):
+        (bin_dir / stub).chmod(0o755)
+    log = tmp_path / "azd.log"
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "AZURE_ENV_NAME": "an-environment",
+        "AZD_LOG": str(log),
+    }
+    proc = subprocess.run(["bash", str(DETECT_HOOK)], capture_output=True, text=True, env=env, timeout=60)
+    assert proc.returncode == 0, f"the hook must never fail a provision:\n{proc.stderr}"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_a_live_container_app_is_detected_from_azure(tmp_path: Path) -> None:
+    """The flag is raised from Azure, so a fresh runner with no `.azure/` state
+    still preserves the running image."""
+    calls = _run_detect_hook(tmp_path, group_exists="true", tags="agent-service\n")
+    assert "env set SERVICE_AGENT_SERVICE_RESOURCE_EXISTS true" in calls
+    assert "env set SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS false" in calls
+
+
+def test_an_empty_resource_group_means_a_first_create(tmp_path: Path) -> None:
+    calls = _run_detect_hook(tmp_path, group_exists="false", tags="")
+    assert "env set SERVICE_AGENT_SERVICE_RESOURCE_EXISTS false" in calls
+    assert "env set SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS false" in calls
+
+
+def test_an_unreadable_subscription_leaves_the_flags_alone(tmp_path: Path) -> None:
+    """A failed query must never be read as 'absent': that is the case that
+    overwrites a running application image with the bootstrap stand-in."""
+    calls = _run_detect_hook(tmp_path, group_exists="", tags="", az_status=1)
+    assert calls == []
+
+
+def test_detection_runs_before_every_provision() -> None:
+    preprovision = (REPO_ROOT / "azure.yaml").read_text().split("preprovision:", 1)[1]
+    assert f"./hooks/{DETECT_HOOK.name}" in preprovision
