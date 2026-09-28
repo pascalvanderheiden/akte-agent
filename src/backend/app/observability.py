@@ -154,7 +154,7 @@ token_usage_histogram = _meter.create_histogram(
 )
 
 input_token_source_histogram = _meter.create_histogram(
-    name="gen_ai.client.input.tokens.by_source",
+    name="gen_ai.client.token.usage.by_source",
     description="Estimated input tokens by context source",
     unit="{token}",
 )

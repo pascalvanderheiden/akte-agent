@@ -7,7 +7,7 @@ import pytest
 
 from app.config import Settings
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent
-from app.services.copilot_agent import CopilotAgent
+from app.services.copilot_agent import CopilotAgent, _split_input_tokens
 
 
 @pytest.fixture
@@ -30,6 +30,23 @@ def test_copilot_agent_init(copilot_agent, settings):
     assert copilot_agent.settings is settings
     assert copilot_agent._client is None
     assert copilot_agent._sessions == {}
+
+
+def test_split_input_tokens_preserves_total_for_edge_cases():
+    assert _split_input_tokens(0, {"persona_system": 1}) == {
+        "persona_system": 0,
+        "tool_call_history": 0,
+        "conversation_history": 0,
+    }
+    assert _split_input_tokens(5, {}) == {
+        "persona_system": 5,
+        "tool_call_history": 0,
+        "conversation_history": 0,
+    }
+
+    allocation = _split_input_tokens(5, {"persona_system": 1, "tool_call_history": 1, "conversation_history": 1})
+    assert sum(allocation.values()) == 5
+    assert set(allocation) == {"persona_system", "tool_call_history", "conversation_history"}
 
 
 @pytest.mark.asyncio
