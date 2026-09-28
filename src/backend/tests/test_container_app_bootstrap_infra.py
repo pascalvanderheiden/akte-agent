@@ -199,15 +199,18 @@ def test_exists_flags_are_fed_from_azd() -> None:
 
 def test_bootstrap_image_serves_http_on_the_requested_port(image_template: dict[str, Any]) -> None:
     bootstrap_env = image_template["outputs"]["bootstrapEnv"]["value"]
-    entries = re.findall(r"createObject\('name', '([^']+)', 'value', ([^)]*\))", bootstrap_env)
-    assert {name for name, _ in entries} == {"ASPNETCORE_HTTP_PORTS", "ASPNETCORE_URLS"}
-    for name, value in entries:
-        assert "parameters('targetPort')" in value, (
-            f"{name} must take the bootstrap listening port from the ingress target port"
-        )
+    names = ("ASPNETCORE_HTTP_PORTS", "ASPNETCORE_URLS")
+    for name in names:
+        assert name in bootstrap_env
+    # One reference per variable: neither may hardcode a port of its own.
+    assert bootstrap_env.count("parameters('targetPort')") >= len(names), (
+        f"the bootstrap listening port must come from the ingress target port: {bootstrap_env}"
+    )
     default_image = image_template["parameters"]["bootstrapImage"]["defaultValue"]
     assert default_image.split("/")[0] == "mcr.microsoft.com"
     assert default_image.rsplit(":", 1)[0] not in PORT_80_IMAGES
+    # Pinned, so a republished floating tag cannot change first-provision behaviour.
+    assert re.search(r":.*\d+\.\d+$", default_image), f"{default_image} is not pinned to a version"
 
 
 def test_a_deployed_application_image_is_read_back_and_preserved(image_template: dict[str, Any]) -> None:

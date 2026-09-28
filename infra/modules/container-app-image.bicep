@@ -47,8 +47,8 @@ param exists bool
 @description('Ingress target port; the bootstrap image is told to listen on exactly this port')
 param targetPort int
 
-@description('Image used only until the first real application image is deployed. Must take its listening port from the environment variables below rather than hardcoding one.')
-param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
+@description('Image used only until the first real application image is deployed. Must take its listening port from the environment variables below rather than hardcoding one. Pinned to a major version so a republished floating tag cannot change first-provision behaviour.')
+param bootstrapImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp-10.0'
 
 resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exists) {
   name: containerAppName
