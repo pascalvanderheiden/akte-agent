@@ -47,6 +47,8 @@ def container_env(container: dict[str, Any]) -> dict[str, str]:
         values[match.group(1)] = (
             value[1:-1] if value.startswith("'") and value.endswith("'") else f"[{value}]"
         )
+    # Fail loudly rather than dropping an entry whose shape we cannot read.
+    assert len(values) == environment.count("createObject('name'"), environment
     return values
 
 
