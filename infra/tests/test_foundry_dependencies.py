@@ -5,14 +5,33 @@ import re
 import subprocess
 import unittest
 from pathlib import Path
+from typing import Any
 
-# `createObject('name', 'FOO', 'value', <literal or parameters(...)>)`
-ARM_ENV_ENTRY = re.compile(
-    r"createObject\('name', '([^']+)', 'value', (parameters\('[^']+'\)|'[^']*')\)"
-)
+# Start of an env entry inside a compiled ARM expression; the value
+# expression that follows is read off by balancing parentheses.
+ARM_ENV_ENTRY = re.compile(r"createObject\('name', '([^']+)', 'value', ")
 
 
-def container_env(container):
+def _arm_value(expression: str, start: int) -> str:
+    """Read one value expression out of `expression`, starting at `start`."""
+    depth = 0
+    quoted = False
+    for index in range(start, len(expression)):
+        character = expression[index]
+        if character == "'":
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                return expression[start:index]
+            depth -= 1
+    raise AssertionError(f"unterminated env value at offset {start}")
+
+
+def container_env(container: dict[str, Any]) -> dict[str, str]:
     """Return the container's env as a name -> value mapping.
 
     A literal Bicep array compiles to a list of objects, but an array built
@@ -22,10 +41,14 @@ def container_env(container):
     environment = container["env"]
     if isinstance(environment, list):
         return {item["name"]: item["value"] for item in environment}
-    return {
-        name: value[1:-1] if value.startswith("'") else f"[{value}]"
-        for name, value in ARM_ENV_ENTRY.findall(environment)
-    }
+    values: dict[str, str] = {}
+    for match in ARM_ENV_ENTRY.finditer(environment):
+        value = _arm_value(environment, match.end())
+        values[match.group(1)] = (
+            value[1:-1] if value.startswith("'") and value.endswith("'") else f"[{value}]"
+        )
+    return values
+
 
 
 class FoundryDependenciesTests(unittest.TestCase):
