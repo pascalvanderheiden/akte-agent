@@ -12,6 +12,7 @@ scenario instead of matching their text.
 """
 
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -133,8 +134,10 @@ class ResolvedContainerApp:
 
     def listens_on_target_port(self, container):
         port = str(self.target_port)
+        # `:8000` must not satisfy a target port of 800, so match it as a whole number.
+        delimited = re.compile(rf"(?<!\d):{re.escape(port)}(?!\d)")
         return any(
-            value == port or f":{port}" in str(value)
+            str(value) == port or delimited.search(str(value))
             for name, value in self.env(container).items()
             if name in PORT_ENV_VARS
         )
@@ -206,7 +209,12 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
         bootstrap_image = self.bootstrap_default_image()
         for app, container in self.apps(exists=False):
             with self.subTest(module=app.module.name, container=container.get("name")):
-                self.assertEqual(bootstrap_image, container["image"])
+                self.assertEqual(
+                    bootstrap_image,
+                    container["image"],
+                    f"{app.module.name}: a first provision must render the shared bootstrap "
+                    f"image, not {container['image']}",
+                )
 
     def test_deployed_application_images_are_preserved(self):
         for app, container in self.apps(exists=True, deployed_image=DEPLOYED_APPLICATION_IMAGE):

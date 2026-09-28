@@ -133,14 +133,10 @@ def _last_index_of(haystack, needle):
 
 
 _FUNCTIONS = {
-    "concat": lambda *values: (
-        list(_chain(values))
-        if values and isinstance(values[0], list)
-        else "".join(_to_string(value) for value in values)
-    ),
+    "concat": lambda *values: _concat(*values),
     "createArray": lambda *values: list(values),
     "createObject": lambda *pairs: dict(zip(pairs[::2], pairs[1::2])),
-    "empty": lambda value: len(value) == 0 if value is not None else True,
+    "empty": lambda value: _empty(value),
     "endsWith": lambda value, suffix: value.lower().endswith(suffix.lower()),
     "equals": lambda left, right: left == right,
     "format": _format,
@@ -171,6 +167,23 @@ def _chain(values):
         yield from value
 
 
+def _concat(*values):
+    lists = [isinstance(value, list) for value in values]
+    if any(lists):
+        if not all(lists):
+            raise UnsupportedExpression("concat() mixes arrays with other values")
+        return list(_chain(values))
+    return "".join(_to_string(value) for value in values)
+
+
+def _empty(value):
+    if value is None:
+        return True
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return False
+    return len(value) == 0
+
+
 class Evaluator:
     """Resolves a compiled template's variables, outputs and resource properties."""
 
@@ -189,7 +202,7 @@ class Evaluator:
 
     def evaluate(self, value):
         if isinstance(value, str):
-            if value.startswith("[["):
+            if value.startswith("[[") and value.endswith("]"):
                 return value[1:]
             if value.startswith("[") and value.endswith("]"):
                 return self._evaluate_node(_parse(value[1:-1]))
