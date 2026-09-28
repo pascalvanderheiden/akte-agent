@@ -431,6 +431,24 @@ class CopilotAgent:
             self._token_provider,
         ).model
 
+    def _subagent_plan_model(self, conversation_id: str, agent_name: str | None) -> str | None:
+        """Return the configured SDK model for a subagent, when known."""
+        if not agent_name:
+            return None
+        plan = self._routing.plan(
+            self._conversation_model_selections.get(conversation_id, "auto"),
+            getattr(self._get_registry(conversation_id), "routing", None),
+            self._token_provider,
+        )
+        return next(
+            (
+                str(agent["model"])
+                for agent in plan.custom_agents
+                if agent.get("name") == agent_name and agent.get("model")
+            ),
+            None,
+        )
+
     def _metric_role(self, conversation_id: str, agent_name: str | None, model: str) -> str:
         """Resolve the ADR 0001 routing role that produced a model call.
 
@@ -1139,14 +1157,12 @@ class CopilotAgent:
                                     total_t,
                                 )
                                 if total_t > 0:
-                                    usage_model = str(
-                                        getattr(data, "model", None)
-                                        or getattr(data, "model_name", None)
-                                        or self._conversation_plan_model(cid)
-                                    )
                                     # Attribute the call to a subagent when the SDK tags it
-                                    # with the delegating agent or its parent tool call.
+                                    # with the delegating agent or its parent tool call. Resolve
+                                    # this before model fallback so missing-model subagent usage
+                                    # does not inherit the orchestrator model.
                                     sub_name = None
+                                    subagent_model = None
                                     known_subagents = self._routing.subagent_roles(
                                         getattr(self._get_registry(cid), "routing", None)
                                     )
@@ -1158,10 +1174,20 @@ class CopilotAgent:
                                         if isinstance(ref, str) and ref:
                                             if ref in _subagent_names:
                                                 sub_name = _subagent_names[ref]
+                                                started = _subagent_starts.get(ref)
+                                                if started is not None:
+                                                    subagent_model = started[1] or None
                                                 break
                                             if ref in known_subagents:
                                                 sub_name = ref
                                                 break
+                                    usage_model = str(
+                                        getattr(data, "model", None)
+                                        or getattr(data, "model_name", None)
+                                        or subagent_model
+                                        or self._subagent_plan_model(cid, sub_name)
+                                        or self._conversation_plan_model(cid)
+                                    )
                                     bucket_key = (
                                         self._metric_role(cid, sub_name, usage_model),
                                         usage_model.rsplit("/", 1)[-1],
@@ -1563,18 +1589,25 @@ class CopilotAgent:
                     for token_type, count in counts.items():
                         if count:
                             token_usage_histogram.record(count, {**role_attrs, "gen_ai.token.type": token_type})
-                orchestrator_model = next(
-                    (model for role, model in role_usage if role == ModelRole.ORCHESTRATOR.value),
-                    None,
-                ) or self._conversation_plan_model(conversation_id)
+                orchestrator_buckets = [
+                    (model, counts)
+                    for (role, model), counts in role_usage.items()
+                    if role == ModelRole.ORCHESTRATOR.value
+                ]
+                orchestrator_model = (
+                    orchestrator_buckets[0][0]
+                    if orchestrator_buckets
+                    else self._conversation_plan_model(conversation_id)
+                )
                 orchestrator_attrs = self._genai_metric_attrs(ModelRole.ORCHESTRATOR.value, orchestrator_model)
+                orchestrator_prompt_tokens = sum(counts.get("input", 0) for _, counts in orchestrator_buckets)
                 source_estimates = {
                     **self._context_token_estimates.get(conversation_id, {}),
                     "persona_system": _estimate_token_count(
                         _compose_system_prompt(self._get_system_prompt(conversation_id))
                     ),
                 }
-                for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
+                for source, token_count in _split_input_tokens(orchestrator_prompt_tokens, source_estimates).items():
                     if token_count:
                         input_token_source_histogram.record(
                             token_count, {**orchestrator_attrs, "gen_ai.input.source": source}
