@@ -102,7 +102,12 @@ jobs:
               # only way to exercise the scheduled path by hand.
               pr="${DISPATCH_PR:-}"
               if [ -z "$pr" ]; then
-                pr=$(gh pr list --repo "$REPO" --state open --limit 100 \
+                # `gh pr list` returns newest-first and `--limit` truncates
+                # before the sort below, so a low cap silently drops the oldest
+                # PRs — precisely the ones a drain-in-order sweep exists for.
+                # `gh` paginates internally up to `--limit`, so this is the
+                # pagination; the number is a sanity bound, not a page size.
+                pr=$(gh pr list --repo "$REPO" --state open --limit 1000 \
                        --json number --jq 'sort_by(.number) | .[].number' | tr '\n' ' ')
               fi
               ;;
