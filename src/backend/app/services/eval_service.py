@@ -694,12 +694,39 @@ class EvalService:
         self._active_runs.pop(key, None)
         self._cancel_requests.discard(key)
 
+    async def _cancellation_requested(self, run: EvalRun) -> bool:
+        """Return True when this run was cancelled here or by another replica.
+
+        The in-process set only sees cancellations handled by this replica, so
+        the persisted run is the authoritative marker every replica checks.
+        """
+        key = (run.use_case, run.run_id)
+        if key in self._cancel_requests:
+            return True
+        persisted = await self._storage.load_run(run.use_case, run.run_id)
+        if persisted is not None and persisted.status == EvalRunStatus.CANCELLED:
+            self._cancel_requests.add(key)
+            return True
+        return False
+
     async def _stop_if_cancelled(self, run: EvalRun) -> bool:
-        if (run.use_case, run.run_id) not in self._cancel_requests:
+        if not await self._cancellation_requested(run):
             return False
         run.status = EvalRunStatus.CANCELLED
         await self._storage.save_run(run)
         return True
+
+    async def _save_run_unless_cancelled(self, run: EvalRun) -> bool:
+        """Persist ``run`` unless it was cancelled; returns True when cancelled.
+
+        Re-reading the persisted status immediately before each write keeps a
+        cancellation recorded by another replica from being overwritten with
+        ``invoking``, ``scoring`` or ``completed``.
+        """
+        if await self._cancellation_requested(run):
+            run.status = EvalRunStatus.CANCELLED
+        await self._storage.save_run(run)
+        return run.status == EvalRunStatus.CANCELLED
 
     async def shutdown(self) -> None:
         """Cancel all in-flight eval tasks gracefully."""
@@ -732,7 +759,7 @@ class EvalService:
             logger.exception("Eval run %s failed", run_id)
             run.status = EvalRunStatus.FAILED
             run.error = str(exc)
-            await self._storage.save_run(run)
+            await self._save_run_unless_cancelled(run)
 
     async def _do_execute_run(self, run: EvalRun) -> None:
         use_case = run.use_case
@@ -757,7 +784,8 @@ class EvalService:
 
         # ── Phase 1: INVOKING ─────────────────────────────────────────────
         run.status = EvalRunStatus.INVOKING
-        await self._storage.save_run(run)
+        if await self._save_run_unless_cancelled(run):
+            return
 
         # Build Foundry OpenAI client (used later for scoring evaluators in FOUNDRY mode)
         _oai = _build_foundry_oai_client(settings) if run.mode == EvalMode.FOUNDRY else None
@@ -870,10 +898,8 @@ class EvalService:
                 return
 
             # Persist run meta periodically (every 5 scenarios or at end)
-            if (idx + 1) % 5 == 0 or (idx + 1) == total:
-                await self._storage.save_run(run)
-                if await self._stop_if_cancelled(run):
-                    return
+            if ((idx + 1) % 5 == 0 or (idx + 1) == total) and await self._save_run_unless_cancelled(run):
+                return
 
             # Pace invocations per foundry-evals guidance
             if idx < total - 1:
@@ -903,7 +929,8 @@ class EvalService:
 
         run.status = EvalRunStatus.COMPLETED
         run.progress = f"{total}/{total}"
-        await self._storage.save_run(run)
+        if await self._save_run_unless_cancelled(run):
+            return
         logger.info("[eval %s] COMPLETED (%d scenarios)", run_id, total)
 
     async def _score_run(
@@ -915,7 +942,8 @@ class EvalService:
     ) -> None:
         """Score invocation results with azure-ai-evaluation evaluators."""
         run.status = EvalRunStatus.SCORING
-        await self._storage.save_run(run)
+        if await self._save_run_unless_cancelled(run):
+            return
         logger.info("[eval %s] scoring %d results", run_id, len(run.results))
 
         # Lazy import — azure-ai-evaluation may not be installed
@@ -1038,7 +1066,7 @@ class EvalService:
             output_items=[],
             report_url="",
         )
-        await self._storage.save_run(run)
+        await self._save_run_unless_cancelled(run)
 
     def _build_report(self, run: EvalRun, use_case: str) -> dict[str, Any]:
         """Build the eval_report.json dict."""

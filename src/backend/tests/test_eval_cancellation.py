@@ -162,3 +162,39 @@ async def test_cancel_during_report_cannot_be_overwritten_by_completed() -> None
     persisted = await storage.load_run(run.use_case, run.run_id)
     assert persisted is not None
     assert persisted.status == EvalRunStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancellation_persisted_by_another_replica_stops_the_local_run() -> None:
+    """A cancel handled elsewhere only shows up as a persisted status."""
+    run = _run()
+    storage = FakeEvalStorage(run, [_scenario("first"), _scenario("second")])
+    service = EvalService(MagicMock(), storage, {"demo": MagicMock()})  # type: ignore[arg-type]
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    invoked: list[str] = []
+
+    async def invoke(message: str, **kwargs):
+        if message == "ping":
+            return "ready", [], None, []
+        invoked.append(message)
+        first_started.set()
+        await release_first.wait()
+        return "done", [], None, []
+
+    service._invoke_hosted_agent = invoke  # type: ignore[method-assign]
+    service._score_run = AsyncMock()  # type: ignore[method-assign]
+
+    task = asyncio.create_task(service._execute_run(run))
+    await first_started.wait()
+
+    # Simulate the other replica's write — no local task or cancel request.
+    storage.run = storage.run.model_copy(update={"status": EvalRunStatus.CANCELLED})
+    release_first.set()
+    await task
+
+    assert invoked == ["Run first"]
+    persisted = await storage.load_run(run.use_case, run.run_id)
+    assert persisted is not None
+    assert persisted.status == EvalRunStatus.CANCELLED
+    service._score_run.assert_not_awaited()
