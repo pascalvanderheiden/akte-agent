@@ -22,6 +22,7 @@ import time
 import uuid
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
@@ -113,6 +114,46 @@ app = InvocationAgentServerHost()
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 
+def _is_blob_unreachable(exc: BaseException) -> bool:
+    """True when *exc* means this instance cannot use the storage account at all.
+
+    Network failures, credential failures and outright authorization denials are
+    account-level: this compute simply cannot talk to the account (the hosted
+    agent's Foundry-managed compute typically sits outside the storage account's
+    private endpoint). Anything else — a 404, a conflict, a 5xx — is treated as
+    per-request and leaves blob enabled.
+    """
+    if isinstance(exc, TimeoutError | ServiceRequestError | ClientAuthenticationError):
+        return True
+    return isinstance(exc, HttpResponseError) and exc.status_code in (401, 403)
+
+
+async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
+    """Seed local use-cases into blob, disabling blob if the account is unreachable.
+
+    The seed is the hosted agent's first real blob request, so it is also where
+    an account-level reachability failure (403/timeout) first shows up. Leaving
+    the service "available" after that would make every later per-use-case lazy
+    load repeat the same failing round-trip before falling back to local disk.
+    Reusing ``BlobSkillService._disable()`` records the verdict once — in the
+    same place ``initialize()`` records it — so :func:`_ensure_registry` goes
+    straight to the baked-in ``use-cases/`` directory from then on.
+    """
+    try:
+        seeded = await blob_service.seed_from_local()
+        if seeded:
+            logger.info("Seeded %d use-case(s) into blob", len(seeded))
+    except Exception as exc:
+        if _is_blob_unreachable(exc):
+            logger.warning(
+                "Blob storage unreachable at startup (%s) — loading use-cases from local disk only",
+                type(exc).__name__,
+            )
+            await blob_service._disable()  # noqa: SLF001
+        else:
+            logger.exception("Failed to seed use-cases into blob storage")
+
+
 async def _startup() -> None:
     """Initialise the shared core — mirrors the FastAPI lifespan startup.
 
@@ -165,12 +206,7 @@ async def _startup() -> None:
     # lazy per-use-case loads below can pull skills from blob.
     if blob_service.is_available:
         t0 = _time.monotonic()
-        try:
-            seeded = await blob_service.seed_from_local()
-            if seeded:
-                logger.info("Seeded %d use-case(s) into blob", len(seeded))
-        except Exception:
-            logger.exception("Failed to seed use-cases into blob storage")
+        await _seed_or_disable_blob(blob_service)
         _mark("seed", t0)
 
     _startup_phases = phases
@@ -191,6 +227,10 @@ async def _ensure_registry(use_case: str) -> None:
     Loading is guarded by a lock and cached in ``_registries`` so concurrent or
     repeat requests for the same use-case load it only once. Falls back to the
     baked-in local ``use-cases/`` directory when blob is unavailable.
+
+    Reachability is decided once, at startup (:func:`_startup`), and recorded on
+    the blob service itself — so when blob is known-unreachable this makes no
+    blob call at all and loads at local-disk speed.
     """
     require_not_retired(use_case)
     if use_case in _registries:
