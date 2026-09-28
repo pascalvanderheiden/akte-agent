@@ -36,7 +36,7 @@ from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
 from app.observability import operation_duration_histogram, token_usage_histogram
-from app.services.model_routing import ModelRouting
+from app.services.model_routing import ModelRole, ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
 if TYPE_CHECKING:
@@ -205,6 +205,8 @@ class CopilotAgent:
         self._first_token_time: dict[str, float] = {}
         self._model_response_start: dict[str, float] = {}
         self._response_parts: dict[str, list[str]] = {}
+        # Per-turn token usage segmented by (routing role, model) for GenAI metrics
+        self._role_usage: dict[str, dict[tuple[str, str], dict[str, int]]] = {}
         self._routing = ModelRouting(settings)
 
     @property
@@ -383,6 +385,45 @@ class CopilotAgent:
         """Get the SkillRegistry for a conversation's use-case."""
         use_case = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
         return self._registries.get(use_case)
+
+    def _conversation_plan_model(self, conversation_id: str) -> str:
+        """Return the orchestrator model the routing plan resolves for a conversation."""
+        return self._routing.plan(
+            self._conversation_model_selections.get(conversation_id, "auto"),
+            getattr(self._get_registry(conversation_id), "routing", None),
+            self._token_provider,
+        ).model
+
+    def _metric_role(self, conversation_id: str, agent_name: str | None, model: str) -> str:
+        """Resolve the ADR 0001 routing role that produced a model call.
+
+        Calls made by the main session belong to the orchestrator. Delegated calls
+        use the role configured for that subagent; unknown subagents (e.g. SDK
+        built-ins) fall back to the role whose deployment serves ``model``.
+        """
+        if agent_name:
+            routing = getattr(self._get_registry(conversation_id), "routing", None)
+            role = self._routing.subagent_roles(routing).get(agent_name) or self._routing.role_for_model(model)
+            if role is not None:
+                return role.value
+        return ModelRole.ORCHESTRATOR.value
+
+    def _genai_metric_attrs(self, role: str, model: str) -> dict[str, str]:
+        """Dimensions shared by every GenAI metric recording."""
+        github = not self._use_azure_provider
+        return {
+            "gen_ai.operation.name": "invoke_agent",
+            "gen_ai.provider.name": "github" if github else "azure.ai.openai",
+            # Strip the SDK provider prefix ("orchestrator/<deployment>") so the
+            # dimension matches the deployment name reported on usage events.
+            "gen_ai.request.model": model.rsplit("/", 1)[-1],
+            "kratos.routing.role": role,
+            "server.address": (
+                "api.githubcopilot.com"
+                if github
+                else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
+            ),
+        }
 
     def get_enabled_skill_names(self, conversation_id: str) -> list[str] | None:
         """Return the enabled skill/tool names for a conversation's use-case, or None."""
@@ -948,6 +989,7 @@ class CopilotAgent:
             self._queues[conversation_id] = queue
             self._tool_counters[conversation_id] = 0
             self._usage[conversation_id] = {"prompt": 0, "completion": 0, "reasoning": 0, "total": 0}
+            self._role_usage[conversation_id] = {}
             self._first_token_time.pop(conversation_id, None)
             self._model_response_start.pop(conversation_id, None)
             self._response_parts[conversation_id] = []  # reset for this turn
@@ -974,6 +1016,8 @@ class CopilotAgent:
                     _tool_spans: dict[str, trace.Span] = {}  # active tool span per tool name
                     _tool_span_stack: list[tuple[str, trace.Span]] = []  # ordered stack for matching
                     _subagent_spans: dict[str, trace.Span] = {}
+                    _subagent_names: dict[str, str] = {}  # subagent tool_call_id -> agent name
+                    _subagent_starts: dict[str, tuple[float, str]] = {}  # tool_call_id -> (start, model)
 
                     def on_event(event) -> None:
                         """Translate SDK events into our SSE event types."""
@@ -1052,12 +1096,28 @@ class CopilotAgent:
                                     usage_model = str(
                                         getattr(data, "model", None)
                                         or getattr(data, "model_name", None)
-                                        or self._routing.plan(
-                                            self._conversation_model_selections.get(cid, "auto"),
-                                            getattr(self._get_registry(cid), "routing", None),
-                                            self._token_provider,
-                                        ).model
+                                        or self._conversation_plan_model(cid)
                                     )
+                                    # Attribute the call to a subagent when the SDK tags it
+                                    # with the delegating agent or its parent tool call.
+                                    sub_name = None
+                                    for ref in (
+                                        getattr(event, "agent_id", None),
+                                        getattr(data, "parent_tool_call_id", None),
+                                    ):
+                                        if isinstance(ref, str) and ref:
+                                            sub_name = _subagent_names.get(ref, ref)
+                                            break
+                                    bucket_key = (
+                                        self._metric_role(cid, sub_name, usage_model),
+                                        usage_model.rsplit("/", 1)[-1],
+                                    )
+                                    bucket = self._role_usage.setdefault(cid, {}).setdefault(
+                                        bucket_key, {"input": 0, "output": 0, "reasoning": 0}
+                                    )
+                                    bucket["input"] += prompt_t
+                                    bucket["output"] += completion_t
+                                    bucket["reasoning"] += reasoning_t
                                     agent_name = str(
                                         getattr(event, "agent_id", None)
                                         or getattr(data, "agent_id", None)
@@ -1091,6 +1151,8 @@ class CopilotAgent:
                                 subagent_call_id = str(getattr(event.data, "tool_call_id", None) or agent_name)
                                 state = etype.rsplit(".", 1)[-1]
                                 if state == "started":
+                                    _subagent_names[subagent_call_id] = agent_name
+                                    _subagent_starts[subagent_call_id] = (time.monotonic(), model)
                                     _subagent_spans[subagent_call_id] = tracer.start_span(
                                         f"invoke_agent {agent_name}",
                                         context=self._span_contexts.get(cid),
@@ -1107,6 +1169,15 @@ class CopilotAgent:
                                         if state == "failed":
                                             subagent_span.set_status(trace.Status(trace.StatusCode.ERROR))
                                         subagent_span.end()
+                                    started = _subagent_starts.pop(subagent_call_id, None)
+                                    if started is not None:
+                                        sub_model = model or started[1] or self._conversation_plan_model(cid)
+                                        operation_duration_histogram.record(
+                                            time.monotonic() - started[0],
+                                            self._genai_metric_attrs(
+                                                self._metric_role(cid, agent_name, sub_model), sub_model
+                                            ),
+                                        )
                                 if state == "failed":
                                     logger.warning(
                                         "Subagent %s failed on model %s; SDK will continue with the parent model",
@@ -1299,6 +1370,7 @@ class CopilotAgent:
                                     orphan_span.end()
                                 _tool_span_stack.clear()
                                 _tool_spans.clear()
+                                _subagent_names.clear()
 
                                 tc = self._tool_counters.get(cid, 0)
                                 usage = self._usage.get(cid, {"prompt": 0, "completion": 0, "reasoning": 0, "total": 0})
@@ -1416,19 +1488,23 @@ class CopilotAgent:
                         message,
                     )
 
-                # Record GenAI metrics (token usage + operation duration)
-                _metric_attrs = {
-                    "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
-                    "gen_ai.request.model": self.settings.foundry_model_deployment,
-                    "server.address": _server_addr,
-                }
-                if usage.get("prompt", 0):
-                    token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
-                if usage.get("completion", 0):
-                    token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
+                # Record GenAI metrics (token usage + operation duration), segmented by
+                # ADR 0001 routing role and model. Reasoning tokens are recorded as their
+                # own token type (they are a subset of output tokens, not additive).
+                role_usage = self._role_usage.get(conversation_id) or {}
+                for (role, model), counts in role_usage.items():
+                    role_attrs = self._genai_metric_attrs(role, model)
+                    for token_type, count in counts.items():
+                        if count:
+                            token_usage_histogram.record(count, {**role_attrs, "gen_ai.token.type": token_type})
+                orchestrator_model = next(
+                    (model for role, model in role_usage if role == ModelRole.ORCHESTRATOR.value),
+                    None,
+                ) or self._conversation_plan_model(conversation_id)
                 elapsed_s = time.monotonic() - self._send_time
-                operation_duration_histogram.record(elapsed_s, _metric_attrs)
+                operation_duration_histogram.record(
+                    elapsed_s, self._genai_metric_attrs(ModelRole.ORCHESTRATOR.value, orchestrator_model)
+                )
 
             except TimeoutError:
                 span.set_attribute("error.type", "timeout")

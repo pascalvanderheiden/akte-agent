@@ -296,3 +296,94 @@ async def test_subagent_events_include_name_and_actual_model(copilot_agent):
     assert [event.status for event in thoughts] == ["started", "completed"]
     assert all(event.agentName == "deep-reasoning-analyst" for event in thoughts)
     assert all(event.model == "gpt-6-sol" for event in (*thoughts, *tools))
+
+
+def _usage_event(model, prompt, completion, reasoning, parent_tool_call_id=None):
+    event = MagicMock()
+    event.type.value = "assistant.usage"
+    event.agent_id = None
+    event.data.model = model
+    event.data.prompt_tokens = prompt
+    event.data.completion_tokens = completion
+    event.data.total_tokens = prompt + completion
+    event.data.completion_tokens_details = None
+    event.data.reasoning_tokens = reasoning
+    event.data.parent_tool_call_id = parent_tool_call_id
+    return event
+
+
+def _subagent_event(event_type, agent_name, model, call_id):
+    event = MagicMock()
+    event.type.value = event_type
+    event.data.agent_name = agent_name
+    event.data.model = model
+    event.data.tool_call_id = call_id
+    return event
+
+
+async def _run_with_events(agent, events):
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session.return_value = mock_session
+
+    def fake_on(callback):
+        for event in events:
+            callback(event)
+        idle = MagicMock()
+        idle.type.value = "session.idle"
+        callback(idle)
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+    agent._client = mock_client
+    with (
+        patch("app.services.copilot_agent.token_usage_histogram") as tokens,
+        patch("app.services.copilot_agent.operation_duration_histogram") as durations,
+    ):
+        [event async for event in agent.run("analyze", "conversation")]
+    token_records = {
+        (
+            call.args[1]["kratos.routing.role"],
+            call.args[1]["gen_ai.request.model"],
+            call.args[1]["gen_ai.token.type"],
+        ): call.args[0]
+        for call in tokens.record.call_args_list
+    }
+    duration_dims = [
+        (call.args[1]["kratos.routing.role"], call.args[1]["gen_ai.request.model"])
+        for call in durations.record.call_args_list
+    ]
+    return token_records, duration_dims
+
+
+@pytest.mark.asyncio
+async def test_metrics_carry_orchestrator_role_and_model(copilot_agent):
+    token_records, duration_dims = await _run_with_events(copilot_agent, [_usage_event("gpt-6-luna", 100, 40, 12)])
+
+    assert token_records == {
+        ("orchestrator", "gpt-6-luna", "input"): 100,
+        ("orchestrator", "gpt-6-luna", "output"): 40,
+        ("orchestrator", "gpt-6-luna", "reasoning"): 12,
+    }
+    assert duration_dims == [("orchestrator", "gpt-6-luna")]
+
+
+@pytest.mark.asyncio
+async def test_metrics_segment_subagent_delegation_by_role(copilot_agent):
+    events = [
+        _usage_event("gpt-6-luna", 50, 10, 0),
+        _subagent_event("subagent.started", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+        _usage_event("gpt-6-sol", 300, 120, 80, parent_tool_call_id="sub-1"),
+        _subagent_event("subagent.completed", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+    ]
+
+    token_records, duration_dims = await _run_with_events(copilot_agent, events)
+
+    assert token_records == {
+        ("orchestrator", "gpt-6-luna", "input"): 50,
+        ("orchestrator", "gpt-6-luna", "output"): 10,
+        ("deep-reasoning", "gpt-6-sol", "input"): 300,
+        ("deep-reasoning", "gpt-6-sol", "output"): 120,
+        ("deep-reasoning", "gpt-6-sol", "reasoning"): 80,
+    }
+    assert duration_dims == [("deep-reasoning", "gpt-6-sol"), ("orchestrator", "gpt-6-luna")]

@@ -144,12 +144,15 @@ def instrument_fastapi_app(app: FastAPI) -> None:
 # ── GenAI Metrics ────────────────────────────────────────────────────────────
 # Expose histograms per OTel GenAI semantic conventions so copilot_agent.py can
 # record token usage and operation duration without coupling to the exporter setup.
+# Every recording carries `gen_ai.request.model` and `kratos.routing.role`
+# (orchestrator / deep-reasoning / fast, per ADR 0001); token usage is split by
+# `gen_ai.token.type` = input / output / reasoning.
 
 _meter = metrics.get_meter("kratos-agent", "0.1.0")
 
 token_usage_histogram = _meter.create_histogram(
     name="gen_ai.client.token.usage",
-    description="Number of input and output tokens used",
+    description="Number of input, output and reasoning tokens used",
     unit="{token}",
 )
 
