@@ -159,8 +159,12 @@ def test_single_revision_mode_is_unchanged(module: str, service_templates: dict[
 
 def test_both_modules_use_an_identical_mechanism(service_templates: dict[str, Any]) -> None:
     """A fix to one module cannot be forgotten in the other."""
-    deployments = [_image_deployment(t)["properties"]["template"] for t in service_templates.values()]
-    assert deployments[0] == deployments[1]
+    deployments = {
+        module: _image_deployment(template)["properties"]["template"] for module, template in service_templates.items()
+    }
+    first, reference = next(iter(deployments.items()))
+    for module, deployment in deployments.items():
+        assert deployment == reference, f"{module} resolves its image differently from {first}"
 
 
 @pytest.mark.parametrize("module", SERVICE_MODULES)
