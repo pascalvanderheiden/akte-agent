@@ -123,13 +123,20 @@ def _to_string(value):
     return str(value)
 
 
+def _index_of(haystack, needle):
+    # ARM's string search functions are case-insensitive.
+    return haystack.lower().find(needle.lower())
+
+
 def _last_index_of(haystack, needle):
-    return haystack.rfind(needle)
+    return haystack.lower().rfind(needle.lower())
 
 
 _FUNCTIONS = {
     "concat": lambda *values: (
-        list(_chain(values)) if values and isinstance(values[0], list) else "".join(values)
+        list(_chain(values))
+        if values and isinstance(values[0], list)
+        else "".join(_to_string(value) for value in values)
     ),
     "createArray": lambda *values: list(values),
     "createObject": lambda *pairs: dict(zip(pairs[::2], pairs[1::2])),
@@ -139,7 +146,7 @@ _FUNCTIONS = {
     "format": _format,
     "greater": lambda left, right: left > right,
     "greaterOrEquals": lambda left, right: left >= right,
-    "indexOf": lambda haystack, needle: haystack.find(needle),
+    "indexOf": _index_of,
     "int": int,
     "json": json.loads,
     "lastIndexOf": _last_index_of,

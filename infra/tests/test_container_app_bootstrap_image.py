@@ -52,6 +52,13 @@ def reject_duplicate_keys(pairs):
 
 
 def iter_resources(template):
+    """Top-level resources of one template; nested deployments are walked separately.
+
+    Resources inside a `Microsoft.Resources/deployments` template are evaluated
+    against that module's own parameters, so `resolve_container_apps` descends
+    into them with a matching evaluator rather than flattening them here.
+    """
+
     resources = template.get("resources", [])
     if isinstance(resources, dict):
         resources = list(resources.values())
@@ -79,12 +86,11 @@ def build_evaluator(template, exists, deployed_image, parameters=None):
             return {"template": {"containers": [{"image": deployed_image}]}}
         if resource_id.resource_type == DEPLOYMENT_TYPE:
             nested = find_deployment(evaluator, resource_id.segments[-1])
-            nested_parameters = {
-                name: evaluator.evaluate(value["value"])
-                for name, value in (nested["properties"].get("parameters") or {}).items()
-            }
             module = build_evaluator(
-                nested["properties"]["template"], exists, deployed_image, nested_parameters
+                nested["properties"]["template"],
+                exists,
+                deployed_image,
+                nested_parameters(evaluator, nested),
             )
             return {
                 "outputs": {name: {"value": module.output(name)} for name in module.template["outputs"]}
@@ -93,6 +99,13 @@ def build_evaluator(template, exists, deployed_image, parameters=None):
 
     evaluator.reference_resolver = resolve_reference
     return evaluator
+
+
+def nested_parameters(evaluator, deployment):
+    return {
+        name: evaluator.evaluate(value["value"])
+        for name, value in (deployment["properties"].get("parameters") or {}).items()
+    }
 
 
 def find_deployment(evaluator, name):
@@ -127,13 +140,26 @@ class ResolvedContainerApp:
         )
 
 
-def resolve_container_apps(module, template, exists, deployed_image=""):
-    evaluator = build_evaluator(template, exists, deployed_image)
-    return [
-        ResolvedContainerApp(module, evaluator, resource)
-        for resource in iter_resources(template)
-        if resource.get("type") == CONTAINER_APP_TYPE
-    ]
+def resolve_container_apps(module, template, exists, deployed_image="", evaluator=None):
+    """Every Container App in `template`, including nested modules, fully resolved."""
+
+    if evaluator is None:
+        evaluator = build_evaluator(template, exists, deployed_image)
+    apps = []
+    for resource in iter_resources(template):
+        if resource.get("type") == CONTAINER_APP_TYPE:
+            apps.append(ResolvedContainerApp(module, evaluator, resource))
+            continue
+        nested = (resource.get("properties") or {}).get("template")
+        if resource.get("type") != DEPLOYMENT_TYPE or not isinstance(nested, dict):
+            continue
+        nested_evaluator = build_evaluator(
+            nested, exists, deployed_image, nested_parameters(evaluator, resource)
+        )
+        apps.extend(
+            resolve_container_apps(module, nested, exists, deployed_image, nested_evaluator)
+        )
+    return apps
 
 
 class ContainerAppBootstrapImageTests(unittest.TestCase):
@@ -190,21 +216,32 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                     container["image"],
                     f"{app.module.name}: provisioning must not overwrite the deployed image",
                 )
-                self.assertNotIn(
-                    "ASPNETCORE_HTTP_PORTS",
-                    app.env(container),
-                    f"{app.module.name}: bootstrap-only settings must not leak into the "
-                    "deployed application image",
-                )
+                for name in self.bootstrap_env_vars():
+                    self.assertNotIn(
+                        name,
+                        app.env(container),
+                        f"{app.module.name}: bootstrap-only {name} must not leak into the "
+                        "deployed application image",
+                    )
 
     def test_placeholder_images_are_replaced_on_the_next_provision(self):
         for app, container in self.apps(exists=True, deployed_image=LEGACY_PLACEHOLDER_IMAGE):
             with self.subTest(module=app.module.name, container=container.get("name")):
                 self.assertNotPortEightyOnly(app, container)
-                self.assertTrue(app.listens_on_target_port(container))
+                self.assertTrue(
+                    app.listens_on_target_port(container),
+                    f"{app.module.name}: nothing tells the replacement image "
+                    f"{container['image']} to listen on targetPort {app.target_port}",
+                )
 
     def bootstrap_default_image(self):
         return Evaluator(self.bootstrap_template).parameters["bootstrapImage"]
+
+    def bootstrap_env_vars(self):
+        """Names the bootstrap module injects, read from its compiled output."""
+
+        evaluator = Evaluator(self.bootstrap_template, {"exists": False})
+        return [variable["name"] for variable in evaluator.output("bootstrapEnv")]
 
     def test_bootstrap_default_image_is_not_a_port_80_placeholder(self):
         image = self.bootstrap_default_image()
