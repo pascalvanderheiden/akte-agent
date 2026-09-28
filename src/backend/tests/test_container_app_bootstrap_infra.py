@@ -282,7 +282,9 @@ echo "$*" >> "$AZD_LOG"
 """
 
 
-def _run_detect_hook(tmp_path: Path, *, group_exists: str, tags: str, az_status: int = 0) -> list[str]:
+def _run_detect_hook(
+    tmp_path: Path, *, group_exists: str, tags: str, az_status: int = 0, subscription: str | None = None
+) -> list[str]:
     """Run the detection hook against stubbed `az`/`azd`; return the azd env sets."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -296,6 +298,8 @@ def _run_detect_hook(tmp_path: Path, *, group_exists: str, tags: str, az_status:
         "AZURE_ENV_NAME": "an-environment",
         "AZD_LOG": str(log),
     }
+    if subscription is not None:
+        env["AZURE_SUBSCRIPTION_ID"] = subscription
     proc = subprocess.run(["bash", str(DETECT_HOOK)], capture_output=True, text=True, env=env, timeout=60)
     assert proc.returncode == 0, f"the hook must never fail a provision:\n{proc.stderr}"
     return log.read_text().splitlines() if log.exists() else []
@@ -307,6 +311,15 @@ def test_a_live_container_app_is_detected_from_azure(tmp_path: Path) -> None:
     calls = _run_detect_hook(tmp_path, group_exists="true", tags="agent-service\n")
     assert "env set SERVICE_AGENT_SERVICE_RESOURCE_EXISTS true" in calls
     assert "env set SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS false" in calls
+
+
+def test_detection_works_with_an_explicit_subscription(tmp_path: Path) -> None:
+    """Guards the `set -u`-safe expansion of the optional --subscription args."""
+    calls = _run_detect_hook(
+        tmp_path, group_exists="true", tags="agent-service\nobo-mcp-server\n", subscription="a-subscription"
+    )
+    assert "env set SERVICE_AGENT_SERVICE_RESOURCE_EXISTS true" in calls
+    assert "env set SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS true" in calls
 
 
 def test_an_empty_resource_group_means_a_first_create(tmp_path: Path) -> None:

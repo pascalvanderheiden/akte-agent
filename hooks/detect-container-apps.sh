@@ -31,7 +31,8 @@
 set -uo pipefail
 
 # The `host: containerapp` services in azure.yaml, by their azd service name —
-# which is also the `azd-service-name` tag value their Bicep modules set.
+# which is also the `azd-service-name` tag value their Bicep modules set. Adding
+# such a service means adding it here; a test fails if the two lists drift.
 SERVICES=(agent-service obo-mcp-server)
 
 note() { echo "   $*"; }
@@ -85,7 +86,10 @@ for service in "${SERVICES[@]}"; do
   # portable (BSD tr on macOS reads it differently from GNU tr), and a
   # mistranslated name would silently leave the real flag untouched.
   flag="SERVICE_$(printf '%s' "$service" | tr '-' '_' | tr '[:lower:]' '[:upper:]')_RESOURCE_EXISTS"
-  printf '%s\n' "$TAGS" | grep -qx -- "$service"
+  # Fed by here-string rather than a pipe: with `pipefail`, `grep -q` exiting on
+  # its first match can leave the writer killed by SIGPIPE, and that status
+  # would be read as a failure to classify.
+  grep -qx -- "$service" <<<"$TAGS"
   case $? in
     0) value=true ;;
     1) value=false ;;
