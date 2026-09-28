@@ -50,6 +50,12 @@ can be replayed by hand when something goes sideways.
   -> `ready-for-agent` -> `assign-copilot` advances on `labeled` events, and a
   label written by `GITHUB_TOKEN` raises none. On `GITHUB_TOKEN` the spec
   issues sat labelled `to-ticket` forever and no ticket was ever auto-assigned.
+- **`pr-copilot-review` needs `contents: write`**, only to take a finished
+  coding-agent PR out of draft. `markPullRequestReadyForReview` is GraphQL-only
+  and rejects both `pull-requests: write` alone (`Resource not accessible by
+  integration`) and the fine-grained `COPILOT_ASSIGN_TOKEN` (`Resource not
+  accessible by personal access token`), so the flip must run on `GITHUB_TOKEN`
+  with that permission.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
   refused.

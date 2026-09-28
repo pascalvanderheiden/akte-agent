@@ -48,6 +48,12 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  # `contents: write` is here solely for the draft flip. `pull-requests: write`
+  # alone is not enough for `markPullRequestReadyForReview`, which answers
+  # `Resource not accessible by integration` — and the fine-grained
+  # COPILOT_ASSIGN_TOKEN is refused outright, so the flip cannot be moved off
+  # GITHUB_TOKEN either. Nothing here checks out or executes PR code, which is
+  # what keeps that safe under `pull_request_target`.
   contents: write
   pull-requests: write
 
@@ -172,9 +178,10 @@ jobs:
             # `gh pr ready` is GraphQL-only, and the fine-grained
             # COPILOT_ASSIGN_TOKEN is refused there
             # (`markPullRequestReadyForReview`), so this one call uses
-            # GITHUB_TOKEN. Its `ready_for_review` event is swallowed by the
-            # recursion guard, which costs nothing: the review request is made
-            # further down in this same run.
+            # GITHUB_TOKEN, which needs `contents: write` for it. Its
+            # `ready_for_review` event is swallowed by the recursion guard,
+            # which costs nothing: the review request is made further down in
+            # this same run.
             GH_TOKEN="$DEFAULT_TOKEN" gh pr ready "$PR" --repo "$REPO"
             draft=false
           fi
