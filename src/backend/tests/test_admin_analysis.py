@@ -116,3 +116,72 @@ def test_trace_id_omitted_without_span_context(monkeypatch: pytest.MonkeyPatch) 
 
     assert admin_analysis._trace_id() is None
     assert "traceId" not in admin_analysis._http_error(502, "nope").detail
+
+
+def test_retired_persona_carries_trace_id_alongside_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _use_span(monkeypatch)
+
+    with pytest.raises(admin_analysis.HTTPException) as exc_info:
+        admin_analysis._get_registry(SimpleNamespace(), "generic")
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail["code"] == "PERSONA_UNAVAILABLE"
+    assert exc_info.value.detail["traceId"] == expected
+
+
+@pytest.mark.asyncio
+async def test_analysis_malformed_result_carries_trace_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _use_span(monkeypatch)
+    monkeypatch.setattr(admin_analysis, "_get_registry", lambda _request, _use_case: _registry())
+
+    async def _llm(*_args: object, **_kwargs: object) -> str:
+        return '["not", "an", "object"]'
+
+    monkeypatch.setattr(admin_analysis, "_call_llm", _llm)
+
+    with pytest.raises(admin_analysis.HTTPException) as exc_info:
+        await admin_analysis.analyze_consistency(SimpleNamespace(), None, "akte-agent")
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["traceId"] == expected
+
+
+@pytest.mark.asyncio
+async def test_analysis_invalid_issue_carries_trace_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _use_span(monkeypatch)
+    monkeypatch.setattr(admin_analysis, "_get_registry", lambda _request, _use_case: _registry())
+
+    async def _llm(*_args: object, **_kwargs: object) -> str:
+        return '{"summary": "ok", "overallScore": 90, "issues": [{"missing": "fields"}], "strengths": []}'
+
+    monkeypatch.setattr(admin_analysis, "_call_llm", _llm)
+
+    with pytest.raises(admin_analysis.HTTPException) as exc_info:
+        await admin_analysis.analyze_consistency(SimpleNamespace(), None, "akte-agent")
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["traceId"] == expected
+
+
+class _EmptyChoicesResponse(_Response):
+    def json(self) -> dict:
+        return {"choices": []}
+
+
+class _EmptyChoicesClient:
+    async def post(self, _url: str, *, json: dict, headers: dict) -> _EmptyChoicesResponse:
+        return _EmptyChoicesResponse()
+
+
+@pytest.mark.asyncio
+async def test_call_llm_malformed_success_response_carries_trace_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = _use_span(monkeypatch)
+    monkeypatch.setattr(admin_analysis, "ModelRouting", _Routing)
+    monkeypatch.setattr(admin_analysis, "_get_credential", lambda: _Credential())
+    monkeypatch.setattr(admin_analysis, "_get_http_client", lambda: _EmptyChoicesClient())
+
+    with pytest.raises(admin_analysis.HTTPException) as exc_info:
+        await admin_analysis._call_llm("system", "user")
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail["traceId"] == expected

@@ -60,9 +60,16 @@ def _http_error(status_code: int, message: str) -> HTTPException:
 
 def _get_registry(request: Request, use_case: str) -> SkillRegistry:
     """Resolve the SkillRegistry for the given use-case."""
-    from app.personas import require_not_retired
+    from app.personas import PersonaUnavailable, require_not_retired
 
-    require_not_retired(use_case)
+    try:
+        require_not_retired(use_case)
+    except PersonaUnavailable as exc:
+        detail = dict(exc.detail) if isinstance(exc.detail, dict) else {}
+        trace_id = _trace_id()
+        if trace_id:
+            detail["traceId"] = trace_id
+        raise HTTPException(status_code=exc.status_code, detail=detail) from exc
     registries = getattr(request.app.state, "registries", {})
     registry = registries.get(use_case)
     if registry is None:
@@ -244,14 +251,18 @@ async def analyze_consistency(
 
     duration_ms = int((time.monotonic() - t0) * 1000)
 
-    return AnalysisResponse(
-        summary=result.get("summary", ""),
-        overallScore=result.get("overallScore", 0),
-        issues=[AnalysisIssue(**issue) for issue in result.get("issues", [])],
-        strengths=result.get("strengths", []),
-        durationMs=duration_ms,
-        traceId=_trace_id(),
-    )
+    try:
+        return AnalysisResponse(
+            summary=result.get("summary", ""),
+            overallScore=result.get("overallScore", 0),
+            issues=[AnalysisIssue(**issue) for issue in result.get("issues", [])],
+            strengths=result.get("strengths", []),
+            durationMs=duration_ms,
+            traceId=_trace_id(),
+        )
+    except Exception as e:
+        logger.error("Malformed analysis response (trace=%s): %s", _trace_id(), e)
+        raise _http_error(502, "LLM returned a malformed analysis response") from e
 
 
 # ─── Shared LLM helper ───
@@ -302,8 +313,12 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
         logger.error("Failed to call Foundry (trace=%s): %s", _trace_id(), e)
         raise _http_error(502, "LLM call failed") from e
 
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    try:
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+        logger.error("Malformed Foundry response (trace=%s): %s", _trace_id(), e)
+        raise _http_error(502, "LLM returned a malformed response") from e
 
 
 # ─── Apply Fix endpoint ───
