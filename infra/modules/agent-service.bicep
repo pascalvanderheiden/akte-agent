@@ -58,6 +58,27 @@ param blobStorageEndpoint string
 @description('Static Web App URL for CORS (e.g. https://xxx.azurestaticapps.net)')
 param staticWebAppUrl string = ''
 
+@description('True once azd has deployed an application image to this Container App (SERVICE_AGENT_SERVICE_RESOURCE_EXISTS)')
+param exists bool = false
+
+// Ingress port and bootstrap listener port are the same value by construction.
+var ingressTargetPort = 8000
+
+// ─── Container image ───
+// Never hardcode an image here. container-app-image.bicep keeps the first
+// provision bootable on a stand-in image that listens on this module's own
+// ingress port, and leaves an already-deployed application image untouched
+// on every later provision. obo-mcp-server.bicep uses the identical
+// mechanism; that module explains why a fixed placeholder breaks both cases.
+module containerImage './container-app-image.bicep' = {
+  name: '${name}-image'
+  params: {
+    containerAppName: name
+    exists: exists
+    targetPort: ingressTargetPort
+  }
+}
+
 // ─── ACR pull identity ───
 // A User-Assigned Managed Identity is created for ACR access so that the
 // AcrPull role assignment exists BEFORE the Container App tries to validate
@@ -111,7 +132,7 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
       ]
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: ingressTargetPort
         transport: 'http'
         corsPolicy: {
           allowedOrigins: empty(staticWebAppUrl) ? ['*'] : [staticWebAppUrl]
@@ -125,32 +146,38 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'agent-service'
-          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          image: containerImage.outputs.image
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          env: [
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
-            { name: 'APPLICATION_INSIGHTS_RESOURCE_ID', value: appInsightsResourceId }
-            { name: 'COSMOS_DB_ENDPOINT', value: cosmosDbEndpoint }
-            { name: 'KEY_VAULT_URI', value: keyVaultUri }
-            { name: 'FOUNDRY_ENDPOINT', value: foundryEndpoint }
-            { name: 'MODEL_DEPLOYMENT_ORCHESTRATOR', value: orchestratorModelDeployment }
-            { name: 'MODEL_DEPLOYMENT_DEEP_REASONING', value: deepReasoningModelDeployment }
-            { name: 'MODEL_DEPLOYMENT_FAST', value: fastModelDeployment }
-            { name: 'FOUNDRY_MODEL_DEPLOYMENT', value: foundryModelDeployment }
-            { name: 'FOUNDRY_PROJECT_NAME', value: foundryProjectName }
-            { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
-            { name: 'FOUNDRY_AGENT_NAME', value: foundryAgentName }
-            { name: 'BING_SEARCH_ENDPOINT', value: bingSearchEndpoint }
-            { name: 'BLOB_STORAGE_ENDPOINT', value: blobStorageEndpoint }
-            { name: 'OTEL_SERVICE_NAME', value: 'kratos-agent-service' }
-            { name: 'AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', value: 'true' }
-            { name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', value: 'true' }
-            { name: 'ENVIRONMENT', value: 'production' }
-            { name: 'ALLOWED_ORIGINS', value: empty(staticWebAppUrl) ? '*' : staticWebAppUrl }
-          ]
+          env: concat(
+            [
+              { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+              { name: 'APPLICATION_INSIGHTS_RESOURCE_ID', value: appInsightsResourceId }
+              { name: 'COSMOS_DB_ENDPOINT', value: cosmosDbEndpoint }
+              { name: 'KEY_VAULT_URI', value: keyVaultUri }
+              { name: 'FOUNDRY_ENDPOINT', value: foundryEndpoint }
+              { name: 'MODEL_DEPLOYMENT_ORCHESTRATOR', value: orchestratorModelDeployment }
+              { name: 'MODEL_DEPLOYMENT_DEEP_REASONING', value: deepReasoningModelDeployment }
+              { name: 'MODEL_DEPLOYMENT_FAST', value: fastModelDeployment }
+              { name: 'FOUNDRY_MODEL_DEPLOYMENT', value: foundryModelDeployment }
+              { name: 'FOUNDRY_PROJECT_NAME', value: foundryProjectName }
+              { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+              { name: 'FOUNDRY_AGENT_NAME', value: foundryAgentName }
+              { name: 'BING_SEARCH_ENDPOINT', value: bingSearchEndpoint }
+              { name: 'BLOB_STORAGE_ENDPOINT', value: blobStorageEndpoint }
+              { name: 'OTEL_SERVICE_NAME', value: 'kratos-agent-service' }
+              { name: 'AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', value: 'true' }
+              { name: 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', value: 'true' }
+              { name: 'ENVIRONMENT', value: 'production' }
+              { name: 'ALLOWED_ORIGINS', value: empty(staticWebAppUrl) ? '*' : staticWebAppUrl }
+            ],
+            // Only non-empty while the bootstrap image is in use; it takes its
+            // listening port from these. Nothing here overrides the container
+            // command, which `azd deploy` would carry over onto the real image.
+            containerImage.outputs.bootstrapEnv
+          )
         }
       ]
       scale: {

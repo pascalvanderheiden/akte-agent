@@ -17,6 +17,12 @@
     "deployObo": {
       "value": "${DEPLOY_OBO=true}"
     },
+    "agentServiceExists": {
+      "value": "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}"
+    },
+    "oboMcpServerExists": {
+      "value": "${SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS=false}"
+    },
     "deploySreAgent": {
       "value": "${DEPLOY_SRE_AGENT=false}"
     },
