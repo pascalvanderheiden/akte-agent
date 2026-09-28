@@ -245,8 +245,8 @@ def test_the_bootstrap_repository_is_parsed_from_a_digest_reference(image_templa
     repository = image_template["variables"]["bootstrapRepository"]
     # The digest must be stripped first: splitting on ':' alone would cut a
     # `repo@sha256:…` reference in half and never match a read-back stand-in.
-    assert re.fullmatch(
-        r"\[split\(split\(parameters\('bootstrapImage'\), '@'\)\[0\], ':'\)\[0\]\]",
+    assert re.search(
+        r"split\(\s*split\(\s*parameters\('bootstrapImage'\)\s*,\s*'@'\)\[0\]\s*,\s*':'\)\[0\]",
         repository,
     ), f"bootstrapRepository does not strip a digest before a tag: {repository}"
 

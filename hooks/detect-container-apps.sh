@@ -36,10 +36,12 @@ SERVICES=(agent-service obo-mcp-server)
 
 note() { echo "   $*"; }
 
-command -v az >/dev/null 2>&1 || {
-  note "Azure CLI not found; leaving service-existence flags as azd recorded them."
-  exit 0
-}
+for tool in az azd; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    note "$tool not found; leaving service-existence flags as azd recorded them."
+    exit 0
+  }
+done
 
 # infra/main.bicep names the resource group `rg-<environmentName>`. The azd
 # output wins when the environment has been refreshed.
@@ -60,7 +62,13 @@ SUBSCRIPTION_ARGS=()
 GROUP_EXISTS="$(az group exists --name "$RESOURCE_GROUP" ${SUBSCRIPTION_ARGS[@]+"${SUBSCRIPTION_ARGS[@]}"} \
   --output tsv --only-show-errors 2>/dev/null)" || GROUP_EXISTS=""
 case "$GROUP_EXISTS" in
-  true) ;;
+  true)
+    TAGS="$(az containerapp list --resource-group "$RESOURCE_GROUP" ${SUBSCRIPTION_ARGS[@]+"${SUBSCRIPTION_ARGS[@]}"} \
+      --query "[].tags.\"azd-service-name\"" --output tsv --only-show-errors 2>/dev/null)" || {
+      note "Could not list Container Apps in $RESOURCE_GROUP; leaving service-existence flags unchanged."
+      exit 0
+    }
+    ;;
   false)
     # A resource group that is not there cannot hold a Container App, so there
     # is no running image to protect: every service is a first create.
@@ -72,24 +80,19 @@ case "$GROUP_EXISTS" in
     ;;
 esac
 
-if [ "$GROUP_EXISTS" = "true" ]; then
-  TAGS="$(az containerapp list --resource-group "$RESOURCE_GROUP" ${SUBSCRIPTION_ARGS[@]+"${SUBSCRIPTION_ARGS[@]}"} \
-    --query "[].tags.\"azd-service-name\"" --output tsv --only-show-errors 2>/dev/null)" || {
-    note "Could not list Container Apps in $RESOURCE_GROUP; leaving service-existence flags unchanged."
-    exit 0
-  }
-fi
-
 for service in "${SERVICES[@]}"; do
   # Two passes: mixing a character class with a literal in one `tr` set is not
   # portable (BSD tr on macOS reads it differently from GNU tr), and a
   # mistranslated name would silently leave the real flag untouched.
   flag="SERVICE_$(printf '%s' "$service" | tr '-' '_' | tr '[:lower:]' '[:upper:]')_RESOURCE_EXISTS"
-  if printf '%s\n' "$TAGS" | grep -qx -- "$service"; then
-    value=true
-  else
-    value=false
-  fi
+  printf '%s\n' "$TAGS" | grep -qx -- "$service"
+  case $? in
+    0) value=true ;;
+    1) value=false ;;
+    # grep failed rather than reported "no match"; a wrong `false` is the one
+    # answer that overwrites a running image, so give no answer at all.
+    *) note "Could not classify $service; leaving its flag unchanged."; continue ;;
+  esac
   if azd env set "$flag" "$value" >/dev/null 2>&1; then
     note "$flag=$value (from Azure)"
   else
