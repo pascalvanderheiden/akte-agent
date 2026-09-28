@@ -58,7 +58,7 @@ can be replayed by hand when something goes sideways.
   with that permission.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
-  refused.
+  refused or no matching request/review appears on the timeline.
 - **The workflows must be on `main`.** `pull_request_target`, `workflow_run` and
   `workflow_call` all resolve against the default branch, so none of this runs
   from a feature branch.

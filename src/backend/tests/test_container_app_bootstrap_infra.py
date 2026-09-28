@@ -235,7 +235,7 @@ def test_a_read_back_bootstrap_image_still_counts_as_bootstrapping(image_templat
     rendering it again without its port variables would fail activation."""
     for output in ("image", "bootstrapEnv"):
         value = image_template["outputs"][output]["value"]
-        assert "contains(" in value and "bootstrapRepositories" in value, (
+        assert "equals(" in value and "bootstrapRepository" in value, (
             f"output {output} does not treat a read-back bootstrap image as still bootstrapping"
         )
 
@@ -244,21 +244,20 @@ def test_the_bootstrap_repository_is_parsed_from_a_digest_reference(image_templa
     """Classification strips the digest, so re-pinning cannot mistake an older
     stand-in image for an application image."""
     repository = image_template["variables"]["bootstrapRepository"]
-    # The digest must be stripped first: splitting on ':' alone would cut a
-    # `repo@sha256:…` reference in half and never match a read-back stand-in.
-    assert re.search(
-        r"split\(\s*split\(\s*parameters\('bootstrapImage'\)\s*,\s*'@'\)\[0\]\s*,\s*':'\)\[0\]",
-        repository,
-    ), f"bootstrapRepository does not strip a digest before a tag: {repository}"
+    without_digest = image_template["variables"]["bootstrapImageWithoutDigest"]
+    assert "parameters('bootstrapImage'), '@'" in without_digest
+    assert "bootstrapImageWithoutDigest" in repository
+    assert "bootstrapTagSeparator" in repository
+    assert "bootstrapPathSeparator" in repository
 
 
 def test_legacy_port_80_placeholders_still_count_as_bootstrapping(image_template: dict[str, Any]) -> None:
     """An existing app whose deploy never succeeded may still run the old
     placeholder. Reprovisioning must replace it with the new port-aware
     bootstrap image, not preserve the unhealthy port-80 image."""
-    legacy = image_template["variables"]["legacyBootstrapRepositories"]
-    assert "mcr.microsoft.com/azuredocs/containerapps-helloworld" in legacy
-    assert "legacyBootstrapRepositories" in image_template["variables"]["bootstrapRepositories"]
+    legacy = image_template["variables"]["legacyBootstrapRepository"]
+    assert legacy == "mcr.microsoft.com/azuredocs/containerapps-helloworld"
+    assert "legacyBootstrapRepository" in image_template["outputs"]["image"]["value"]
 
 
 def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, Any]) -> None:

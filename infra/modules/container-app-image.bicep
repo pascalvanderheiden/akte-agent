@@ -72,13 +72,20 @@ var deployedImage = exists ? deployedApp!.properties.template.containers[0].imag
 // is the part before the digest (`repo@sha256:…`) or the tag (`repo:tag`), so
 // both forms of pin classify the same way. Application images come from this
 // environment's ACR, never from these bootstrap repositories.
-var bootstrapRepository = split(split(bootstrapImage, '@')[0], ':')[0]
-var legacyBootstrapRepositories = [
-  'mcr.microsoft.com/azuredocs/containerapps-helloworld'
-]
-var bootstrapRepositories = concat([bootstrapRepository], legacyBootstrapRepositories)
-var deployedRepository = split(split(deployedImage, '@')[0], ':')[0]
-var isBootstrap = empty(deployedImage) || contains(bootstrapRepositories, deployedRepository)
+var bootstrapImageWithoutDigest = split(bootstrapImage, '@')[0]
+var bootstrapTagSeparator = lastIndexOf(bootstrapImageWithoutDigest, ':')
+var bootstrapPathSeparator = lastIndexOf(bootstrapImageWithoutDigest, '/')
+var bootstrapRepository = bootstrapTagSeparator > bootstrapPathSeparator
+  ? substring(bootstrapImageWithoutDigest, 0, bootstrapTagSeparator)
+  : bootstrapImageWithoutDigest
+var legacyBootstrapRepository = 'mcr.microsoft.com/azuredocs/containerapps-helloworld'
+var deployedImageWithoutDigest = split(deployedImage, '@')[0]
+var deployedTagSeparator = lastIndexOf(deployedImageWithoutDigest, ':')
+var deployedPathSeparator = lastIndexOf(deployedImageWithoutDigest, '/')
+var deployedRepository = deployedTagSeparator > deployedPathSeparator
+  ? substring(deployedImageWithoutDigest, 0, deployedTagSeparator)
+  : deployedImageWithoutDigest
+var isBootstrap = empty(deployedImage) || deployedRepository == bootstrapRepository || deployedRepository == legacyBootstrapRepository
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage

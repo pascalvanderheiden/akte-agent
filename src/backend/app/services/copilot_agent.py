@@ -15,6 +15,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -35,7 +36,13 @@ from opentelemetry import trace
 from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
-from app.observability import input_token_source_histogram, operation_duration_histogram, token_usage_histogram
+from app.observability import (
+    input_token_source_histogram,
+    operation_duration_histogram,
+    token_usage_histogram,
+    tool_call_count_histogram,
+    tool_duration_histogram,
+)
 from app.services.model_routing import ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
@@ -44,6 +51,60 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass
+class InvocationTelemetry:
+    """Hosted invocation timing attached to the ``invoke_agent kratos-agent`` span.
+
+    ``handler_started_at`` must be a ``time.monotonic()`` reading from the same
+    process and clock used by the hosted handler. The handler calls ``complete``
+    after agent streaming and response preparation. Callers must invoke
+    ``complete`` in a ``finally`` block so the deferred span is always ended.
+    """
+
+    invocation_id: str
+    handler_started_at: float
+    handler_duration_ms: int | None = None
+    pre_handler_remainder_ms: int | None = None
+    in_handler_duration_ms: int | None = None
+    post_handler_remainder_ms: int | None = None
+    _span: trace.Span | None = field(default=None, init=False, repr=False)
+    _span_attached_at: float | None = field(default=None, init=False, repr=False)
+
+    def attach_span(self, span: trace.Span) -> None:
+        self._span_attached_at = time.monotonic()
+        self.pre_handler_remainder_ms = max(0, int((self._span_attached_at - self.handler_started_at) * 1000))
+        self._span = span
+        span.set_attribute("kratos.request_stage.pre_handler_remainder_ms", self.pre_handler_remainder_ms)
+        span.set_attribute("kratos.request_stage.pre_handler", "remainder")
+        span.set_attribute("kratos.request_stage.in_handler", "observed")
+        span.set_attribute("kratos.request_stage.post_handler", "remainder")
+
+    def mark_agent_stream_complete(self) -> None:
+        if self.in_handler_duration_ms is not None or self._span_attached_at is None:
+            return
+        self.in_handler_duration_ms = max(0, int((time.monotonic() - self._span_attached_at) * 1000))
+        if self._span:
+            self._span.set_attribute("kratos.request_stage.in_handler_duration_ms", self.in_handler_duration_ms)
+
+    def complete(self) -> int:
+        if self.handler_duration_ms is not None:
+            return self.handler_duration_ms
+        completed_at = time.monotonic()
+        self.handler_duration_ms = int((completed_at - self.handler_started_at) * 1000)
+        if self._span_attached_at is not None and self.in_handler_duration_ms is None:
+            self.in_handler_duration_ms = max(0, int((completed_at - self._span_attached_at) * 1000))
+        pre_handler = self.pre_handler_remainder_ms or 0
+        in_handler = self.in_handler_duration_ms or 0
+        self.post_handler_remainder_ms = max(0, self.handler_duration_ms - pre_handler - in_handler)
+        if self._span:
+            self._span.set_attribute("kratos.handler_duration_ms", self.handler_duration_ms)
+            self._span.set_attribute("kratos.request_stage.in_handler_duration_ms", in_handler)
+            self._span.set_attribute("kratos.request_stage.post_handler_remainder_ms", self.post_handler_remainder_ms)
+            self._span.end()
+            self._span = None
+        return self.handler_duration_ms
 
 
 def get_bearer_token_provider(credential, scope: str):
@@ -934,8 +995,13 @@ class CopilotAgent:
         eval_run_id: str | None = None,
         locale: Locale | None = None,
         model_selection: str | None = None,
+        invocation_telemetry: InvocationTelemetry | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
-        """Send a message and stream SDK events as typed SSE events."""
+        """Send a message and stream SDK events as typed SSE events.
+
+        Supplying ``invocation_telemetry`` transfers span completion to the
+        caller, which must call ``complete`` in a ``finally`` block.
+        """
         from app.personas import RETIRED_PERSONAS
 
         selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
@@ -966,6 +1032,10 @@ class CopilotAgent:
             if _github
             else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
         )
+        _metric_base_attrs = {
+            "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
+            "gen_ai.request.model": self.settings.foundry_model_deployment,
+        }
         _invoke_span_attrs: dict = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.system": "github" if _github else "openai",
@@ -980,10 +1050,16 @@ class CopilotAgent:
             "kratos.conversation_id": conversation_id,
             "server.address": _server_addr,
         }
+        if invocation_telemetry:
+            _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
+            _invoke_span_attrs["kratos.request_stage"] = "in-handler"
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
             attributes=_invoke_span_attrs,
+            end_on_exit=invocation_telemetry is None,
         ) as span:
+            if invocation_telemetry:
+                invocation_telemetry.attach_span(span)
             if use_case:
                 span.set_attribute("kratos.use_case", str(use_case))
             if eval_run_id:
@@ -1335,6 +1411,14 @@ class CopilotAgent:
                                     else:
                                         tool_span.set_status(trace.StatusCode.OK)
                                     tool_span.end()
+                                tool_duration_histogram.record(
+                                    duration_ms / 1000,
+                                    {
+                                        "gen_ai.tool.name": tool_name,
+                                        "gen_ai.operation.name": "execute_tool",
+                                        **_metric_base_attrs,
+                                    },
+                                )
                                 q.put_nowait(
                                     ToolCallEvent(
                                         skillName=tool_name,
@@ -1423,12 +1507,12 @@ class CopilotAgent:
                         break
                     yield item
 
-                tool_events = self._tool_counters.get(conversation_id, 0)
+                tool_call_count = self._tool_counters.get(conversation_id, 0)
                 # Enrich the span with usage and tool call counts
                 usage = self._usage.get(conversation_id, {})
                 span.set_attribute("gen_ai.usage.input_tokens", usage.get("prompt", 0))
                 span.set_attribute("gen_ai.usage.output_tokens", usage.get("completion", 0))
-                span.set_attribute("gen_ai.agent.tool_calls", tool_events)
+                span.set_attribute("gen_ai.agent.tool_calls", tool_call_count)
 
                 # Reasoning tokens (non-standard but useful for o-series / GPT-5)
                 reasoning_t = usage.get("reasoning", 0)
@@ -1464,7 +1548,7 @@ class CopilotAgent:
                             ]
                         ),
                     )
-                if tool_events == 0:
+                if tool_call_count == 0:
                     logger.warning(
                         "No tool events observed for conversation=%s prompt=%r",
                         conversation_id,
@@ -1474,14 +1558,14 @@ class CopilotAgent:
                 # Record GenAI metrics (token usage + operation duration)
                 _metric_attrs = {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
-                    "gen_ai.request.model": self.settings.foundry_model_deployment,
+                    **_metric_base_attrs,
                     "server.address": _server_addr,
                 }
                 if usage.get("prompt", 0):
                     token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
+                tool_call_count_histogram.record(tool_call_count, _metric_attrs)
                 source_estimates = {
                     **self._context_token_estimates.get(conversation_id, {}),
                     "persona_system": _estimate_token_count(

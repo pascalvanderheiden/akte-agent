@@ -243,6 +243,7 @@ export interface AnalysisResult {
   issues: AnalysisIssue[];
   strengths: string[];
   durationMs: number;
+  traceId?: string;
 }
 
 // ─── Apply Fix ───
@@ -257,6 +258,7 @@ export interface ApplyFixResult {
   success: boolean;
   changes: FixChange[];
   error: string;
+  traceId?: string;
 }
 
 // ─── Evals ───
