@@ -264,7 +264,7 @@ async def _call_llm(system_prompt: str, user_content: str, *, json_mode: bool = 
         chat_url = routing.auxiliary_chat_url(AuxiliaryTask.ADMIN_ANALYSIS)
     except RuntimeError as exc:
         logger.error("Model routing unavailable (trace=%s): %s", _trace_id(), exc)
-        raise _http_error(503, str(exc)) from exc
+        raise _http_error(503, "Model routing unavailable") from exc
 
     try:
         credential = _get_credential()
