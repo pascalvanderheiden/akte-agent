@@ -1101,13 +1101,20 @@ class CopilotAgent:
                                     # Attribute the call to a subagent when the SDK tags it
                                     # with the delegating agent or its parent tool call.
                                     sub_name = None
+                                    known_subagents = self._routing.subagent_roles(
+                                        getattr(self._get_registry(cid), "routing", None)
+                                    )
                                     for ref in (
                                         getattr(event, "agent_id", None),
                                         getattr(data, "parent_tool_call_id", None),
                                     ):
                                         if isinstance(ref, str) and ref:
-                                            sub_name = _subagent_names.get(ref, ref)
-                                            break
+                                            if ref in _subagent_names:
+                                                sub_name = _subagent_names[ref]
+                                                break
+                                            if ref in known_subagents:
+                                                sub_name = ref
+                                                break
                                     bucket_key = (
                                         self._metric_role(cid, sub_name, usage_model),
                                         usage_model.rsplit("/", 1)[-1],
@@ -1371,6 +1378,7 @@ class CopilotAgent:
                                 _tool_span_stack.clear()
                                 _tool_spans.clear()
                                 _subagent_names.clear()
+                                _subagent_starts.clear()
 
                                 tc = self._tool_counters.get(cid, 0)
                                 usage = self._usage.get(cid, {"prompt": 0, "completion": 0, "reasoning": 0, "total": 0})
