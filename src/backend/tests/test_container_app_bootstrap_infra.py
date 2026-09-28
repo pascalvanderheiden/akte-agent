@@ -14,6 +14,7 @@ template that would be *submitted*. Nothing here talks to Azure.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -163,11 +164,32 @@ def test_both_modules_use_an_identical_mechanism(service_templates: dict[str, An
 
 
 @pytest.mark.parametrize("module", SERVICE_MODULES)
-def test_module_explains_why_the_image_is_not_hardcoded(module: str) -> None:
+def test_module_explains_the_bootstrap_image_strategy(module: str) -> None:
     """A comment so an incident responder does not 'fix' this back to a placeholder."""
     source = (MODULES / module).read_text()
     assert IMAGE_MODULE in source
-    assert "hardcode" in source.lower()
+    comments = [line.strip() for line in source.splitlines() if line.strip().startswith("//")]
+    assert any(IMAGE_MODULE in line for line in comments), (
+        f"{module} does not explain why its image comes from {IMAGE_MODULE}"
+    )
+
+
+@pytest.mark.parametrize("module", SERVICE_MODULES)
+def test_no_command_override_is_rendered(module: str, service_templates: dict[str, Any]) -> None:
+    """`azd deploy` swaps only the image, so a command set here would outlive
+    the bootstrap image and run against the application image."""
+    container = _container_app(service_templates[module])["properties"]["template"]["containers"][0]
+    assert "command" not in container
+    assert "args" not in container
+
+
+def test_exists_flags_are_fed_from_azd() -> None:
+    """azd records these once a service image has been deployed."""
+    params = json.loads((INFRA / "main.parameters.json").read_text())["parameters"]
+    assert params["agentServiceExists"]["value"] == "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}"
+    assert params["oboMcpServerExists"]["value"] == "${SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS=false}"
+    # Unrelated gating must stay exactly as it was.
+    assert params["deployObo"]["value"] == "${DEPLOY_OBO=true}"
 
 
 # ---------------------------------------------------------------------------
@@ -176,15 +198,16 @@ def test_module_explains_why_the_image_is_not_hardcoded(module: str) -> None:
 
 
 def test_bootstrap_image_serves_http_on_the_requested_port(image_template: dict[str, Any]) -> None:
-    bootstrap_env = json.dumps(image_template["outputs"]["bootstrapEnv"]["value"])
-    assert bootstrap_env.count("parameters('targetPort')") == 2, (
-        "the bootstrap listening port must come from the ingress target port"
-    )
-    assert "ASPNETCORE_HTTP_PORTS" in bootstrap_env
-    assert "ASPNETCORE_URLS" in bootstrap_env
+    bootstrap_env = image_template["outputs"]["bootstrapEnv"]["value"]
+    entries = re.findall(r"createObject\('name', '([^']+)', 'value', ([^)]*\))", bootstrap_env)
+    assert {name for name, _ in entries} == {"ASPNETCORE_HTTP_PORTS", "ASPNETCORE_URLS"}
+    for name, value in entries:
+        assert "parameters('targetPort')" in value, (
+            f"{name} must take the bootstrap listening port from the ingress target port"
+        )
     default_image = image_template["parameters"]["bootstrapImage"]["defaultValue"]
-    assert default_image.startswith("mcr.microsoft.com/")
-    assert not any(default_image.startswith(image) for image in PORT_80_IMAGES)
+    assert default_image.split("/")[0] == "mcr.microsoft.com"
+    assert default_image.rsplit(":", 1)[0] not in PORT_80_IMAGES
 
 
 def test_a_deployed_application_image_is_read_back_and_preserved(image_template: dict[str, Any]) -> None:
@@ -204,21 +227,3 @@ def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, 
 
 def test_no_container_app_is_created_by_the_shared_module(image_template: dict[str, Any]) -> None:
     assert _resources(image_template, "Microsoft.App/containerApps") == []
-
-
-@pytest.mark.parametrize("module", SERVICE_MODULES)
-def test_no_command_override_is_rendered(module: str, service_templates: dict[str, Any]) -> None:
-    """`azd deploy` swaps only the image, so a command set here would outlive
-    the bootstrap image and run against the application image."""
-    container = _container_app(service_templates[module])["properties"]["template"]["containers"][0]
-    assert "command" not in container
-    assert "args" not in container
-
-
-def test_exists_flags_are_fed_from_azd(service_templates: dict[str, Any]) -> None:
-    """azd records these once a service image has been deployed."""
-    params = json.loads((INFRA / "main.parameters.json").read_text())["parameters"]
-    assert params["agentServiceExists"]["value"] == "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}"
-    assert params["oboMcpServerExists"]["value"] == "${SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS=false}"
-    # Unrelated gating must stay exactly as it was.
-    assert params["deployObo"]["value"] == "${DEPLOY_OBO=true}"

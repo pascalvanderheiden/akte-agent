@@ -28,6 +28,11 @@
   Leftover environment variables are inert by comparison, and the next
   provision drops them.
 
+  Scope: this module is called from the container app modules themselves, so
+  the lookup resolves in the same resource group as the Container App it is
+  resolving an image for. Calling it from anywhere else needs that scope passed
+  in explicitly, or it reads the wrong app.
+
   `exists` comes from azd, which records `SERVICE_<NAME>_RESOURCE_EXISTS` in the
   environment once a service has been deployed; ARM cannot read a resource that
   may not exist, hence the flag rather than a probe.
