@@ -105,6 +105,19 @@ jobs:
 
           copilot='copilot-pull-request-reviewer[bot]'
 
+          # True when the timeline's most recent Copilot review event is a
+          # request (not a submitted review) made at or after `$2`. A submitted
+          # review counts too, since the request was plainly honoured.
+          copilot_request_pending() {
+            local pr="$1" since="$2" last
+            last=$(gh api "repos/$REPO/issues/$pr/timeline" --paginate --jq '
+              .[] | select(
+                (.event == "review_requested" and .requested_reviewer.login == "Copilot") or
+                (.event == "reviewed" and (.user.login // "" | test("^(Copilot|copilot-pull-request-reviewer)"))))
+              | [(.created_at // .submitted_at), .event] | @tsv' | sort | tail -n 1)
+            [ -n "$last" ] && [[ "${last%%$'\t'*}" > "$since" || "${last%%$'\t'*}" == "$since" ]]
+          }
+
           evaluate_pr() {
           local PR="$1"
 
@@ -205,7 +218,12 @@ jobs:
             fi
           done
 
-          if echo "$requested" | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
+          # Copilot never appears in `requested_reviewers` — it picks the request
+          # up immediately and drops out of that list — so the pending request is
+          # read from the timeline instead: a `review_requested` for Copilot that
+          # is newer than Copilot's latest review and than the head commit.
+          head_date=$(gh api "repos/$REPO/commits/$head" --jq '.commit.committer.date')
+          if copilot_request_pending "$PR" "$head_date"; then
             echo "Copilot review is already requested on #$PR."
             return 0
           fi
@@ -218,10 +236,19 @@ jobs:
           fi
 
           # The API answers 200 even when it quietly ignores the request, so
-          # confirm rather than trust the status code.
-          if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
-               | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
-            echo "::error::GitHub accepted the request but Copilot is not a reviewer on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
+          # confirm rather than trust the status code. Confirm on the timeline,
+          # not `requested_reviewers`, for the reason given above; the event can
+          # take a few seconds to appear.
+          confirmed=false
+          for _ in 1 2 3 4 5 6; do
+            if copilot_request_pending "$PR" "$head_date"; then
+              confirmed=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$confirmed" != "true" ]; then
+            echo "::error::GitHub accepted the request but no Copilot review request was recorded on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
             exit 1
           fi
 
