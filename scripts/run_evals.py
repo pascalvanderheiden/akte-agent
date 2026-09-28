@@ -37,11 +37,17 @@ def _headers() -> dict[str, str]:
     return h
 
 
-def start_run(use_case: str, mode: str, scenario_names: list[str] | None) -> dict[str, Any]:
+def list_scenario_names(use_case: str) -> list[str]:
+    url = f"{BACKEND_URL}/api/use-cases/{use_case}/evals/scenarios"
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(url, headers=_headers())
+    r.raise_for_status()
+    return [scenario["name"] for scenario in r.json().get("scenarios", [])]
+
+
+def start_run(use_case: str, mode: str, scenario_names: list[str]) -> dict[str, Any]:
     url = f"{BACKEND_URL}/api/use-cases/{use_case}/evals/run"
-    payload: dict[str, Any] = {"mode": mode}
-    if scenario_names:
-        payload["scenario_names"] = scenario_names
+    payload: dict[str, Any] = {"mode": mode, "scenarios": scenario_names}
     with httpx.Client(timeout=60.0) as client:
         r = client.post(url, json=payload, headers=_headers())
     r.raise_for_status()
@@ -102,13 +108,18 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--use-case", required=True)
     p.add_argument("--mode", choices=["validation", "foundry"], default="validation")
-    p.add_argument("--scenarios", help="Comma-separated scenario names. Default: all.")
+    p.add_argument("--scenarios", help="Comma-separated scenario names. Default: all discovered for the use-case.")
     args = p.parse_args()
 
-    scenario_names = [s.strip() for s in args.scenarios.split(",")] if args.scenarios else None
-
-    print(f"→ Starting {args.mode} run for '{args.use_case}'…")
     try:
+        if args.scenarios:
+            scenario_names = [s.strip() for s in args.scenarios.split(",")]
+        else:
+            scenario_names = list_scenario_names(args.use_case)
+        if not scenario_names:
+            print(f"✗ No scenarios found for '{args.use_case}'", file=sys.stderr)
+            return 1
+        print(f"→ Starting {args.mode} run for '{args.use_case}' ({len(scenario_names)} scenarios)…")
         run = start_run(args.use_case, args.mode, scenario_names)
     except httpx.HTTPStatusError as e:
         print(f"✗ HTTP {e.response.status_code}: {e.response.text[:400]}", file=sys.stderr)

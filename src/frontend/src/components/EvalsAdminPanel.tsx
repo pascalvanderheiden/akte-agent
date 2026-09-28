@@ -40,6 +40,7 @@ const statusConfig: Record<EvalRunStatus, { color: string }> = {
   scoring: { color: "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400" },
   completed: { color: "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400" },
   failed: { color: "bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400" },
+  cancelled: { color: "bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400" },
 };
 
 // ── Per-evaluator + per-scenario aggregation helpers ────────────────────────
@@ -707,7 +708,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
     setRunningValidation(true);
     setRunError("");
     try {
-      const run = await startEvalRun(useCase, { mode: "validation", scenarios: [] });
+      const run = await startEvalRun(useCase, { mode: "validation", scenarios: scenarios.map((s) => s.name) });
       setLatestRun(run);
       setRuns((prev) => [run, ...prev]);
       startPolling(run.run_id);
@@ -722,7 +723,7 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
     setRunningFoundry(true);
     setRunError("");
     try {
-      const run = await startEvalRun(useCase, { mode: "foundry", scenarios: [] });
+      const run = await startEvalRun(useCase, { mode: "foundry", scenarios: scenarios.map((s) => s.name) });
       setLatestRun(run);
       setRuns((prev) => [run, ...prev]);
       startPolling(run.run_id);
@@ -785,8 +786,9 @@ export function EvalsAdminPanel({ useCase }: Props): JSX.Element {
 
         <button
           onClick={handleRunValidation}
-          disabled={loading || personaUnavailable || runningValidation || runningFoundry}
+          disabled={loading || personaUnavailable || runningValidation || runningFoundry || scenarios.length === 0}
           className="flex items-center gap-2 px-4 py-2 text-sm text-text bg-surface border border-border-soft rounded-xl hover:bg-hover transition-all font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          title={scenarios.length === 0 ? t("eval.addFirst") : undefined}
         >
           {runningValidation ? (
             <div className="animate-spin rounded-full h-4 w-4 border-2 border-border border-t-slate-500" />

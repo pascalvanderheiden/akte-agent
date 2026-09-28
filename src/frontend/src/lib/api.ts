@@ -521,7 +521,7 @@ export async function deleteEvalScenario(useCase: string, name: string): Promise
 
 export async function startEvalRun(
   useCase: string,
-  body: { mode: EvalMode; scenarios?: string[] },
+  body: { mode: EvalMode; scenarios: string[] },
 ): Promise<EvalRun> {
   const r = await fetch(
     `${getApiUrl()}/api/use-cases/${encodeURIComponent(useCase)}/evals/run`,

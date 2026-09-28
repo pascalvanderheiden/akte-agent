@@ -8,6 +8,7 @@ Endpoints:
     POST   /api/use-cases/{use_case}/evals/run
     GET    /api/use-cases/{use_case}/evals/runs
     GET    /api/use-cases/{use_case}/evals/runs/{run_id}
+    POST   /api/use-cases/{use_case}/evals/runs/{run_id}/cancel
 """
 
 from __future__ import annotations
@@ -128,12 +129,14 @@ async def start_run(
     user: dict = Depends(require_authenticated_user),
 ) -> EvalRun:
     _ensure_use_case(request, use_case)
+    if not body.scenarios:
+        raise HTTPException(status_code=400, detail="At least one scenario is required")
     service = _get_service(request)
     try:
         run = await service.start_run(
             use_case=use_case,
             mode=body.mode,
-            scenario_names=body.scenarios or None,
+            scenario_names=body.scenarios,
             started_by=user.get("userId", "anonymous"),
         )
     except ValueError as exc:
@@ -155,6 +158,24 @@ async def list_runs(use_case: str, request: Request, limit: int = 50) -> EvalRun
 async def get_run(use_case: str, run_id: str, request: Request) -> EvalRun:
     service = _get_service(request)
     run = await service.get_run(use_case, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    return run
+
+
+@router.post("/{use_case}/evals/runs/{run_id}/cancel", response_model=EvalRun)
+async def cancel_run(
+    use_case: str,
+    run_id: str,
+    request: Request,
+    _user: dict = Depends(require_authenticated_user),
+) -> EvalRun:
+    _ensure_use_case(request, use_case)
+    service = _get_service(request)
+    try:
+        run = await service.cancel_run(use_case, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     return run
