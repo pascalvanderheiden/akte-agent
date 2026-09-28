@@ -29,6 +29,7 @@ PORT_80_ONLY_REPOSITORIES = ("containerapps-helloworld",)
 
 # Environment variables a stand-in image may use to pick its listening port.
 PORT_ENV_VARS = ("ASPNETCORE_HTTP_PORTS", "ASPNETCORE_URLS", "PORT")
+SHARED_BOOTSTRAP_CONTAINERS = {"agent-service", "obo-mcp-server"}
 
 DEPLOYED_APPLICATION_IMAGE = "examplecontainerregistry.azurecr.io/agent-service:deadbeef"
 LEGACY_PLACEHOLDER_IMAGE = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
@@ -208,9 +209,14 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                     f"targetPort {app.target_port}",
                 )
 
-    def test_first_provision_uses_the_shared_bootstrap_image(self):
+    def test_first_provision_uses_the_shared_bootstrap_image_for_fixed_services(self):
         bootstrap_image = self.bootstrap_default_image()
+        seen = set()
         for app, container in self.apps(exists=False):
+            name = container.get("name")
+            if name not in SHARED_BOOTSTRAP_CONTAINERS:
+                continue
+            seen.add(name)
             with self.subTest(module=app.module.name, container=container.get("name")):
                 self.assertEqual(
                     bootstrap_image,
@@ -218,6 +224,7 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                     f"{app.module.name}: a first provision must render the shared bootstrap "
                     f"image, not {container['image']}",
                 )
+        self.assertEqual(SHARED_BOOTSTRAP_CONTAINERS, seen)
 
     def test_deployed_application_images_are_preserved(self):
         for app, container in self.apps(exists=True, deployed_image=DEPLOYED_APPLICATION_IMAGE):

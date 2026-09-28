@@ -57,10 +57,8 @@ can be replayed by hand when something goes sideways.
   accessible by personal access token`), so the flip must run on `GITHUB_TOKEN`
   with that permission.
 - **Copilot code review must be enabled** for the repository, with AI credits
-  budget remaining. `pr-copilot-review` fails loudly when the request neither
-  remains outstanding nor starts a Copilot check within 30 seconds. The review
-  can leave `requested_reviewers` before that check becomes visible, so one
-  immediate read is not a reliable failure signal.
+  budget remaining. `pr-copilot-review` fails loudly when the request is
+  refused or no matching request/review appears on the timeline.
 - **The workflows must be on `main`.** `pull_request_target`, `workflow_run` and
   `workflow_call` all resolve against the default branch, so none of this runs
   from a feature branch.
@@ -90,6 +88,12 @@ without accounting for them silently breaks the chain:
   latest `copilot_work_*` entry is `copilot_work_finished`. Human-authored
   drafts are left alone. Before this existed, every agent PR sat in draft,
   unreviewed, until someone clicked *Ready for review* by hand.
+
+- **Copilot never shows up in `requested_reviewers`.** It takes the request
+  immediately and drops out of that list, so checking there reports every
+  successful request as "silently ignored". `pr-copilot-review` reads the
+  timeline instead: a `review_requested` for `Copilot` (or a Copilot review)
+  newer than the head commit.
 
 Two further consequences worth keeping in mind:
 
