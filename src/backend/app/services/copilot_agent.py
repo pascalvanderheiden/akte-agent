@@ -71,6 +71,11 @@ def _estimate_token_count(content: str) -> int:
     return len(re.findall(r"\w+|[^\w\s]", content))
 
 
+def _compose_system_prompt(system_prompt: str) -> str:
+    """Build the system message sent to each SDK session."""
+    return f"{system_prompt.rstrip()}\n\n{_DELEGATION_GUIDELINE}"
+
+
 def _split_input_tokens(total: int, estimates: dict[str, int]) -> dict[str, int]:
     """Allocate recorded input tokens proportionally to content-source estimates."""
     if total <= 0:
@@ -83,6 +88,7 @@ def _split_input_tokens(total: int, estimates: dict[str, int]) -> dict[str, int]
 
     allocations = {source: total * max(estimates.get(source, 0), 0) // weight_total for source in _INPUT_TOKEN_SOURCES}
     remainder = total - sum(allocations.values())
+    # Largest-remainder rounding preserves the recorded total across all sources.
     for source in sorted(
         _INPUT_TOKEN_SOURCES,
         key=lambda source: (total * max(estimates.get(source, 0), 0) % weight_total, source),
@@ -451,9 +457,7 @@ class CopilotAgent:
 
     def _add_context_token_estimate(self, conversation_id: str, source: str, content: str) -> None:
         """Track a context source's estimate without retaining its content."""
-        estimates = self._context_token_estimates.setdefault(
-            conversation_id, {"tool_call_history": 0, "conversation_history": 0}
-        )
+        estimates = self._context_token_estimates.setdefault(conversation_id, dict.fromkeys(_INPUT_TOKEN_SOURCES, 0))
         estimates[source] += _estimate_token_count(content)
 
     def set_cosmos_service(self, cosmos_service: "CosmosService") -> None:
@@ -733,7 +737,7 @@ class CopilotAgent:
             "skill_directories": skill_dirs,
             "system_message": {
                 "mode": "replace",
-                "content": f"{system_prompt.rstrip()}\n\n{_DELEGATION_GUIDELINE}",
+                "content": _compose_system_prompt(system_prompt),
             },
             "on_permission_request": PermissionHandler.approve_all,
             "on_user_input_request": self._handle_user_input_request,
@@ -1479,10 +1483,10 @@ class CopilotAgent:
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
                 source_estimates = {
-                    "persona_system": _estimate_token_count(
-                        f"{self._get_system_prompt(conversation_id).rstrip()}\n\n{_DELEGATION_GUIDELINE}"
-                    ),
                     **self._context_token_estimates.get(conversation_id, {}),
+                    "persona_system": _estimate_token_count(
+                        _compose_system_prompt(self._get_system_prompt(conversation_id))
+                    ),
                 }
                 for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
                     input_token_source_histogram.record(token_count, {**_metric_attrs, "gen_ai.input.source": source})
