@@ -26,7 +26,8 @@ resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exi
 
 var deployedImage = exists ? deployedApp!.properties.template.containers[0].image : ''
 var bootstrapRepository = split(bootstrapImage, ':')[0]
-var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:')
+var legacyBootstrapRepository = 'mcr.microsoft.com/azuredocs/containerapps-helloworld'
+var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:') || startsWith(deployedImage, '${legacyBootstrapRepository}:')
 
 @description('The image to render: the already-deployed application image, or the bootstrap image on a first create')
 output image string = isBootstrap ? bootstrapImage : deployedImage

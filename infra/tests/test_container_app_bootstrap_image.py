@@ -68,6 +68,10 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
         self.assertIn("ASPNETCORE_HTTP_PORTS", environment)
         self.assertIn("ASPNETCORE_URLS", environment)
         self.assertIn("parameters('targetPort')", environment)
+        self.assertEqual(
+            "mcr.microsoft.com/azuredocs/containerapps-helloworld",
+            self.bootstrap_template["variables"]["legacyBootstrapRepository"],
+        )
 
 
 if __name__ == "__main__":

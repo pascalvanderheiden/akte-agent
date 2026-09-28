@@ -178,8 +178,10 @@ class AgentServiceModelEnvironmentTests(unittest.TestCase):
             ("MODEL_DEPLOYMENT_FAST", "fastModelDeployment"),
             ("FOUNDRY_MODEL_DEPLOYMENT", "foundryModelDeployment"),
         ):
-            self.assertIn(name, environment)
-            self.assertIn(parameter, environment)
+            self.assertRegex(
+                environment,
+                rf"createObject\('name',\s*'{name}',\s*'value',\s*parameters\('{parameter}'\)\)",
+            )
 
     def test_main_wires_role_outputs_into_agent_service_and_azd_outputs(self):
         main = (Path(__file__).resolve().parents[1] / "main.bicep").read_text()
