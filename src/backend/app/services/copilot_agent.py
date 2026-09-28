@@ -15,7 +15,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -49,16 +49,29 @@ tracer = trace.get_tracer(__name__)
 
 @dataclass
 class InvocationTelemetry:
-    """Hosted invocation timing populated by ``run``.
+    """Hosted invocation timing attached to the ``run`` span.
 
     ``handler_started_at`` must be a ``time.monotonic()`` reading from the same
-    process and clock used by ``run``; ``handler_duration_ms`` is set when the
-    invoke span completes.
+    process and clock used by the hosted handler. The handler calls ``complete``
+    with its elapsed time after agent streaming and response preparation.
     """
 
     invocation_id: str
     handler_started_at: float
     handler_duration_ms: int | None = None
+    _span: trace.Span | None = field(default=None, init=False, repr=False)
+
+    def attach_span(self, span: trace.Span) -> None:
+        self._span = span
+
+    def complete(self, handler_duration_ms: int) -> None:
+        if self.handler_duration_ms is not None:
+            return
+        self.handler_duration_ms = handler_duration_ms
+        if self._span:
+            self._span.set_attribute("kratos.handler_duration_ms", handler_duration_ms)
+            self._span.end()
+            self._span = None
 
 
 def get_bearer_token_provider(credential, scope: str):
@@ -958,7 +971,10 @@ class CopilotAgent:
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
             attributes=_invoke_span_attrs,
+            end_on_exit=invocation_telemetry is None,
         ) as span:
+            if invocation_telemetry:
+                invocation_telemetry.attach_span(span)
             if use_case:
                 span.set_attribute("kratos.use_case", str(use_case))
             if eval_run_id:
@@ -1465,11 +1481,6 @@ class CopilotAgent:
                 if self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
-                if invocation_telemetry:
-                    invocation_telemetry.handler_duration_ms = int(
-                        (time.monotonic() - invocation_telemetry.handler_started_at) * 1000
-                    )
-                    span.set_attribute("kratos.handler_duration_ms", invocation_telemetry.handler_duration_ms)
                 self._queues.pop(conversation_id, None)
 
     def get_run_stats(self, conversation_id: str) -> dict:

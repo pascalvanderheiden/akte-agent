@@ -396,9 +396,8 @@ async def _stream_response(
             yield f"data: {json.dumps(file_event)}\n\n".encode()
 
         stats = _copilot_agent.get_run_stats(conversation_id)
-        elapsed_ms = invocation_telemetry.handler_duration_ms
-        if elapsed_ms is None:
-            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        invocation_telemetry.complete(elapsed_ms)
         run_stats = {
             "totalDurationMs": elapsed_ms,
             "totalToolCalls": total_tool_calls,
@@ -447,6 +446,8 @@ async def _stream_response(
         logger.exception("Agent failed for conversation=%s", conversation_id)
         error = ErrorEvent(message="An internal error occurred", code="AGENT_ERROR")
         yield f"data: {json.dumps({'event': 'error', 'data': error.model_dump()})}\n\n".encode()
+    finally:
+        invocation_telemetry.complete(int((time.monotonic() - start_time) * 1000))
 
     # Final done signal for the invocations protocol
     yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id, 'conversation_id': conversation_id})}\n\n".encode()

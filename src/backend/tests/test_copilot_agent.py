@@ -143,9 +143,14 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     assert attributes["kratos.request_stage"] == "in-handler"
     span.set_attribute.assert_any_call("kratos.use_case", "synthetic-use-case")
     span.set_attribute.assert_any_call("kratos.eval_run_id", "synthetic-eval")
-    span.set_attribute.assert_any_call("kratos.handler_duration_ms", telemetry.handler_duration_ms)
-    assert telemetry.handler_duration_ms is not None
-    assert telemetry.handler_duration_ms >= 0
+    assert start_span.call_args.kwargs["end_on_exit"] is False
+    assert telemetry.handler_duration_ms is None
+
+    telemetry.complete(42)
+
+    span.set_attribute.assert_any_call("kratos.handler_duration_ms", 42)
+    span.end.assert_called_once()
+    assert telemetry.handler_duration_ms == 42
 
 
 @pytest.mark.asyncio
