@@ -66,7 +66,7 @@ _RBAC_DENIAL_MARKERS = (
     "rbac",
     "request blocked by auth",
     "not authorized to perform action",
-    "principal",
+    "does not have required",
 )
 
 # Persistence-failure log signatures. Keep these synchronized with the alert

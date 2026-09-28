@@ -114,6 +114,7 @@ async def test_operation_bound_stays_below_the_startup_probe_budget() -> None:
 
 
 async def test_reads_on_the_response_path_fail_open_when_cosmos_is_blocked(
+    caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(cosmos_module, "_COSMOS_OPERATION_TIMEOUT_S", 0.05)
@@ -126,5 +127,13 @@ async def test_reads_on_the_response_path_fail_open_when_cosmos_is_blocked(
     service._conversations_container = _BlackholedReads()
     service._sessions_container = _BlackholedReads()
 
-    assert await service.get_conversation("conversation-1", "user-1") is None
-    assert await service.get_session_mapping("conversation-1") is None
+    with caplog.at_level(logging.ERROR):
+        assert await service.get_conversation("conversation-1", "user-1") is None
+        assert await service.get_session_mapping("conversation-1") is None
+
+    # The read path swallows the timeout, so the log line is the only evidence
+    # an operator gets that Cosmos stopped answering.
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert logged.count(UNREACHABLE_SIGNATURE) == 2
+    assert "get_conversation" in logged
+    assert "get_session_mapping" in logged
