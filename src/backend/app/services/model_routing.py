@@ -21,7 +21,7 @@ LOCAL_ROLE_MODELS = {
     "deep-reasoning": "gpt-6-sol",
     "fast": "gpt-6-astra",
 }
-DEFAULT_SUBAGENTS = (
+DEFAULT_SUBAGENTS: tuple[dict[str, Any], ...] = (
     {
         "name": "deep-reasoning-analyst",
         "description": "Handles complex analysis requiring deep, deliberate reasoning.",
@@ -207,6 +207,21 @@ class ModelRouting:
             custom_agents=custom_agents,
             reasoning_effort=effort,
         )
+
+    def subagent_roles(self, routing: PersonaRoutingConfig | None) -> dict[str, ModelRole]:
+        """Map each configured subagent name to its routing role (for telemetry)."""
+        roles: dict[str, ModelRole] = {str(item["name"]): ModelRole(str(item["role"])) for item in DEFAULT_SUBAGENTS}
+        for item in routing.extraSubagents if routing else []:
+            roles[item.name] = ModelRole(item.role)
+        return roles
+
+    def role_for_model(self, model: str) -> ModelRole | None:
+        """Best-effort reverse lookup of the role whose deployment serves ``model``."""
+        deployment = model.rsplit("/", 1)[-1]
+        for role, candidate in self.role_deployments().items():
+            if candidate and candidate == deployment:
+                return role
+        return None
 
     def auxiliary_target(self, task: AuxiliaryTask) -> AuxiliaryTarget:
         role = TASK_ROLES[task]

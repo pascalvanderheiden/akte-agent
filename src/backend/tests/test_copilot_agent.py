@@ -290,19 +290,23 @@ async def test_copilot_agent_records_tool_metrics(copilot_agent):
             call(
                 0.15,
                 {
-                    "gen_ai.tool.name": "web_search",
                     "gen_ai.operation.name": "execute_tool",
                     "gen_ai.provider.name": "github",
-                    "gen_ai.request.model": "gpt-52",
+                    "gen_ai.request.model": "gpt-6-luna",
+                    "kratos.routing.role": "orchestrator",
+                    "server.address": "api.githubcopilot.com",
+                    "gen_ai.tool.name": "web_search",
                 },
             ),
             call(
                 0.3,
                 {
-                    "gen_ai.tool.name": "read_file",
                     "gen_ai.operation.name": "execute_tool",
                     "gen_ai.provider.name": "github",
-                    "gen_ai.request.model": "gpt-52",
+                    "gen_ai.request.model": "gpt-6-luna",
+                    "kratos.routing.role": "orchestrator",
+                    "server.address": "api.githubcopilot.com",
+                    "gen_ai.tool.name": "read_file",
                 },
             ),
         ]
@@ -312,7 +316,8 @@ async def test_copilot_agent_records_tool_metrics(copilot_agent):
         {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.provider.name": "github",
-            "gen_ai.request.model": "gpt-52",
+            "gen_ai.request.model": "gpt-6-luna",
+            "kratos.routing.role": "orchestrator",
             "server.address": "api.githubcopilot.com",
         },
     )
@@ -517,3 +522,178 @@ async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent
     assert source_counts.keys() == {"persona_system", "tool_call_history", "conversation_history"}
     assert all(count > 0 for count in source_counts.values())
     assert sum(source_counts.values()) == input_calls[0].args[0]
+
+
+def _usage_event(model, prompt, completion, reasoning, parent_tool_call_id=None, data_agent_id=None):
+    event = MagicMock()
+    event.type.value = "assistant.usage"
+    event.agent_id = None
+    event.data.agent_id = data_agent_id
+    event.data.model = model
+    event.data.model_name = None
+    event.data.prompt_tokens = prompt
+    event.data.completion_tokens = completion
+    event.data.total_tokens = prompt + completion
+    event.data.completion_tokens_details = None
+    event.data.reasoning_tokens = reasoning
+    event.data.parent_tool_call_id = parent_tool_call_id
+    return event
+
+
+def _subagent_event(event_type, agent_name, model, call_id):
+    event = MagicMock()
+    event.type.value = event_type
+    event.data.agent_name = agent_name
+    event.data.model = model
+    event.data.tool_call_id = call_id
+    return event
+
+
+async def _run_with_events(agent, events):
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session.return_value = mock_session
+
+    def fake_on(callback):
+        for event in events:
+            callback(event)
+        idle = MagicMock()
+        idle.type.value = "session.idle"
+        callback(idle)
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+    agent._client = mock_client
+    with (
+        patch("app.services.copilot_agent.token_usage_histogram") as tokens,
+        patch("app.services.copilot_agent.operation_duration_histogram") as durations,
+    ):
+        [event async for event in agent.run("analyze", "conversation")]
+    token_records = {
+        (
+            call.args[1]["kratos.routing.role"],
+            call.args[1]["gen_ai.request.model"],
+            call.args[1]["gen_ai.token.type"],
+        ): call.args[0]
+        for call in tokens.record.call_args_list
+    }
+    duration_dims = [
+        (call.args[1]["kratos.routing.role"], call.args[1]["gen_ai.request.model"])
+        for call in durations.record.call_args_list
+    ]
+    return token_records, duration_dims
+
+
+async def _run_with_source_metrics(agent, events):
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session.return_value = mock_session
+
+    def fake_on(callback):
+        for event in events:
+            callback(event)
+        idle = MagicMock()
+        idle.type.value = "session.idle"
+        callback(idle)
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+    agent._client = mock_client
+    with (
+        patch("app.services.copilot_agent.token_usage_histogram"),
+        patch("app.services.copilot_agent.operation_duration_histogram"),
+        patch("app.services.copilot_agent.input_token_source_histogram") as source_usage,
+    ):
+        [event async for event in agent.run("analyze the request", "conversation")]
+
+    return [
+        (
+            call.args[1]["kratos.routing.role"],
+            call.args[1]["gen_ai.request.model"],
+            call.args[1]["gen_ai.input.source"],
+            call.args[0],
+        )
+        for call in source_usage.record.call_args_list
+    ]
+
+
+@pytest.mark.asyncio
+async def test_metrics_carry_orchestrator_role_and_model(copilot_agent):
+    token_records, duration_dims = await _run_with_events(copilot_agent, [_usage_event("gpt-6-luna", 100, 40, 12)])
+
+    assert token_records == {
+        ("orchestrator", "gpt-6-luna", "input"): 100,
+        ("orchestrator", "gpt-6-luna", "output"): 40,
+        ("orchestrator", "gpt-6-luna", "reasoning"): 12,
+    }
+    assert duration_dims == [("orchestrator", "gpt-6-luna")]
+
+
+@pytest.mark.asyncio
+async def test_metrics_segment_subagent_delegation_by_role(copilot_agent):
+    events = [
+        _usage_event("gpt-6-luna", 50, 10, 0),
+        _subagent_event("subagent.started", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+        _usage_event("gpt-6-sol", 300, 120, 80, parent_tool_call_id="sub-1"),
+        _subagent_event("subagent.completed", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+    ]
+
+    token_records, duration_dims = await _run_with_events(copilot_agent, events)
+
+    assert token_records == {
+        ("orchestrator", "gpt-6-luna", "input"): 50,
+        ("orchestrator", "gpt-6-luna", "output"): 10,
+        ("deep-reasoning", "gpt-6-sol", "input"): 300,
+        ("deep-reasoning", "gpt-6-sol", "output"): 120,
+        ("deep-reasoning", "gpt-6-sol", "reasoning"): 80,
+    }
+    assert duration_dims == [("deep-reasoning", "gpt-6-sol"), ("orchestrator", "gpt-6-luna")]
+
+
+@pytest.mark.asyncio
+async def test_metrics_use_started_subagent_model_when_usage_omits_model(copilot_agent):
+    events = [
+        _subagent_event("subagent.started", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+        _usage_event(None, 300, 120, 80, parent_tool_call_id="sub-1"),
+        _subagent_event("subagent.completed", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+    ]
+
+    token_records, duration_dims = await _run_with_events(copilot_agent, events)
+
+    assert token_records == {
+        ("deep-reasoning", "gpt-6-sol", "input"): 300,
+        ("deep-reasoning", "gpt-6-sol", "output"): 120,
+        ("deep-reasoning", "gpt-6-sol", "reasoning"): 80,
+    }
+    assert duration_dims == [("deep-reasoning", "gpt-6-sol"), ("orchestrator", "gpt-6-luna")]
+
+
+@pytest.mark.asyncio
+async def test_input_source_metrics_use_orchestrator_input_bucket(copilot_agent):
+    events = [
+        _usage_event("gpt-6-luna", 50, 10, 0),
+        _subagent_event("subagent.started", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+        _usage_event("gpt-6-sol", 300, 120, 80, parent_tool_call_id="sub-1"),
+        _subagent_event("subagent.completed", "deep-reasoning-analyst", "gpt-6-sol", "sub-1"),
+    ]
+
+    source_records = await _run_with_source_metrics(copilot_agent, events)
+
+    assert source_records
+    assert {(role, model) for role, model, _source, _count in source_records} == {("orchestrator", "gpt-6-luna")}
+    assert sum(count for _role, _model, _source, count in source_records) == 50
+
+
+@pytest.mark.asyncio
+async def test_metrics_attribute_subagent_from_data_agent_id(copilot_agent):
+    events = [
+        _usage_event("gpt-6-sol", 200, 60, 40, data_agent_id="deep-reasoning-analyst"),
+    ]
+
+    token_records, _ = await _run_with_events(copilot_agent, events)
+
+    assert token_records == {
+        ("deep-reasoning", "gpt-6-sol", "input"): 200,
+        ("deep-reasoning", "gpt-6-sol", "output"): 60,
+        ("deep-reasoning", "gpt-6-sol", "reasoning"): 40,
+    }

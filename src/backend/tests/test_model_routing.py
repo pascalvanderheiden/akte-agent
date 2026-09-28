@@ -5,7 +5,7 @@ import pytest
 from app.config import Settings
 from app.models import AgentRequest, ConversationCreate, ConversationUpdate, PersonaRoutingConfig
 from app.services.copilot_agent import CopilotAgent
-from app.services.model_routing import ModelRouting
+from app.services.model_routing import ModelRole, ModelRouting
 
 
 def _azure_settings(**updates) -> Settings:
@@ -52,6 +52,26 @@ def test_dedicated_selection_pins_defaults_and_persona_extras():
 
     assert plan.model == "deep-reasoning/sol-deployment"
     assert {agent["model"] for agent in plan.custom_agents} == {"deep-reasoning/sol-deployment"}
+
+
+def test_subagent_roles_and_model_lookup_for_telemetry():
+    routing = PersonaRoutingConfig.model_validate(
+        {
+            "extraSubagents": [
+                {"name": "triage", "description": "Triage", "role": "fast", "prompt": "Triage."},
+            ]
+        }
+    )
+    model_routing = ModelRouting(_azure_settings())
+
+    assert model_routing.subagent_roles(routing) == {
+        "deep-reasoning-analyst": ModelRole.DEEP_REASONING,
+        "fast-worker": ModelRole.FAST,
+        "triage": ModelRole.FAST,
+    }
+    assert model_routing.role_for_model("orchestrator/luna-deployment") == ModelRole.ORCHESTRATOR
+    assert model_routing.role_for_model("sol-deployment") == ModelRole.DEEP_REASONING
+    assert model_routing.role_for_model("unknown") is None
 
 
 def test_local_mode_uses_capi_ids_without_byok_providers():
