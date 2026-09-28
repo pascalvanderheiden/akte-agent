@@ -25,6 +25,7 @@ from app.services import cosmos_service as cosmos_module
 from app.services.cosmos_service import (
     NETWORK_DENIAL_SIGNATURE,
     RBAC_DENIAL_SIGNATURE,
+    UNCLASSIFIED_DENIAL_SIGNATURE,
     UNREACHABLE_SIGNATURE,
     CosmosService,
 )
@@ -74,14 +75,17 @@ def _cosmos_service(container) -> CosmosService:
 
 
 @pytest.mark.parametrize(
-    "detail,expected_signature,other_signature",
+    "detail,expected_signature",
     [
-        (FIREWALL_DENIAL, NETWORK_DENIAL_SIGNATURE, RBAC_DENIAL_SIGNATURE),
-        (RBAC_DENIAL, RBAC_DENIAL_SIGNATURE, NETWORK_DENIAL_SIGNATURE),
+        (FIREWALL_DENIAL, NETWORK_DENIAL_SIGNATURE),
+        ("Request is not allowed by the account's virtual network rules.", NETWORK_DENIAL_SIGNATURE),
+        (RBAC_DENIAL, RBAC_DENIAL_SIGNATURE),
+        ("Principal does not have required RBAC permissions to perform action.", RBAC_DENIAL_SIGNATURE),
+        ("Forbidden", UNCLASSIFIED_DENIAL_SIGNATURE),
     ],
 )
 async def test_network_and_rbac_denials_log_distinct_signatures(
-    caplog: pytest.LogCaptureFixture, detail: str, expected_signature: str, other_signature: str
+    caplog: pytest.LogCaptureFixture, detail: str, expected_signature: str
 ) -> None:
     service = _cosmos_service(_RefusingContainer(403, detail, sub_status=5301))
 
@@ -90,7 +94,9 @@ async def test_network_and_rbac_denials_log_distinct_signatures(
 
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert expected_signature in logged
-    assert other_signature not in logged
+    for other in (NETWORK_DENIAL_SIGNATURE, RBAC_DENIAL_SIGNATURE, UNCLASSIFIED_DENIAL_SIGNATURE):
+        if other != expected_signature:
+            assert other not in logged
     assert "upsert_message" in logged
 
 

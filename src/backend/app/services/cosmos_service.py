@@ -85,7 +85,7 @@ def _denial_signature(exc: CosmosHttpResponseError) -> str:
     the identity is missing a data-plane role. Chasing the wrong one costs
     hours, so they never share a message.
     """
-    detail = f"{exc.message or ''}".lower()
+    detail = (exc.message or "").lower()
     if any(marker in detail for marker in _NETWORK_DENIAL_MARKERS):
         return NETWORK_DENIAL_SIGNATURE
     if any(marker in detail for marker in _RBAC_DENIAL_MARKERS):
