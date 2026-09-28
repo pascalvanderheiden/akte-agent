@@ -54,8 +54,6 @@ class FilteringSpanProcessor(BatchSpanProcessor):
 # GenAI metric bucket boundaries per OTel semantic conventions
 _TOKEN_BUCKETS = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 _DURATION_BUCKETS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
-# The zero boundary keeps no-tool invocations distinct from single-tool invocations.
-_TOOL_CALL_BUCKETS = (0, 1, 2, 4, 8, 16, 32, 64)
 
 # Module-level reference for the tracer provider (used by instrument_fastapi_app)
 _tracer_provider: TracerProvider | None = None
@@ -86,31 +84,39 @@ def setup_telemetry(settings: Settings) -> None:
 
             conn_str = settings.applicationinsights_connection_string
 
-            # Traces → AppInsights 'dependencies' and 'requests' tables
-            trace_exporter = AzureMonitorTraceExporter(connection_string=conn_str)
-            provider.add_span_processor(FilteringSpanProcessor(trace_exporter))
-            logger.info("Azure Monitor trace exporter configured")
+            try:
+                # Traces → AppInsights 'dependencies' and 'requests' tables
+                trace_exporter = AzureMonitorTraceExporter(connection_string=conn_str)
+                provider.add_span_processor(FilteringSpanProcessor(trace_exporter))
+                logger.info("Azure Monitor trace exporter configured")
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor trace exporter", exc_info=True)
 
-            # Metrics → AppInsights 'customMetrics' table
-            metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
-            metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+            try:
+                # Metrics → AppInsights 'customMetrics' table
+                metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
+                metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor metric exporter", exc_info=True)
 
-            # Logs/Events → AppInsights 'traces' and 'customEvents' tables
-            log_exporter = AzureMonitorLogExporter(connection_string=conn_str)
-            log_provider = LoggerProvider(resource=resource)
-            log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            _logs.set_logger_provider(log_provider)
+            try:
+                # Logs/Events → AppInsights 'traces' and 'customEvents' tables
+                log_exporter = AzureMonitorLogExporter(connection_string=conn_str)
+                log_provider = LoggerProvider(resource=resource)
+                log_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+                _logs.set_logger_provider(log_provider)
 
-            # Bridge Python logging → OTel Logs → AppInsights 'traces' table.
-            # This captures all app logs (copilot_agent events, skill calls, etc.)
-            # and correlates them with the active trace context.
-            otel_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
-            logging.getLogger().addHandler(otel_handler)
-            logger.info("Azure Monitor log/events exporter configured (with Python logging bridge)")
+                # Bridge Python logging → OTel Logs → AppInsights 'traces' table.
+                # This captures all app logs (copilot_agent events, skill calls, etc.)
+                # and correlates them with the active trace context.
+                otel_handler = LoggingHandler(level=logging.INFO, logger_provider=log_provider)
+                logging.getLogger().addHandler(otel_handler)
+                logger.info("Azure Monitor log/events exporter configured (with Python logging bridge)")
+            except Exception:
+                logger.warning("Failed to configure Azure Monitor log/events exporter", exc_info=True)
 
         except Exception:
-            metric_reader = None
-            logger.warning("Failed to configure Azure Monitor exporters", exc_info=True)
+            logger.warning("Failed to load Azure Monitor exporters", exc_info=True)
 
     if metric_reader:
         meter_provider = MeterProvider(
@@ -121,7 +127,7 @@ def setup_telemetry(settings: Settings) -> None:
                 for name, buckets in (
                     ("gen_ai.client.token.usage", _TOKEN_BUCKETS),
                     ("gen_ai.client.operation.duration", _DURATION_BUCKETS),
-                    ("gen_ai.agent.tool_calls", _TOOL_CALL_BUCKETS),
+                    ("gen_ai.agent.tool_calls", _DURATION_BUCKETS),
                     ("gen_ai.tool.duration", _DURATION_BUCKETS),
                 )
             ],
