@@ -74,6 +74,7 @@ def setup_telemetry(settings: Settings) -> None:
 
     provider = TracerProvider(resource=resource)
 
+    metric_reader = None
     if settings.applicationinsights_connection_string:
         try:
             from azure.monitor.opentelemetry.exporter import (
@@ -92,22 +93,6 @@ def setup_telemetry(settings: Settings) -> None:
             # Metrics → AppInsights 'customMetrics' table
             metric_exporter = AzureMonitorMetricExporter(connection_string=conn_str)
             metric_reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=60000)
-            meter_provider = MeterProvider(
-                resource=resource,
-                metric_readers=[metric_reader],
-                views=[
-                    View(
-                        instrument_name="gen_ai.agent.tool_calls",
-                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
-                    ),
-                    View(
-                        instrument_name="gen_ai.tool.duration",
-                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
-                    ),
-                ],
-            )
-            metrics.set_meter_provider(meter_provider)
-            logger.info("Azure Monitor metric exporter configured")
 
             # Logs/Events → AppInsights 'traces' and 'customEvents' tables
             log_exporter = AzureMonitorLogExporter(connection_string=conn_str)
@@ -124,6 +109,24 @@ def setup_telemetry(settings: Settings) -> None:
 
         except Exception:
             logger.warning("Failed to configure Azure Monitor exporters", exc_info=True)
+
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[metric_reader] if metric_reader else [],
+        views=[
+            View(
+                instrument_name="gen_ai.agent.tool_calls",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
+            ),
+            View(
+                instrument_name="gen_ai.tool.duration",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+            ),
+        ],
+    )
+    metrics.set_meter_provider(meter_provider)
+    if metric_reader:
+        logger.info("Azure Monitor metric exporter configured")
 
     trace.set_tracer_provider(provider)
     _tracer_provider = provider

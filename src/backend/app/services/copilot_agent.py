@@ -1385,12 +1385,12 @@ class CopilotAgent:
                         break
                     yield item
 
-                tool_events = self._tool_counters.get(conversation_id, 0)
+                tool_call_count = self._tool_counters.get(conversation_id, 0)
                 # Enrich the span with usage and tool call counts
                 usage = self._usage.get(conversation_id, {})
                 span.set_attribute("gen_ai.usage.input_tokens", usage.get("prompt", 0))
                 span.set_attribute("gen_ai.usage.output_tokens", usage.get("completion", 0))
-                span.set_attribute("gen_ai.agent.tool_calls", tool_events)
+                span.set_attribute("gen_ai.agent.tool_calls", tool_call_count)
 
                 # Reasoning tokens (non-standard but useful for o-series / GPT-5)
                 reasoning_t = usage.get("reasoning", 0)
@@ -1426,7 +1426,7 @@ class CopilotAgent:
                             ]
                         ),
                     )
-                if tool_events == 0:
+                if tool_call_count == 0:
                     logger.warning(
                         "No tool events observed for conversation=%s prompt=%r",
                         conversation_id,
@@ -1443,7 +1443,7 @@ class CopilotAgent:
                     token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
-                tool_call_count_histogram.record(tool_events, _metric_attrs)
+                tool_call_count_histogram.record(tool_call_count, _metric_attrs)
                 elapsed_s = time.monotonic() - self._send_time
                 operation_duration_histogram.record(elapsed_s, _metric_attrs)
 
