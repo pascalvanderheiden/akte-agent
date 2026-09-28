@@ -113,11 +113,10 @@ class BlobSkillService:
             )
         except ResourceExistsError:
             pass  # already provisioned — the account answered, so it is reachable
-        except HttpResponseError as exc:
-            # Reachable, but this request was refused (e.g. RBAC still
-            # propagating). Keep the client: reads may well succeed.
-            logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
         except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+            # ClientAuthenticationError subclasses HttpResponseError, so this
+            # branch must be checked first or auth failures would be swallowed
+            # by the broader "refused but reachable" handler below.
             self._unavailability_reason = type(exc).__name__
             logger.warning(
                 "Blob storage at %s unreachable within %ds (%s) — using local skills only. "
@@ -127,6 +126,10 @@ class BlobSkillService:
                 type(exc).__name__,
             )
             await self._disable()
+        except HttpResponseError as exc:
+            # Reachable, but this request was refused (e.g. RBAC still
+            # propagating). Keep the client: reads may well succeed.
+            logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
 
     async def _disable(self) -> None:
         """Drop the unusable client so ``is_available`` reports False."""
