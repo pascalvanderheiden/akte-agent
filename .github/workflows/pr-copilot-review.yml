@@ -91,6 +91,7 @@ jobs:
         if: steps.resolve.outputs.prs != ''
         env:
           GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          DEFAULT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRS: ${{ steps.resolve.outputs.prs }}
           REPO: ${{ github.repository }}
         run: |
@@ -168,7 +169,13 @@ jobs:
             fi
 
             echo "Coding agent finished #$PR but left it in draft; marking it ready for review."
-            gh pr ready "$PR" --repo "$REPO"
+            # `gh pr ready` is GraphQL-only, and the fine-grained
+            # COPILOT_ASSIGN_TOKEN is refused there
+            # (`markPullRequestReadyForReview`), so this one call uses
+            # GITHUB_TOKEN. Its `ready_for_review` event is swallowed by the
+            # recursion guard, which costs nothing: the review request is made
+            # further down in this same run.
+            GH_TOKEN="$DEFAULT_TOKEN" gh pr ready "$PR" --repo "$REPO"
             draft=false
           fi
 
