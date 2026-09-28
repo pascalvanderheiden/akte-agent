@@ -458,7 +458,7 @@ class CopilotAgent:
     def _add_context_token_estimate(self, conversation_id: str, source: str, content: str) -> None:
         """Track a context source's estimate without retaining its content."""
         estimates = self._context_token_estimates.setdefault(conversation_id, dict.fromkeys(_INPUT_TOKEN_SOURCES, 0))
-        estimates[source] += _estimate_token_count(content)
+        estimates[source] = estimates.get(source, 0) + _estimate_token_count(content)
 
     def set_cosmos_service(self, cosmos_service: "CosmosService") -> None:
         """Inject the Cosmos service for session persistence."""
@@ -1489,7 +1489,10 @@ class CopilotAgent:
                     ),
                 }
                 for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
-                    input_token_source_histogram.record(token_count, {**_metric_attrs, "gen_ai.input.source": source})
+                    if token_count:
+                        input_token_source_histogram.record(
+                            token_count, {**_metric_attrs, "gen_ai.input.source": source}
+                        )
                 self._add_context_token_estimate(
                     conversation_id, "conversation_history", "".join(self._response_parts.get(conversation_id, []))
                 )
