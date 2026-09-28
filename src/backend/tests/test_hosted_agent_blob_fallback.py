@@ -65,9 +65,17 @@ def hosted_main() -> Iterator[ModuleType]:
 class FakeBlobSkillService:
     """Minimal stand-in that counts every blob round-trip it is asked to make."""
 
-    def __init__(self, *, available: bool, local_base_dir: Path | None = None, seed_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        available: bool,
+        local_base_dir: Path | None = None,
+        list_error: Exception | None = None,
+        seed_error: Exception | None = None,
+    ):
         self._available = available
         self._local_base_dir = local_base_dir or Path("use-cases")
+        self._list_error = list_error
         self._seed_error = seed_error
         self.calls: list[str] = []
 
@@ -77,6 +85,12 @@ class FakeBlobSkillService:
 
     async def _disable(self) -> None:
         self._available = False
+
+    async def list_use_cases(self) -> list[str]:
+        self.calls.append("list_use_cases")
+        if self._list_error is not None:
+            raise self._list_error
+        return []
 
     async def seed_from_local(self) -> list[str]:
         self.calls.append("seed_from_local")
@@ -158,20 +172,64 @@ async def test_reachable_blob_with_no_content_still_tries_blob_then_falls_back(
         TimeoutError(),
     ],
 )
-async def test_startup_seed_failure_disables_blob(hosted_main: ModuleType, error: Exception) -> None:
-    blob = FakeBlobSkillService(available=True, seed_error=error)
+async def test_startup_list_failure_disables_blob(hosted_main: ModuleType, error: Exception) -> None:
+    blob = FakeBlobSkillService(available=True, list_error=error)
 
     await hosted_main._seed_or_disable_blob(blob)
 
     assert not blob.is_available
+    # An account-level failure on the reachability probe must short-circuit
+    # before ever attempting the seed/upload.
+    assert blob.calls == ["list_use_cases"]
 
 
-async def test_startup_seed_keeps_blob_for_transient_errors(hosted_main: ModuleType) -> None:
+async def test_startup_list_keeps_blob_for_transient_errors(hosted_main: ModuleType) -> None:
     blob = FakeBlobSkillService(
         available=True,
-        seed_error=HttpResponseError(response=SimpleNamespace(status_code=503, headers={}, reason="Unavailable")),
+        list_error=HttpResponseError(response=SimpleNamespace(status_code=503, headers={}, reason="Unavailable")),
     )
 
     await hosted_main._seed_or_disable_blob(blob)
 
     assert blob.is_available
+
+
+async def test_startup_upload_failure_leaves_blob_enabled(hosted_main: ModuleType) -> None:
+    """A read-capable identity denied on upload alone must not disable blob.
+
+    ``list_use_cases`` (the reachability probe) succeeds here — only the
+    subsequent seed/upload fails with 403 — so this is a write-scoped
+    permission gap, not proof the account is unreachable.
+    """
+    blob = FakeBlobSkillService(
+        available=True,
+        seed_error=HttpResponseError(response=SimpleNamespace(status_code=403, headers={}, reason="Forbidden")),
+    )
+
+    await hosted_main._seed_or_disable_blob(blob)
+
+    assert blob.is_available
+    assert blob.calls == ["list_use_cases", "seed_from_local"]
+
+
+@pytest.mark.usefixtures("isolated_registries")
+async def test_startup_disable_then_lazy_load_makes_no_further_blob_calls(
+    hosted_main: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Full regression sequence: startup seed fails → disabled → no later blob call."""
+    blob = FakeBlobSkillService(
+        available=True,
+        list_error=HttpResponseError(response=SimpleNamespace(status_code=403, headers={}, reason="Forbidden")),
+    )
+    monkeypatch.setattr(hosted_main, "_blob_service", blob)
+
+    await hosted_main._seed_or_disable_blob(blob)
+    assert not blob.is_available
+    calls_after_seed = list(blob.calls)
+
+    await hosted_main._ensure_registry("akte-agent")
+
+    assert blob.calls == calls_after_seed
+    registry = hosted_main._registries["akte-agent"]
+    assert "You are a helpful assistant." in registry.system_prompt
+    assert "web-search" in registry.skills

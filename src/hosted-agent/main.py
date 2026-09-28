@@ -127,6 +127,11 @@ def _is_blob_unreachable(exc: BaseException) -> bool:
     agent's Foundry-managed compute typically sits outside the storage account's
     private endpoint). Anything else — a 404, a conflict, a 5xx — is treated as
     per-request and leaves blob enabled.
+
+    This is only applied to a *read* (list) call. ``seed_from_local`` also
+    uploads, and a read-capable identity without write permission can 403 on
+    an upload alone — that says nothing about whether reads work, so a write
+    failure must never disable blob (see :func:`_seed_or_disable_blob`).
     """
     if isinstance(exc, TimeoutError | ServiceRequestError | ServiceResponseError | ClientAuthenticationError):
         return True
@@ -134,20 +139,24 @@ def _is_blob_unreachable(exc: BaseException) -> bool:
 
 
 async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
-    """Seed local use-cases into blob, disabling blob if the account is unreachable.
+    """Seed local use-cases into blob, disabling blob only if reads are unreachable.
 
-    The seed is the hosted agent's first real blob request, so it is also where
-    an account-level reachability failure (403/timeout) first shows up. Leaving
-    the service "available" after that would make every later per-use-case lazy
-    load repeat the same failing round-trip before falling back to local disk.
-    Reusing ``BlobSkillService._disable()`` records the verdict once — in the
-    same place ``initialize()`` records it — so :func:`_ensure_registry` goes
+    ``list_use_cases`` is called first, on its own, purely to establish
+    reachability: it is a read, so a failure here means this compute cannot
+    reach the account at all (the hosted agent's Foundry-managed compute
+    typically sits outside the storage account's private endpoint). Reusing
+    ``BlobSkillService._disable()`` records that verdict once — in the same
+    place ``initialize()`` records it — so :func:`_ensure_registry` goes
     straight to the baked-in ``use-cases/`` directory from then on.
+
+    Once reads are confirmed to work, ``seed_from_local`` (which lists again,
+    then uploads any missing use-case) is attempted separately. A failure
+    there — e.g. a read-capable identity denied on upload — is a write-only
+    problem and must not disable blob: later reads still have a good chance
+    of succeeding.
     """
     try:
-        seeded = await blob_service.seed_from_local()
-        if seeded:
-            logger.info("Seeded %d use-case(s) into blob", len(seeded))
+        await blob_service.list_use_cases()
     except Exception as exc:
         if _is_blob_unreachable(exc):
             logger.warning(
@@ -156,7 +165,18 @@ async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
             )
             await blob_service._disable()  # noqa: SLF001
         else:
-            logger.exception("Failed to seed use-cases into blob storage")
+            logger.exception("Failed to verify blob reachability at startup")
+        return
+
+    try:
+        seeded = await blob_service.seed_from_local()
+        if seeded:
+            logger.info("Seeded %d use-case(s) into blob", len(seeded))
+    except Exception:
+        # Reads just succeeded above, so the account is reachable; this is a
+        # write-scoped failure. Leave blob enabled — later reads (and thus the
+        # per-use-case lazy loads) still have a chance to succeed.
+        logger.exception("Failed to seed use-cases into blob storage")
 
 
 async def _startup() -> None:
