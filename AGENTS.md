@@ -121,6 +121,11 @@ Gotchas that have bitten before:
   Target the *running* revision explicitly — `azd provision` leaves a second,
   briefly-activating revision behind, and exec against it fails with an opaque
   `ClusterExecFailure ... code: 500`.
+  The same network boundary means Foundry hosted-agent compute — which is not
+  VNet-injected the way the Container App backend is — cannot reach that
+  account at all, so `src/hosted-agent` runs local-only by design and ignores
+  Blob-only skill edits. See `docs/adr/0002-hosted-agent-local-only-skills.md`
+  and `src/hosted-agent/README.md`; don't re-investigate it as a bug.
 - Hooks must not prompt mid-run. `azd` repaints its progress table over hook
   output, which silently ate the skills menu and its prompt. Questions belong
   in `hooks/select-use-cases.sh` at preprovision, before that table starts;

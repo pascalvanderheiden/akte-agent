@@ -24,19 +24,37 @@ name: PR review by Copilot
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize]
+  schedule:
+    # Every ten minutes, matching `pr-auto-merge`. The coding agent leaves its
+    # pull requests in draft when it finishes, and finishing raises no webhook —
+    # `copilot_work_finished` is a timeline entry, not an event. So the last
+    # `synchronize` arrives *before* the agent is done and there is no later
+    # event to react to. Without this sweep an agent PR sits in draft forever,
+    # unreviewed, because the whole chain hangs off `ready_for_review`.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
-        description: Pull request number to request a Copilot review on
-        required: true
+        description: Pull request number to request a Copilot review on. Leave empty to sweep every open PR.
+        required: false
         type: number
 
 concurrency:
-  group: pr-copilot-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: >-
+    pr-copilot-review-${{
+      github.event.pull_request.number ||
+      inputs.pr_number ||
+      github.event_name }}
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # `contents: write` is here solely for the draft flip. `pull-requests: write`
+  # alone is not enough for `markPullRequestReadyForReview`, which answers
+  # `Resource not accessible by integration` — and the fine-grained
+  # COPILOT_ASSIGN_TOKEN is refused outright, so the flip cannot be moved off
+  # GITHUB_TOKEN either. Nothing here checks out or executes PR code, which is
+  # what keeps that safe under `pull_request_target`.
+  contents: write
   pull-requests: write
 
 jobs:
@@ -48,26 +66,68 @@ jobs:
     # `opened` run is held in `action_required` anyway, so the only run that
     # ever reached the cleanup was a `synchronize` one — which was the run being
     # skipped. The result was a human sitting in the review queue for hours.
-    # The script itself exits early on a draft, so the extra runs are cheap.
+    # The script itself skips the review request on a draft, so the extra runs
+    # are cheap.
     runs-on: ubuntu-latest
     steps:
-      - name: Make Copilot the only reviewer
+      - name: Resolve the pull request
+        id: resolve
         env:
           GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number || inputs.pr_number }}
+          REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          DISPATCH_PR: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          prs="${EVENT_PR:-${DISPATCH_PR:-}}"
+
+          # A sweep has no PR of its own. Oldest first, so a backlog drains in
+          # the order it was opened.
+          if [ -z "$prs" ]; then
+            prs=$(gh pr list --repo "$REPO" --state open --limit 1000 \
+                    --json number --jq 'sort_by(.number) | .[].number' | tr '\n' ' ')
+          fi
+
+          prs=$(echo "${prs:-}" | xargs || true)
+          echo "Candidate pull request(s): ${prs:-none}"
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+
+      - name: Make Copilot the only reviewer
+        if: steps.resolve.outputs.prs != ''
+        env:
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
+          DEFAULT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRS: ${{ steps.resolve.outputs.prs }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           copilot='copilot-pull-request-reviewer[bot]'
 
+          # True when the timeline's most recent Copilot review event is a
+          # request (not a submitted review) made at or after `$2`. A submitted
+          # review counts too, since the request was plainly honoured.
+          copilot_request_pending() {
+            local pr="$1" since="$2" last
+            last=$(gh api "repos/$REPO/issues/$pr/timeline" --paginate --jq '
+              .[] | select(
+                (.event == "review_requested" and .requested_reviewer.login == "Copilot") or
+                (.event == "reviewed" and (.user.login // "" | test("^(Copilot|copilot-pull-request-reviewer)"))))
+              | [(.created_at // .submitted_at), .event] | @tsv' | sort | tail -n 1)
+            [ -n "$last" ] && [[ "${last%%$'\t'*}" > "$since" || "${last%%$'\t'*}" == "$since" ]]
+          }
+
+          evaluate_pr() {
+          local PR="$1"
+
           pr_json=$(gh pr view "$PR" --repo "$REPO" \
-            --json state,headRefOid,reviews,labels,isDraft)
+            --json state,headRefOid,reviews,labels,isDraft,author)
 
           state=$(echo "$pr_json" | jq -r .state)
           if [ "$state" != "OPEN" ]; then
             echo "PR #$PR is $state; nothing to review."
-            exit 0
+            return 0
           fi
 
           head=$(echo "$pr_json" | jq -r .headRefOid)
@@ -93,17 +153,51 @@ jobs:
             echo "Removing existing reviewers: users=$drop_users teams=$drop_teams"
             jq -nc --argjson r "$drop_users" --argjson t "$drop_teams" \
               '{reviewers: $r, team_reviewers: $t}' \
-              | gh api --method DELETE "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null
+              | gh api --method DELETE "repos/$REPO/pulls/$PR/requested_reviewers" --input - >/dev/null \
+              || echo "::notice::Could not remove $drop_users from #$PR; carrying on."
           fi
 
           # GitHub accepts a review request on a draft with 200 OK and then
-          # silently drops it, so there is nothing to be gained by asking. The
-          # coding agent also pushes repeatedly while the PR is a draft, and each
-          # accepted request would spend AI credits. `ready_for_review` brings
-          # the PR back here.
+          # silently drops it, so a draft has to be lifted before asking.
+          #
+          # The coding agent does not take its own pull request out of draft when
+          # it finishes, and finishing raises no webhook — `copilot_work_finished`
+          # is a timeline entry only. So `ready_for_review`, which the rest of the
+          # chain hangs off, never arrives on its own and the PR sits unreviewed
+          # indefinitely. Lift it here instead, on the agent's own signal.
+          #
+          # `copilot_work_finished` is the precise signal: it lands after the
+          # agent's last push, and a PR it has not finished with (or has resumed
+          # work on, after `pr-address-review`) does not carry it as the latest
+          # `copilot_work_*` entry. A draft opened by a human is left alone —
+          # that draft is deliberate.
           if [ "$draft" = "true" ]; then
-            echo "PR #$PR is a draft; reviewers cleared, not requesting a review yet."
-            exit 0
+            author=$(echo "$pr_json" | jq -r '.author.login')
+
+            if [ "$author" != "app/copilot-swe-agent" ] && [ "$author" != "Copilot" ]; then
+              echo "PR #$PR is a human's draft; reviewers cleared, leaving it in draft."
+              return 0
+            fi
+
+            last_agent_event=$(gh api "repos/$REPO/issues/$PR/timeline" --paginate \
+              --jq '[.[] | select(.event == "copilot_work_started" or
+                                  .event == "copilot_work_finished") | .event] | last // ""')
+
+            if [ "$last_agent_event" != "copilot_work_finished" ]; then
+              echo "PR #$PR is a draft and the coding agent has not finished (last signal: ${last_agent_event:-none}). Not requesting a review yet."
+              return 0
+            fi
+
+            echo "Coding agent finished #$PR but left it in draft; marking it ready for review."
+            # `gh pr ready` is GraphQL-only, and the fine-grained
+            # COPILOT_ASSIGN_TOKEN is refused there
+            # (`markPullRequestReadyForReview`), so this one call uses
+            # GITHUB_TOKEN, which needs `contents: write` for it. Its
+            # `ready_for_review` event is swallowed by the recursion guard,
+            # which costs nothing: the review request is made further down in
+            # this same run.
+            GH_TOKEN="$DEFAULT_TOKEN" gh pr ready "$PR" --repo "$REPO"
+            draft=false
           fi
 
           # The auto-merge gate only accepts a Copilot review of the current head
@@ -113,7 +207,7 @@ jobs:
                   (.author.login | startswith("copilot-pull-request-reviewer")) and
                   .commit.oid == $head)' >/dev/null; then
             echo "Copilot has already reviewed $head on #$PR."
-            exit 0
+            return 0
           fi
 
           # The head moved past whatever was reviewed, so any state the later
@@ -125,9 +219,14 @@ jobs:
             fi
           done
 
-          if echo "$requested" | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
+          # Copilot never appears in `requested_reviewers` — it picks the request
+          # up immediately and drops out of that list — so the pending request is
+          # read from the timeline instead: a `review_requested` for Copilot that
+          # is newer than Copilot's latest review and than the head commit.
+          head_date=$(gh api "repos/$REPO/commits/$head" --jq '.commit.committer.date')
+          if copilot_request_pending "$PR" "$head_date"; then
             echo "Copilot review is already requested on #$PR."
-            exit 0
+            return 0
           fi
 
           echo "Requesting a review from $copilot on #$PR ($head)."
@@ -138,11 +237,30 @@ jobs:
           fi
 
           # The API answers 200 even when it quietly ignores the request, so
-          # confirm rather than trust the status code.
-          if ! gh api "repos/$REPO/pulls/$PR/requested_reviewers" \
-               | jq -e '.users[].login | startswith("copilot-pull-request-reviewer")' >/dev/null; then
-            echo "::error::GitHub accepted the request but Copilot is not a reviewer on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
+          # confirm rather than trust the status code. Confirm on the timeline,
+          # not `requested_reviewers`, for the reason given above; the event can
+          # take a few seconds to appear.
+          confirmed=false
+          for _ in 1 2 3 4 5 6; do
+            if copilot_request_pending "$PR" "$head_date"; then
+              confirmed=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$confirmed" != "true" ]; then
+            echo "::error::GitHub accepted the request but no Copilot review request was recorded on #$PR. Check that Copilot code review is enabled for this repository and that the AI credits budget is not exhausted."
             exit 1
           fi
 
           echo "Copilot is now the only requested reviewer on #$PR."
+          }
+
+          # Invoked as a plain command, never as an `if` condition: a function
+          # call in a condition disarms `errexit` for its whole body. The two
+          # `exit 1`s above are meant to fail the run — they mean Copilot code
+          # review is off or out of credits, which affects every candidate, so
+          # stopping the sweep there is right.
+          for candidate in $PRS; do
+            evaluate_pr "$candidate"
+          done

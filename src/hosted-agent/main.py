@@ -372,6 +372,8 @@ async def _stream_response(
             elif isinstance(event, ErrorEvent):
                 yield f"data: {json.dumps({'event': 'error', 'data': event.model_dump()})}\n\n".encode()
 
+        invocation_telemetry.mark_agent_stream_complete()
+
         # Persist assistant response
         full_response = "".join(assistant_content_parts)
 
