@@ -202,6 +202,8 @@ class Evaluator:
 
     def evaluate(self, value):
         if isinstance(value, str):
+            # ARM escapes a leading `[[` only in a bracketed string; anything
+            # else is an ordinary literal and is returned untouched below.
             if value.startswith("[[") and value.endswith("]"):
                 return value[1:]
             if value.startswith("[") and value.endswith("]"):
