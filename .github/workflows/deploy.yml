@@ -271,6 +271,30 @@ jobs:
         # optional-dependency extras.
         run: uv sync --frozen --extra dev
 
+      - name: Azure Login for smoke telemetry
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Application Insights CLI extension
+        run: az extension add --name application-insights --yes
+
+      - name: Resolve smoke telemetry resource
+        env:
+          AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
+        run: |
+          mapfile -t resources < <(az resource list \
+            --resource-type Microsoft.Insights/components \
+            --tag "azd-env-name=$AZURE_ENV_NAME" \
+            --query "[].id" -o tsv)
+          if [ "${#resources[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one App Insights resource for the smoke environment; found ${#resources[@]}."
+            exit 1
+          fi
+          echo "KRATOS_APP_INSIGHTS_ID=${resources[0]}" >> "$GITHUB_ENV"
+
       # The e2e-smoke skill is the repository's post-deploy check. It normally
       # resolves its target from the local azd environment, which a runner does
       # not have, so pass the endpoints explicitly from environment variables.
