@@ -51,8 +51,9 @@ tracer = trace.get_tracer(__name__)
 class InvocationTelemetry:
     """Hosted invocation timing populated by ``run``.
 
-    ``handler_started_at`` is a ``time.monotonic()`` reading from this process;
-    ``handler_duration_ms`` is set when the invoke span completes.
+    ``handler_started_at`` must be a ``time.monotonic()`` reading from the same
+    process and clock used by ``run``; ``handler_duration_ms`` is set when the
+    invoke span completes.
     """
 
     invocation_id: str
@@ -1465,9 +1466,8 @@ class CopilotAgent:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
                 if invocation_telemetry:
-                    invocation_telemetry.handler_duration_ms = max(
-                        0,
-                        int((time.monotonic() - invocation_telemetry.handler_started_at) * 1000),
+                    invocation_telemetry.handler_duration_ms = int(
+                        (time.monotonic() - invocation_telemetry.handler_started_at) * 1000
                     )
                     span.set_attribute("kratos.handler_duration_ms", invocation_telemetry.handler_duration_ms)
                 self._queues.pop(conversation_id, None)
