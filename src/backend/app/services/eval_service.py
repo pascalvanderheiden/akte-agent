@@ -23,6 +23,7 @@ import openai
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from app.config import Settings
+from app.latency_budget import scenario_budget_ms
 from app.models import (
     EvalMode,
     EvalRun,
@@ -879,6 +880,17 @@ class EvalService:
                     judge_model=run.judge_model,
                 )
 
+            result.latency_budget_ms = scenario_budget_ms(scenario.max_duration_ms)
+            result.latency_budget_exceeded = result.duration_ms > result.latency_budget_ms
+            if result.latency_budget_exceeded:
+                logger.warning(
+                    "[eval %s] scenario '%s' exceeded latency budget: %d ms > %d ms",
+                    run_id,
+                    scenario.name,
+                    result.duration_ms,
+                    result.latency_budget_ms,
+                )
+
             run.results.append(result)
             run.progress = f"{idx + 1}/{total}"
 
@@ -893,6 +905,8 @@ class EvalService:
                     "status": result.status,
                     "error": result.error,
                     "duration_ms": result.duration_ms,
+                    "latency_budget_ms": result.latency_budget_ms,
+                    "latency_budget_exceeded": result.latency_budget_exceeded,
                 },
             )
             if await self._stop_if_cancelled(run):
@@ -1084,6 +1098,8 @@ class EvalService:
                     "scenario": r.scenario,
                     "status": r.status,
                     "duration_ms": r.duration_ms,
+                    "latency_budget_ms": r.latency_budget_ms,
+                    "latency_budget_exceeded": r.latency_budget_exceeded,
                     "scores": r.scores,
                     "error": r.error,
                 }

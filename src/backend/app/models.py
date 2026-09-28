@@ -522,6 +522,11 @@ class EvalScenario(BaseModel):
         default_factory=lambda: ["Relevance", "Coherence", "TaskAdherence", "IntentResolution", "ToolCallAccuracy"],
         description="Evaluator names to apply",
     )
+    max_duration_ms: int | None = Field(
+        default=None,
+        gt=0,
+        description="Latency budget for this scenario in ms (ADR 0003); defaults to the complex-request ceiling",
+    )
 
 
 class EvalScenarioList(BaseModel):
@@ -581,6 +586,8 @@ class ScenarioResult(BaseModel):
     status: str = "completed"
     error: str = ""
     duration_ms: int = 0
+    latency_budget_ms: int = 0
+    latency_budget_exceeded: bool = False
     scores: dict[str, dict[str, Any]] = Field(default_factory=dict)
     answer_models: list[str] = Field(default_factory=list)
     judge_model: str = ""
