@@ -74,7 +74,7 @@ from app.personas import (
     resolve_use_case,
 )
 from app.services.blob_skill_service import BlobSkillService
-from app.services.copilot_agent import CopilotAgent
+from app.services.copilot_agent import CopilotAgent, InvocationTelemetry
 from app.services.cosmos_service import CosmosService
 from app.services.skill_registry import SkillRegistry
 
@@ -334,7 +334,10 @@ async def _stream_response(
     model_selection: str = "auto",
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
-    start_time = time.monotonic()
+    invocation_telemetry = InvocationTelemetry(
+        invocation_id=invocation_id,
+        handler_started_at=time.monotonic(),
+    )
     total_tool_calls = 0
 
     # Associate conversation with use-case
@@ -382,6 +385,7 @@ async def _stream_response(
             locale=locale,
             use_case=use_case,
             model_selection=model_selection,
+            invocation_telemetry=invocation_telemetry,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -404,6 +408,8 @@ async def _stream_response(
                 yield f"data: {json.dumps({'event': 'user_input_request', 'data': event.model_dump()})}\n\n".encode()
             elif isinstance(event, ErrorEvent):
                 yield f"data: {json.dumps({'event': 'error', 'data': event.model_dump()})}\n\n".encode()
+
+        invocation_telemetry.mark_agent_stream_complete()
 
         # Persist assistant response
         full_response = "".join(assistant_content_parts)
@@ -431,7 +437,7 @@ async def _stream_response(
             yield f"data: {json.dumps(file_event)}\n\n".encode()
 
         stats = _copilot_agent.get_run_stats(conversation_id)
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        elapsed_ms = invocation_telemetry.complete()
         run_stats = {
             "totalDurationMs": elapsed_ms,
             "totalToolCalls": total_tool_calls,
@@ -483,6 +489,8 @@ async def _stream_response(
         logger.exception("Agent failed for conversation=%s", conversation_id)
         error = ErrorEvent(message="An internal error occurred", code="AGENT_ERROR")
         yield f"data: {json.dumps({'event': 'error', 'data': error.model_dump()})}\n\n".encode()
+    finally:
+        invocation_telemetry.complete()
 
     # Final done signal for the invocations protocol
     yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id, 'conversation_id': conversation_id})}\n\n".encode()

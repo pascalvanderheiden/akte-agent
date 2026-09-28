@@ -15,6 +15,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
@@ -50,6 +51,60 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass
+class InvocationTelemetry:
+    """Hosted invocation timing attached to the ``invoke_agent kratos-agent`` span.
+
+    ``handler_started_at`` must be a ``time.monotonic()`` reading from the same
+    process and clock used by the hosted handler. The handler calls ``complete``
+    after agent streaming and response preparation. Callers must invoke
+    ``complete`` in a ``finally`` block so the deferred span is always ended.
+    """
+
+    invocation_id: str
+    handler_started_at: float
+    handler_duration_ms: int | None = None
+    pre_handler_remainder_ms: int | None = None
+    in_handler_duration_ms: int | None = None
+    post_handler_remainder_ms: int | None = None
+    _span: trace.Span | None = field(default=None, init=False, repr=False)
+    _span_attached_at: float | None = field(default=None, init=False, repr=False)
+
+    def attach_span(self, span: trace.Span) -> None:
+        self._span_attached_at = time.monotonic()
+        self.pre_handler_remainder_ms = max(0, int((self._span_attached_at - self.handler_started_at) * 1000))
+        self._span = span
+        span.set_attribute("kratos.request_stage.pre_handler_remainder_ms", self.pre_handler_remainder_ms)
+        span.set_attribute("kratos.request_stage.pre_handler", "remainder")
+        span.set_attribute("kratos.request_stage.in_handler", "observed")
+        span.set_attribute("kratos.request_stage.post_handler", "remainder")
+
+    def mark_agent_stream_complete(self) -> None:
+        if self.in_handler_duration_ms is not None or self._span_attached_at is None:
+            return
+        self.in_handler_duration_ms = max(0, int((time.monotonic() - self._span_attached_at) * 1000))
+        if self._span:
+            self._span.set_attribute("kratos.request_stage.in_handler_duration_ms", self.in_handler_duration_ms)
+
+    def complete(self) -> int:
+        if self.handler_duration_ms is not None:
+            return self.handler_duration_ms
+        completed_at = time.monotonic()
+        self.handler_duration_ms = int((completed_at - self.handler_started_at) * 1000)
+        if self._span_attached_at is not None and self.in_handler_duration_ms is None:
+            self.in_handler_duration_ms = max(0, int((completed_at - self._span_attached_at) * 1000))
+        pre_handler = self.pre_handler_remainder_ms or 0
+        in_handler = self.in_handler_duration_ms or 0
+        self.post_handler_remainder_ms = max(0, self.handler_duration_ms - pre_handler - in_handler)
+        if self._span:
+            self._span.set_attribute("kratos.handler_duration_ms", self.handler_duration_ms)
+            self._span.set_attribute("kratos.request_stage.in_handler_duration_ms", in_handler)
+            self._span.set_attribute("kratos.request_stage.post_handler_remainder_ms", self.post_handler_remainder_ms)
+            self._span.end()
+            self._span = None
+        return self.handler_duration_ms
 
 
 def get_bearer_token_provider(credential, scope: str):
@@ -940,8 +995,13 @@ class CopilotAgent:
         eval_run_id: str | None = None,
         locale: Locale | None = None,
         model_selection: str | None = None,
+        invocation_telemetry: InvocationTelemetry | None = None,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
-        """Send a message and stream SDK events as typed SSE events."""
+        """Send a message and stream SDK events as typed SSE events.
+
+        Supplying ``invocation_telemetry`` transfers span completion to the
+        caller, which must call ``complete`` in a ``finally`` block.
+        """
         from app.personas import RETIRED_PERSONAS
 
         selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
@@ -990,10 +1050,16 @@ class CopilotAgent:
             "kratos.conversation_id": conversation_id,
             "server.address": _server_addr,
         }
+        if invocation_telemetry:
+            _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
+            _invoke_span_attrs["kratos.request_stage"] = "in-handler"
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
             attributes=_invoke_span_attrs,
+            end_on_exit=invocation_telemetry is None,
         ) as span:
+            if invocation_telemetry:
+                invocation_telemetry.attach_span(span)
             if use_case:
                 span.set_attribute("kratos.use_case", str(use_case))
             if eval_run_id:
