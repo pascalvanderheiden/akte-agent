@@ -278,12 +278,23 @@ exit {az_status}
 """
 
 AZD_STUB = """#!/usr/bin/env bash
+if [ "$1 $2" = "env get-values" ]; then
+  printf '%s' "${AZD_ENV_VALUES:-}"
+  exit 0
+fi
 echo "$*" >> "$AZD_LOG"
 """
 
 
 def _run_detect_hook(
-    tmp_path: Path, *, group_exists: str, tags: str, az_status: int = 0, subscription: str | None = None
+    tmp_path: Path,
+    *,
+    group_exists: str,
+    tags: str,
+    az_status: int = 0,
+    subscription: str | None = None,
+    recorded: str = "",
+    expected_status: int = 0,
 ) -> list[str]:
     """Run the detection hook against stubbed `az`/`azd`; return the azd env sets."""
     bin_dir = tmp_path / "bin"
@@ -297,11 +308,12 @@ def _run_detect_hook(
         "PATH": f"{bin_dir}:/usr/bin:/bin",
         "AZURE_ENV_NAME": "an-environment",
         "AZD_LOG": str(log),
+        "AZD_ENV_VALUES": recorded,
     }
     if subscription is not None:
         env["AZURE_SUBSCRIPTION_ID"] = subscription
     proc = subprocess.run(["bash", str(DETECT_HOOK)], capture_output=True, text=True, env=env, timeout=60)
-    assert proc.returncode == 0, f"the hook must never fail a provision:\n{proc.stderr}"
+    assert proc.returncode == expected_status, f"unexpected exit status:\n{proc.stdout}{proc.stderr}"
     return log.read_text().splitlines() if log.exists() else []
 
 
@@ -328,16 +340,26 @@ def test_an_empty_resource_group_means_a_first_create(tmp_path: Path) -> None:
     assert "env set SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS false" in calls
 
 
-def test_an_unreadable_subscription_leaves_the_flags_alone(tmp_path: Path) -> None:
+def test_an_unreadable_subscription_stops_the_provision(tmp_path: Path) -> None:
     """A failed query must never be read as 'absent': that is the case that
-    overwrites a running application image with the bootstrap stand-in."""
-    calls = _run_detect_hook(tmp_path, group_exists="", tags="", az_status=1)
+    overwrites a running application image with the bootstrap stand-in. The
+    parameters file falls back to `false`, so an unanswered query has to fail
+    the provision rather than let that fallback through."""
+    calls = _run_detect_hook(tmp_path, group_exists="", tags="", az_status=1, expected_status=1)
+    assert calls == []
+
+
+def test_an_unreadable_subscription_is_tolerated_when_every_app_is_recorded(tmp_path: Path) -> None:
+    """Nothing can regress when azd already records every service as existing:
+    the flags keep preserving the running images."""
+    recorded = 'SERVICE_AGENT_SERVICE_RESOURCE_EXISTS="true"\nSERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS="true"\n'
+    calls = _run_detect_hook(tmp_path, group_exists="", tags="", az_status=1, recorded=recorded)
     assert calls == []
 
 
 def test_detection_runs_before_every_provision() -> None:
     preprovision = (REPO_ROOT / "azure.yaml").read_text().split("preprovision:", 1)[1]
-    assert f"./hooks/{DETECT_HOOK.name}" in preprovision
+    assert f"./hooks/{DETECT_HOOK.name} || exit 1" in preprovision
 
 
 def test_the_hook_covers_every_container_app_service() -> None:

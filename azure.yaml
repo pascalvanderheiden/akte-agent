@@ -178,7 +178,9 @@ hooks:
             # Ask Azure — not the gitignored .azure/ state, which a fresh CI
             # runner does not have — which container apps already exist, so
             # provisioning preserves a running image instead of pushing the
-            # bootstrap stand-in over it. Best-effort; never fails the run.
-            ./hooks/detect-container-apps.sh
+            # bootstrap stand-in over it. Fails the provision when that answer
+            # cannot be established, because the fallback is the `false` that
+            # overwrites a running image.
+            ./hooks/detect-container-apps.sh || exit 1
             ./hooks/select-use-cases.sh
         interactive: true
