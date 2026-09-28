@@ -65,6 +65,7 @@ class BlobSkillService:
         self.local_base_dir = Path(local_base_dir)
         self._container_client: ContainerClient | None = None
         self._credential: DefaultAzureCredential | None = None
+        self._unavailability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Initialize the blob container client.
@@ -116,6 +117,7 @@ class BlobSkillService:
             # propagating). Keep the client: reads may well succeed.
             logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
         except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+            self._unavailability_reason = type(exc).__name__
             logger.warning(
                 "Blob storage at %s unreachable within %ds (%s) — using local skills only. "
                 "Expected when running outside the private endpoint's VNet.",
@@ -139,6 +141,10 @@ class BlobSkillService:
     @property
     def is_available(self) -> bool:
         return self._container_client is not None
+
+    @property
+    def unavailability_reason(self) -> str | None:
+        return self._unavailability_reason
 
     def local_dir(self, use_case: str) -> Path:
         """Return the local directory for a specific use-case."""

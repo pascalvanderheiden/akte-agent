@@ -45,7 +45,7 @@ if "FOUNDRY_ENDPOINT" not in os.environ:
 # Add the backend app to the Python path so we can reuse all existing modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
 from app.hosted_agent_invoke import extract_invoke_locale, parse_invoke_payload
@@ -158,6 +158,23 @@ async def _startup() -> None:
     _blob_service = blob_service
     _copilot_agent.set_cosmos_service(_cosmos_service)
     _mark("core_parallel", t0)
+
+    if blob_service.unavailability_reason:
+        timestamp = datetime.now(UTC).isoformat()
+        logger.warning(
+            "HOSTED_AGENT_BLOB_LOCAL_ONLY reason=%s timestamp=%s environment=%s model=%s",
+            blob_service.unavailability_reason,
+            timestamp,
+            _settings.environment,
+            _settings.foundry_model_deployment or "(empty)",
+            extra={
+                "event_name": "HOSTED_AGENT_BLOB_LOCAL_ONLY",
+                "failure_reason": blob_service.unavailability_reason,
+                "timestamp": timestamp,
+                "environment": _settings.environment,
+                "model_deployment": _settings.foundry_model_deployment or "(empty)",
+            },
+        )
 
     # Seed local use-cases into blob if the container is empty. This only
     # uploads use-cases that are missing (a fast list + skip when already
