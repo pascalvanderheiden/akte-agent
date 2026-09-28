@@ -78,6 +78,7 @@ def _split_input_tokens(total: int, estimates: dict[str, int]) -> dict[str, int]
 
     weight_total = sum(max(estimates.get(source, 0), 0) for source in _INPUT_TOKEN_SOURCES)
     if not weight_total:
+        # Every session has system instructions, even if no text estimate was available.
         return {"persona_system": total, "tool_call_history": 0, "conversation_history": 0}
 
     allocations = {source: total * max(estimates.get(source, 0), 0) // weight_total for source in _INPUT_TOKEN_SOURCES}
@@ -447,6 +448,13 @@ class CopilotAgent:
                 prompt = prompt[m.end() :].strip()
             return prompt
         return self._system_prompt
+
+    def _add_context_token_estimate(self, conversation_id: str, source: str, content: str) -> None:
+        """Track a context source's estimate without retaining its content."""
+        estimates = self._context_token_estimates.setdefault(
+            conversation_id, {"tool_call_history": 0, "conversation_history": 0}
+        )
+        estimates[source] += _estimate_token_count(content)
 
     def set_cosmos_service(self, cosmos_service: "CosmosService") -> None:
         """Inject the Cosmos service for session persistence."""
@@ -987,9 +995,7 @@ class CopilotAgent:
 
             try:
                 session = await self._get_or_create_session(conversation_id, sdk_session_id=sdk_session_id)
-                self._context_token_estimates.setdefault(
-                    conversation_id, {"tool_call_history": 0, "conversation_history": 0}
-                )["conversation_history"] += _estimate_token_count(localized_message)
+                self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
 
@@ -1198,12 +1204,12 @@ class CopilotAgent:
                                 )
 
                                 # Create a child span nested under the invoke_agent span
-                                raw_input_str = str(
-                                    getattr(event.data, "arguments", None) or getattr(event.data, "input", "") or ""
+                                raw_input_str = str(getattr(event.data, "input", "") or "")
+                                self._add_context_token_estimate(
+                                    cid,
+                                    "tool_call_history",
+                                    str(getattr(event.data, "arguments", None) or raw_input_str),
                                 )
-                                self._context_token_estimates.setdefault(
-                                    cid, {"tool_call_history": 0, "conversation_history": 0}
-                                )["tool_call_history"] += _estimate_token_count(raw_input_str)
                                 tool_call_id = (
                                     getattr(event.data, "call_id", None)
                                     or getattr(event.data, "id", None)
@@ -1289,9 +1295,7 @@ class CopilotAgent:
                                 raw_output_str = str(
                                     getattr(event.data, "output", "") or getattr(event.data, "result", "") or ""
                                 )
-                                self._context_token_estimates.setdefault(
-                                    cid, {"tool_call_history": 0, "conversation_history": 0}
-                                )["tool_call_history"] += _estimate_token_count(raw_output_str)
+                                self._add_context_token_estimate(cid, "tool_call_history", raw_output_str)
                                 success = getattr(event.data, "success", None)
                                 error = getattr(event.data, "error", None)
                                 logger.info(
@@ -1482,10 +1486,8 @@ class CopilotAgent:
                 }
                 for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
                     input_token_source_histogram.record(token_count, {**_metric_attrs, "gen_ai.input.source": source})
-                self._context_token_estimates.setdefault(
-                    conversation_id, {"tool_call_history": 0, "conversation_history": 0}
-                )["conversation_history"] += _estimate_token_count(
-                    "".join(self._response_parts.get(conversation_id, []))
+                self._add_context_token_estimate(
+                    conversation_id, "conversation_history", "".join(self._response_parts.get(conversation_id, []))
                 )
                 elapsed_s = time.monotonic() - self._send_time
                 operation_duration_histogram.record(elapsed_s, _metric_attrs)
