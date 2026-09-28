@@ -1,11 +1,4 @@
-"""Guard the Container Apps bootstrap image against the ingress port contract.
-
-The placeholder image only listens on port 80, so any Container App that boots
-with it while declaring `targetPort: 8000` leaves its first revision stuck in
-`ActivationFailed`. The assertion runs on the compiled ARM template rather than
-the Bicep source, so it follows parameters and expressions and catches any
-module under `infra/` - including one added in the future - that reintroduces it.
-"""
+"""Guard the Container Apps bootstrap image against the ingress port contract."""
 
 import json
 import subprocess
@@ -13,8 +6,6 @@ import unittest
 from pathlib import Path
 
 CONTAINER_APP_TYPE = "Microsoft.App/containerApps"
-PLACEHOLDER_IMAGE = "containerapps-helloworld"
-APP_TARGET_PORT = 8000
 INFRA = Path(__file__).resolve().parents[1]
 
 
@@ -49,34 +40,34 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.modules = container_app_modules()
         cls.templates = {module: compile_template(module) for module in cls.modules}
+        cls.bootstrap_template = compile_template(INFRA / "modules" / "container-app-image.bicep")
 
     def test_modules_with_container_apps_are_discovered(self):
         self.assertTrue(self.modules, "No Container App modules found to validate")
 
-    def test_no_container_app_boots_placeholder_image_on_port_8000(self):
+    def test_container_apps_use_the_shared_port_aware_bootstrap_module(self):
         for module, template in self.templates.items():
             for resource in iter_resources(template):
                 if resource.get("type") != CONTAINER_APP_TYPE:
                     continue
                 properties = resource.get("properties") or {}
-                ingress = (properties.get("configuration") or {}).get("ingress") or {}
-                target_port = ingress.get("targetPort")
-                # A non-literal port compiles to an ARM expression, so the value is
-                # unknown here and the placeholder image stays suspect either way.
-                if isinstance(target_port, int) and target_port != APP_TARGET_PORT:
+                containers = (properties.get("template") or {}).get("containers", [])
+                if not containers:
                     continue
-                images = [
-                    container.get("image") or ""
-                    for container in (properties.get("template") or {}).get("containers", [])
-                ]
-                placeholders = [image for image in images if PLACEHOLDER_IMAGE in image]
-                self.assertEqual(
-                    [],
-                    placeholders,
-                    f"{module.name}: {resource.get('name')} boots the placeholder image, "
-                    f"which does not listen on targetPort {target_port!r}, so its first "
-                    "revision fails the readiness probe",
+                image = containers[0]["image"]
+                environment = containers[0]["env"]
+                self.assertIn(
+                    "outputs.image.value",
+                    image,
+                    f"{module.name}: Container App must obtain its image from the bootstrap module",
                 )
+                self.assertIn("outputs.bootstrapEnv.value", environment)
+
+    def test_bootstrap_module_configures_its_listener_from_target_port(self):
+        environment = self.bootstrap_template["outputs"]["bootstrapEnv"]["value"]
+        self.assertIn("ASPNETCORE_HTTP_PORTS", environment)
+        self.assertIn("ASPNETCORE_URLS", environment)
+        self.assertIn("parameters('targetPort')", environment)
 
 
 if __name__ == "__main__":
