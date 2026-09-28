@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 # ``src/backend/tests/test_container_app_bootstrap_infra.py`` → repo root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -242,9 +243,12 @@ def test_the_bootstrap_repository_is_parsed_from_a_digest_reference(image_templa
     """Classification strips the digest, so re-pinning cannot mistake an older
     stand-in image for an application image."""
     repository = image_template["variables"]["bootstrapRepository"]
-    assert "'@'" in repository and "':'" in repository, (
-        f"bootstrapRepository does not handle a digest-pinned reference: {repository}"
-    )
+    # The digest must be stripped first: splitting on ':' alone would cut a
+    # `repo@sha256:…` reference in half and never match a read-back stand-in.
+    assert re.fullmatch(
+        r"\[split\(split\(parameters\('bootstrapImage'\), '@'\)\[0\], ':'\)\[0\]\]",
+        repository,
+    ), f"bootstrapRepository does not strip a digest before a tag: {repository}"
 
 
 def test_the_existing_app_is_only_read_when_it_exists(image_template: dict[str, Any]) -> None:
@@ -321,3 +325,13 @@ def test_an_unreadable_subscription_leaves_the_flags_alone(tmp_path: Path) -> No
 def test_detection_runs_before_every_provision() -> None:
     preprovision = (REPO_ROOT / "azure.yaml").read_text().split("preprovision:", 1)[1]
     assert f"./hooks/{DETECT_HOOK.name}" in preprovision
+
+
+def test_the_hook_covers_every_container_app_service() -> None:
+    """A new `host: containerapp` service must not silently skip detection."""
+    services = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text())["services"]
+    declared = {name for name, service in services.items() if service.get("host") == "containerapp"}
+    assert declared == {module.removesuffix(".bicep") for module in SERVICE_MODULES}
+    listed = re.search(r"^SERVICES=\((.*?)\)$", DETECT_HOOK.read_text(), re.M)
+    assert listed is not None
+    assert set(listed.group(1).split()) == declared

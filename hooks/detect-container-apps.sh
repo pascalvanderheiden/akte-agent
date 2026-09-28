@@ -81,7 +81,10 @@ if [ "$GROUP_EXISTS" = "true" ]; then
 fi
 
 for service in "${SERVICES[@]}"; do
-  flag="SERVICE_$(printf '%s' "$service" | tr '[:lower:]-' '[:upper:]_')_RESOURCE_EXISTS"
+  # Two passes: mixing a character class with a literal in one `tr` set is not
+  # portable (BSD tr on macOS reads it differently from GNU tr), and a
+  # mistranslated name would silently leave the real flag untouched.
+  flag="SERVICE_$(printf '%s' "$service" | tr '-' '_' | tr '[:lower:]' '[:upper:]')_RESOURCE_EXISTS"
   if printf '%s\n' "$TAGS" | grep -qx -- "$service"; then
     value=true
   else
