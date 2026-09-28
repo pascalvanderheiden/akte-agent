@@ -145,7 +145,7 @@ class BlobSkillService:
 
     @property
     def unavailability_reason(self) -> str | None:
-        """Return the exception type from the last failed reachability probe."""
+        """Return the exception type when the reachability probe disables Blob."""
         return self._unavailability_reason
 
     def local_dir(self, use_case: str) -> Path:
