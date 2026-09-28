@@ -14,7 +14,7 @@ from pathlib import Path
 
 CONTAINER_APP_TYPE = "Microsoft.App/containerApps"
 PLACEHOLDER_IMAGE = "containerapps-helloworld"
-INGRESS_PORT = 8000
+APP_TARGET_PORT = 8000
 MODULES = Path(__file__).resolve().parents[1] / "modules"
 
 
@@ -45,12 +45,16 @@ def container_app_modules():
 
 
 class ContainerAppBootstrapImageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.modules = container_app_modules()
+        cls.templates = {module: compile_template(module) for module in cls.modules}
+
     def test_modules_with_container_apps_are_discovered(self):
-        self.assertTrue(container_app_modules(), "No Container App modules found to validate")
+        self.assertTrue(self.modules, "No Container App modules found to validate")
 
     def test_no_container_app_boots_placeholder_image_on_port_8000(self):
-        for module in container_app_modules():
-            template = compile_template(module)
+        for module, template in self.templates.items():
             for resource in iter_resources(template):
                 if resource.get("type") != CONTAINER_APP_TYPE:
                     continue
@@ -59,7 +63,7 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
                 target_port = ingress.get("targetPort")
                 # A non-literal port compiles to an ARM expression, so the value is
                 # unknown here and the placeholder image stays suspect either way.
-                if isinstance(target_port, int) and target_port != INGRESS_PORT:
+                if isinstance(target_port, int) and target_port != APP_TARGET_PORT:
                     continue
                 images = [
                     container.get("image") or ""
