@@ -54,6 +54,7 @@ class FilteringSpanProcessor(BatchSpanProcessor):
 # GenAI metric bucket boundaries per OTel semantic conventions
 _TOKEN_BUCKETS = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 _DURATION_BUCKETS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
+# The zero boundary keeps no-tool invocations distinct from single-tool invocations.
 _TOOL_CALL_BUCKETS = (0, 1, 2, 4, 8, 16, 32, 64)
 
 # Module-level reference for the tracer provider (used by instrument_fastapi_app)
@@ -111,30 +112,30 @@ def setup_telemetry(settings: Settings) -> None:
             metric_reader = None
             logger.warning("Failed to configure Azure Monitor exporters", exc_info=True)
 
-    meter_provider = MeterProvider(
-        resource=resource,
-        metric_readers=[metric_reader] if metric_reader else [],
-        views=[
-            View(
-                instrument_name="gen_ai.client.token.usage",
-                aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOKEN_BUCKETS),
-            ),
-            View(
-                instrument_name="gen_ai.client.operation.duration",
-                aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
-            ),
-            View(
-                instrument_name="gen_ai.agent.tool_calls",
-                aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
-            ),
-            View(
-                instrument_name="gen_ai.tool.duration",
-                aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
-            ),
-        ],
-    )
-    metrics.set_meter_provider(meter_provider)
     if metric_reader:
+        meter_provider = MeterProvider(
+            resource=resource,
+            metric_readers=[metric_reader],
+            views=[
+                View(
+                    instrument_name="gen_ai.client.token.usage",
+                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOKEN_BUCKETS),
+                ),
+                View(
+                    instrument_name="gen_ai.client.operation.duration",
+                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+                ),
+                View(
+                    instrument_name="gen_ai.agent.tool_calls",
+                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
+                ),
+                View(
+                    instrument_name="gen_ai.tool.duration",
+                    aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+                ),
+            ],
+        )
+        metrics.set_meter_provider(meter_provider)
         logger.info("Azure Monitor metric exporter configured")
 
     trace.set_tracer_provider(provider)
