@@ -156,6 +156,12 @@ token_usage_histogram = _meter.create_histogram(
     unit="{token}",
 )
 
+input_token_source_histogram = _meter.create_histogram(
+    name="gen_ai.client.token.usage.by_source",
+    description="Estimated input tokens by context source",
+    unit="{token}",
+)
+
 operation_duration_histogram = _meter.create_histogram(
     name="gen_ai.client.operation.duration",
     description="GenAI operation duration",

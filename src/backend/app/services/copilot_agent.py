@@ -35,7 +35,7 @@ from opentelemetry import trace
 from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
-from app.observability import operation_duration_histogram, token_usage_histogram
+from app.observability import input_token_source_histogram, operation_duration_histogram, token_usage_histogram
 from app.services.model_routing import ModelRole, ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
@@ -63,6 +63,39 @@ Delegate self-contained deep analysis to deep-reasoning-analyst and quick,
 bounded work to fast-worker. Use persona subagents when their description
 matches the task. Review their output and compose the final answer yourself.
 """.strip()
+_INPUT_TOKEN_SOURCES = ("persona_system", "tool_call_history", "conversation_history")
+
+
+def _estimate_token_count(content: str) -> int:
+    """Estimate tokens without retaining invocation content for telemetry."""
+    return len(re.findall(r"\w+|[^\w\s]", content))
+
+
+def _compose_system_prompt(system_prompt: str) -> str:
+    """Build the system message sent to each SDK session."""
+    return f"{system_prompt.rstrip()}\n\n{_DELEGATION_GUIDELINE}"
+
+
+def _split_input_tokens(total: int, estimates: dict[str, int]) -> dict[str, int]:
+    """Allocate recorded input tokens proportionally to content-source estimates."""
+    if total <= 0:
+        return dict.fromkeys(_INPUT_TOKEN_SOURCES, 0)
+
+    weight_total = sum(max(estimates.get(source, 0), 0) for source in _INPUT_TOKEN_SOURCES)
+    if not weight_total:
+        # Every session has system instructions, even if no text estimate was available.
+        return {"persona_system": total, "tool_call_history": 0, "conversation_history": 0}
+
+    allocations = {source: total * max(estimates.get(source, 0), 0) // weight_total for source in _INPUT_TOKEN_SOURCES}
+    remainder = total - sum(allocations.values())
+    # Largest-remainder rounding preserves the recorded total across all sources.
+    for source in sorted(
+        _INPUT_TOKEN_SOURCES,
+        key=lambda source: (total * max(estimates.get(source, 0), 0) % weight_total, source),
+        reverse=True,
+    )[:remainder]:
+        allocations[source] += 1
+    return allocations
 
 
 def _resolve_skill_display_name(event_data, fallback: str = "skill") -> str:
@@ -207,6 +240,8 @@ class CopilotAgent:
         self._response_parts: dict[str, list[str]] = {}
         # Per-turn token usage segmented by (routing role, model) for GenAI metrics
         self._role_usage: dict[str, dict[tuple[str, str], dict[str, int]]] = {}
+        # Per-session content estimates only: source text is never retained for telemetry.
+        self._context_token_estimates: dict[str, dict[str, int]] = {}
         self._routing = ModelRouting(settings)
 
     @property
@@ -220,6 +255,7 @@ class CopilotAgent:
         # Sessions are not explicitly disconnected here (async not possible in a property setter);
         # use update_system_prompt() in async contexts for a full disconnect + Cosmos cleanup.
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._session_mcp_fingerprints.clear()
         # Must also clear registered handlers — without this, new sessions created after the
@@ -374,6 +410,7 @@ class CopilotAgent:
         ``run()`` and is intentionally left untouched here.
         """
         session = self._sessions.pop(conversation_id, None)
+        self._context_token_estimates.pop(conversation_id, None)
         if session is not None:
             with contextlib.suppress(Exception):
                 await session.disconnect()
@@ -458,6 +495,11 @@ class CopilotAgent:
                 prompt = prompt[m.end() :].strip()
             return prompt
         return self._system_prompt
+
+    def _add_context_token_estimate(self, conversation_id: str, source: str, content: str) -> None:
+        """Track a context source's estimate without retaining its content."""
+        estimates = self._context_token_estimates.setdefault(conversation_id, dict.fromkeys(_INPUT_TOKEN_SOURCES, 0))
+        estimates[source] = estimates.get(source, 0) + _estimate_token_count(content)
 
     def set_cosmos_service(self, cosmos_service: "CosmosService") -> None:
         """Inject the Cosmos service for session persistence."""
@@ -636,6 +678,7 @@ class CopilotAgent:
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
@@ -674,6 +717,7 @@ class CopilotAgent:
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
@@ -734,7 +778,7 @@ class CopilotAgent:
             "skill_directories": skill_dirs,
             "system_message": {
                 "mode": "replace",
-                "content": f"{system_prompt.rstrip()}\n\n{_DELEGATION_GUIDELINE}",
+                "content": _compose_system_prompt(system_prompt),
             },
             "on_permission_request": PermissionHandler.approve_all,
             "on_user_input_request": self._handle_user_input_request,
@@ -993,9 +1037,11 @@ class CopilotAgent:
             self._first_token_time.pop(conversation_id, None)
             self._model_response_start.pop(conversation_id, None)
             self._response_parts[conversation_id] = []  # reset for this turn
+            localized_message = localize_turn(message, locale)
 
             try:
                 session = await self._get_or_create_session(conversation_id, sdk_session_id=sdk_session_id)
+                self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
 
@@ -1242,6 +1288,11 @@ class CopilotAgent:
 
                                 # Create a child span nested under the invoke_agent span
                                 raw_input_str = str(getattr(event.data, "input", "") or "")
+                                self._add_context_token_estimate(
+                                    cid,
+                                    "tool_call_history",
+                                    str(getattr(event.data, "arguments", None) or raw_input_str),
+                                )
                                 tool_call_id = (
                                     getattr(event.data, "call_id", None)
                                     or getattr(event.data, "id", None)
@@ -1324,6 +1375,10 @@ class CopilotAgent:
                                 duration_ms = int(
                                     getattr(event.data, "duration_ms", 0) or getattr(event.data, "duration", 0) or 0
                                 )
+                                raw_output_str = str(
+                                    getattr(event.data, "output", "") or getattr(event.data, "result", "") or ""
+                                )
+                                self._add_context_token_estimate(cid, "tool_call_history", raw_output_str)
                                 success = getattr(event.data, "success", None)
                                 error = getattr(event.data, "error", None)
                                 logger.info(
@@ -1439,7 +1494,7 @@ class CopilotAgent:
                     session.on(on_event)
                     self._registered_handlers.add(conversation_id)
 
-                await session.send(localize_turn(message, locale), attachments=attachments)
+                await session.send(localized_message, attachments=attachments)
 
                 # Drain the queue until sentinel. 300s silence threshold matches
                 # eval_service._REQUEST_TIMEOUT — gives complex multi-tool scenarios
@@ -1512,10 +1567,23 @@ class CopilotAgent:
                     (model for role, model in role_usage if role == ModelRole.ORCHESTRATOR.value),
                     None,
                 ) or self._conversation_plan_model(conversation_id)
-                elapsed_s = time.monotonic() - self._send_time
-                operation_duration_histogram.record(
-                    elapsed_s, self._genai_metric_attrs(ModelRole.ORCHESTRATOR.value, orchestrator_model)
+                orchestrator_attrs = self._genai_metric_attrs(ModelRole.ORCHESTRATOR.value, orchestrator_model)
+                source_estimates = {
+                    **self._context_token_estimates.get(conversation_id, {}),
+                    "persona_system": _estimate_token_count(
+                        _compose_system_prompt(self._get_system_prompt(conversation_id))
+                    ),
+                }
+                for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
+                    if token_count:
+                        input_token_source_histogram.record(
+                            token_count, {**orchestrator_attrs, "gen_ai.input.source": source}
+                        )
+                self._add_context_token_estimate(
+                    conversation_id, "conversation_history", "".join(self._response_parts.get(conversation_id, []))
                 )
+                elapsed_s = time.monotonic() - self._send_time
+                operation_duration_histogram.record(elapsed_s, orchestrator_attrs)
 
             except TimeoutError:
                 span.set_attribute("error.type", "timeout")
@@ -1527,9 +1595,10 @@ class CopilotAgent:
                 span.set_status(trace.StatusCode.ERROR, str(e))
                 logger.exception("CopilotAgent failed for conversation=%s", conversation_id)
                 yield ErrorEvent(message=str(e), code="AGENT_ERROR")
-                # Drop the broken session so next turn gets a fresh one
-                self._sessions.pop(conversation_id, None)
-                self._registered_handlers.discard(conversation_id)
+                # Drop the broken session so next turn gets a fresh one. This also
+                # clears the context token estimates, which would otherwise attribute
+                # the failed session's history to the replacement session.
+                await self._discard_session(conversation_id)
                 if self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:

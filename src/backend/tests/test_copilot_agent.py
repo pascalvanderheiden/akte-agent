@@ -1,12 +1,13 @@
 """Tests for the Copilot SDK agent service."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.config import Settings
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent
-from app.services.copilot_agent import CopilotAgent
+from app.services.copilot_agent import CopilotAgent, _split_input_tokens
 
 
 @pytest.fixture
@@ -29,6 +30,23 @@ def test_copilot_agent_init(copilot_agent, settings):
     assert copilot_agent.settings is settings
     assert copilot_agent._client is None
     assert copilot_agent._sessions == {}
+
+
+def test_split_input_tokens_preserves_total_for_edge_cases():
+    assert _split_input_tokens(0, {"persona_system": 1}) == {
+        "persona_system": 0,
+        "tool_call_history": 0,
+        "conversation_history": 0,
+    }
+    assert _split_input_tokens(5, {}) == {
+        "persona_system": 5,
+        "tool_call_history": 0,
+        "conversation_history": 0,
+    }
+
+    allocation = _split_input_tokens(5, {"persona_system": 1, "tool_call_history": 1, "conversation_history": 1})
+    assert sum(allocation.values()) == 5
+    assert set(allocation) == {"persona_system", "tool_call_history", "conversation_history"}
 
 
 @pytest.mark.asyncio
@@ -265,6 +283,9 @@ async def test_copilot_agent_exception_drops_session(copilot_agent):
         assert events[0].code == "AGENT_ERROR"
         # Session should be dropped
         assert "conv-fail" not in copilot_agent._sessions
+        # Context token estimates must be dropped too, so the fresh session does not
+        # inherit the failed session's attribution
+        assert "conv-fail" not in copilot_agent._context_token_estimates
 
 
 @pytest.mark.asyncio
@@ -296,6 +317,69 @@ async def test_subagent_events_include_name_and_actual_model(copilot_agent):
     assert [event.status for event in thoughts] == ["started", "completed"]
     assert all(event.agentName == "deep-reasoning-analyst" for event in thoughts)
     assert all(event.model == "gpt-6-sol" for event in (*thoughts, *tools))
+
+
+@pytest.mark.asyncio
+async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent, monkeypatch):
+    """Input token source estimates are recorded without enabling content capture."""
+    monkeypatch.delenv("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", raising=False)
+    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+    copilot_agent.system_prompt = "persona instructions"
+    mock_session = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.create_session.return_value = mock_session
+
+    def fake_on(callback):
+        callback(
+            SimpleNamespace(
+                type=SimpleNamespace(value="tool.execution_start"),
+                data=SimpleNamespace(tool_name="search", input="search terms " * 20, call_id="call-1"),
+            )
+        )
+        callback(
+            SimpleNamespace(
+                type=SimpleNamespace(value="tool.execution_complete"),
+                data=SimpleNamespace(tool_name="search", output="search result " * 20, duration_ms=1, success=True),
+            )
+        )
+        callback(
+            SimpleNamespace(
+                type=SimpleNamespace(value="assistant.usage"),
+                data=SimpleNamespace(
+                    prompt_tokens=120,
+                    completion_tokens=1,
+                    total_tokens=121,
+                    reasoning_tokens=0,
+                    completion_tokens_details=None,
+                ),
+            )
+        )
+        callback(SimpleNamespace(type=SimpleNamespace(value="session.idle"), data=SimpleNamespace()))
+
+    mock_session.on = fake_on
+    mock_session.send = AsyncMock()
+
+    with (
+        patch("app.services.copilot_agent.CopilotClient", return_value=mock_client),
+        patch("app.services.copilot_agent.ManagedIdentityCredential", return_value=AsyncMock()),
+        patch("app.services.copilot_agent._HAS_CLI_CREDENTIAL", False),
+        patch("app.services.copilot_agent.get_bearer_token_provider", return_value=lambda: "token"),
+        patch("app.services.copilot_agent.token_usage_histogram") as token_usage,
+        patch("app.services.copilot_agent.input_token_source_histogram") as source_usage,
+    ):
+        await copilot_agent.start()
+        async for _ in copilot_agent.run("user conversation " * 10, "token-source-conversation"):
+            pass
+
+    input_calls = [
+        call for call in token_usage.record.call_args_list if call.args[1].get("gen_ai.token.type") == "input"
+    ]
+    assert input_calls[0].args[0] == 120
+
+    source_counts = {call.args[1]["gen_ai.input.source"]: call.args[0] for call in source_usage.record.call_args_list}
+    assert source_counts.keys() == {"persona_system", "tool_call_history", "conversation_history"}
+    assert all(count > 0 for count in source_counts.values())
+    assert sum(source_counts.values()) == input_calls[0].args[0]
 
 
 def _usage_event(model, prompt, completion, reasoning, parent_tool_call_id=None, data_agent_id=None):

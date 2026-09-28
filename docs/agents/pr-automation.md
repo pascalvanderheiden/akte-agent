@@ -15,7 +15,7 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
+| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize, plus `schedule` every 10 minutes | Removes every other reviewer (including on drafts), takes a coding-agent PR out of draft once the agent has finished, and requests `copilot-pull-request-reviewer[bot]`. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
 | `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled, `schedule` every 10 minutes | Relabels `ready-to-merge`, takes the PR out of draft if it still is one, and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
@@ -50,6 +50,12 @@ can be replayed by hand when something goes sideways.
   -> `ready-for-agent` -> `assign-copilot` advances on `labeled` events, and a
   label written by `GITHUB_TOKEN` raises none. On `GITHUB_TOKEN` the spec
   issues sat labelled `to-ticket` forever and no ticket was ever auto-assigned.
+- **`pr-copilot-review` needs `contents: write`**, only to take a finished
+  coding-agent PR out of draft. `markPullRequestReadyForReview` is GraphQL-only
+  and rejects both `pull-requests: write` alone (`Resource not accessible by
+  integration`) and the fine-grained `COPILOT_ASSIGN_TOKEN` (`Resource not
+  accessible by personal access token`), so the flip must run on `GITHUB_TOKEN`
+  with that permission.
 - **Copilot code review must be enabled** for the repository, with AI credits
   budget remaining. `pr-copilot-review` fails loudly when the request is
   refused.
@@ -71,6 +77,17 @@ without accounting for them silently breaks the chain:
   closed`. That is why `pr-auto-merge` calls `close-parent-issues` through
   `workflow_call` rather than relying on the event; the event trigger only
   covers merges a human performs.
+
+- **The coding agent finishing raises no event, and it leaves its own PR in
+  draft.** `copilot_work_finished` is a timeline entry, not a webhook, and it
+  lands *after* the agent's last push — so the final `synchronize` arrives while
+  the PR is still unfinished and no later event ever comes. Since a review
+  request on a draft is accepted with 200 and then silently dropped, the whole
+  chain hangs off `ready_for_review`, which nobody raises. That is why
+  `pr-copilot-review` sweeps on a schedule and lifts the draft itself when the
+  latest `copilot_work_*` entry is `copilot_work_finished`. Human-authored
+  drafts are left alone. Before this existed, every agent PR sat in draft,
+  unreviewed, until someone clicked *Ready for review* by hand.
 
 Two further consequences worth keeping in mind:
 
