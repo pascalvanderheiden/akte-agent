@@ -4,7 +4,7 @@ The placeholder image only listens on port 80, so any Container App that boots
 with it while declaring `targetPort: 8000` leaves its first revision stuck in
 `ActivationFailed`. The assertion runs on the compiled ARM template rather than
 the Bicep source, so it follows parameters and expressions and catches any
-module - including one added in the future - that reintroduces the mismatch.
+module under `infra/` - including one added in the future - that reintroduces it.
 """
 
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 CONTAINER_APP_TYPE = "Microsoft.App/containerApps"
 PLACEHOLDER_IMAGE = "containerapps-helloworld"
 APP_TARGET_PORT = 8000
-MODULES = Path(__file__).resolve().parents[1] / "modules"
+INFRA = Path(__file__).resolve().parents[1]
 
 
 def compile_template(module):
@@ -40,7 +40,7 @@ def iter_resources(template):
 
 def container_app_modules():
     return sorted(
-        module for module in MODULES.glob("*.bicep") if CONTAINER_APP_TYPE in module.read_text()
+        module for module in INFRA.rglob("*.bicep") if CONTAINER_APP_TYPE in module.read_text()
     )
 
 
