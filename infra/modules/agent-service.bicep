@@ -68,8 +68,8 @@ var ingressTargetPort = 8000
 // Never hardcode an image here. container-app-image.bicep keeps the first
 // provision bootable on a stand-in image that listens on this module's own
 // ingress port, and leaves an already-deployed application image untouched
-// on every later provision. obo-mcp-server.bicep uses the identical
-// mechanism; that module explains why a fixed placeholder breaks both cases.
+// on every later provision; its header explains why a fixed placeholder
+// breaks both cases. obo-mcp-server.bicep uses the identical mechanism.
 module containerImage './container-app-image.bicep' = {
   name: '${name}-image'
   params: {

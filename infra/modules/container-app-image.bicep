@@ -35,7 +35,9 @@
 
   `exists` comes from azd, which records `SERVICE_<NAME>_RESOURCE_EXISTS` in the
   environment once a service has been deployed; ARM cannot read a resource that
-  may not exist, hence the flag rather than a probe.
+  may not exist, hence the flag rather than a probe. ARM evaluates only the
+  taken branch of a conditional whose condition is known up front, so the
+  `exists ? ... : ''` below never attempts the read on a first provision.
 */
 
 @description('Name of the Container App whose currently-deployed image must be preserved')
