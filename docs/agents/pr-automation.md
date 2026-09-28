@@ -89,6 +89,12 @@ without accounting for them silently breaks the chain:
   drafts are left alone. Before this existed, every agent PR sat in draft,
   unreviewed, until someone clicked *Ready for review* by hand.
 
+- **Copilot never shows up in `requested_reviewers`.** It takes the request
+  immediately and drops out of that list, so checking there reports every
+  successful request as "silently ignored". `pr-copilot-review` reads the
+  timeline instead: a `review_requested` for `Copilot` (or a Copilot review)
+  newer than the head commit.
+
 Two further consequences worth keeping in mind:
 
 - **The merge gate is "Copilot reviewed this exact head commit", not "the PR
