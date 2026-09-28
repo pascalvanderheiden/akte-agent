@@ -35,7 +35,7 @@ from opentelemetry import trace
 from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
-from app.observability import operation_duration_histogram, token_usage_histogram
+from app.observability import input_token_source_histogram, operation_duration_histogram, token_usage_histogram
 from app.services.model_routing import ModelRouting
 from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
 
@@ -63,6 +63,32 @@ Delegate self-contained deep analysis to deep-reasoning-analyst and quick,
 bounded work to fast-worker. Use persona subagents when their description
 matches the task. Review their output and compose the final answer yourself.
 """.strip()
+_INPUT_TOKEN_SOURCES = ("persona_system", "tool_call_history", "conversation_history")
+
+
+def _estimate_token_count(content: str) -> int:
+    """Estimate tokens without retaining invocation content for telemetry."""
+    return len(re.findall(r"\w+|[^\w\s]", content))
+
+
+def _split_input_tokens(total: int, estimates: dict[str, int]) -> dict[str, int]:
+    """Allocate recorded input tokens proportionally to content-source estimates."""
+    if total <= 0:
+        return dict.fromkeys(_INPUT_TOKEN_SOURCES, 0)
+
+    weight_total = sum(max(estimates.get(source, 0), 0) for source in _INPUT_TOKEN_SOURCES)
+    if not weight_total:
+        return {"persona_system": total, "tool_call_history": 0, "conversation_history": 0}
+
+    allocations = {source: total * max(estimates.get(source, 0), 0) // weight_total for source in _INPUT_TOKEN_SOURCES}
+    remainder = total - sum(allocations.values())
+    for source in sorted(
+        _INPUT_TOKEN_SOURCES,
+        key=lambda source: (total * max(estimates.get(source, 0), 0) % weight_total, source),
+        reverse=True,
+    )[:remainder]:
+        allocations[source] += 1
+    return allocations
 
 
 def _resolve_skill_display_name(event_data, fallback: str = "skill") -> str:
@@ -205,6 +231,8 @@ class CopilotAgent:
         self._first_token_time: dict[str, float] = {}
         self._model_response_start: dict[str, float] = {}
         self._response_parts: dict[str, list[str]] = {}
+        # Per-session content estimates only: source text is never retained for telemetry.
+        self._context_token_estimates: dict[str, dict[str, int]] = {}
         self._routing = ModelRouting(settings)
 
     @property
@@ -218,6 +246,7 @@ class CopilotAgent:
         # Sessions are not explicitly disconnected here (async not possible in a property setter);
         # use update_system_prompt() in async contexts for a full disconnect + Cosmos cleanup.
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._session_mcp_fingerprints.clear()
         # Must also clear registered handlers — without this, new sessions created after the
@@ -372,6 +401,7 @@ class CopilotAgent:
         ``run()`` and is intentionally left untouched here.
         """
         session = self._sessions.pop(conversation_id, None)
+        self._context_token_estimates.pop(conversation_id, None)
         if session is not None:
             with contextlib.suppress(Exception):
                 await session.disconnect()
@@ -595,6 +625,7 @@ class CopilotAgent:
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
@@ -633,6 +664,7 @@ class CopilotAgent:
             with contextlib.suppress(Exception):
                 await session.disconnect()
         self._sessions.clear()
+        self._context_token_estimates.clear()
         self._session_model_selections.clear()
         self._registered_handlers.clear()
         self._queues.clear()
@@ -951,9 +983,13 @@ class CopilotAgent:
             self._first_token_time.pop(conversation_id, None)
             self._model_response_start.pop(conversation_id, None)
             self._response_parts[conversation_id] = []  # reset for this turn
+            localized_message = localize_turn(message, locale)
 
             try:
                 session = await self._get_or_create_session(conversation_id, sdk_session_id=sdk_session_id)
+                self._context_token_estimates.setdefault(
+                    conversation_id, {"tool_call_history": 0, "conversation_history": 0}
+                )["conversation_history"] += _estimate_token_count(localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
 
@@ -1162,7 +1198,12 @@ class CopilotAgent:
                                 )
 
                                 # Create a child span nested under the invoke_agent span
-                                raw_input_str = str(getattr(event.data, "input", "") or "")
+                                raw_input_str = str(
+                                    getattr(event.data, "arguments", None) or getattr(event.data, "input", "") or ""
+                                )
+                                self._context_token_estimates.setdefault(
+                                    cid, {"tool_call_history": 0, "conversation_history": 0}
+                                )["tool_call_history"] += _estimate_token_count(raw_input_str)
                                 tool_call_id = (
                                     getattr(event.data, "call_id", None)
                                     or getattr(event.data, "id", None)
@@ -1245,6 +1286,12 @@ class CopilotAgent:
                                 duration_ms = int(
                                     getattr(event.data, "duration_ms", 0) or getattr(event.data, "duration", 0) or 0
                                 )
+                                raw_output_str = str(
+                                    getattr(event.data, "output", "") or getattr(event.data, "result", "") or ""
+                                )
+                                self._context_token_estimates.setdefault(
+                                    cid, {"tool_call_history": 0, "conversation_history": 0}
+                                )["tool_call_history"] += _estimate_token_count(raw_output_str)
                                 success = getattr(event.data, "success", None)
                                 error = getattr(event.data, "error", None)
                                 logger.info(
@@ -1356,7 +1403,7 @@ class CopilotAgent:
                     session.on(on_event)
                     self._registered_handlers.add(conversation_id)
 
-                await session.send(localize_turn(message, locale), attachments=attachments)
+                await session.send(localized_message, attachments=attachments)
 
                 # Drain the queue until sentinel. 300s silence threshold matches
                 # eval_service._REQUEST_TIMEOUT — gives complex multi-tool scenarios
@@ -1427,6 +1474,19 @@ class CopilotAgent:
                     token_usage_histogram.record(usage["prompt"], {**_metric_attrs, "gen_ai.token.type": "input"})
                 if usage.get("completion", 0):
                     token_usage_histogram.record(usage["completion"], {**_metric_attrs, "gen_ai.token.type": "output"})
+                source_estimates = {
+                    "persona_system": _estimate_token_count(
+                        f"{self._get_system_prompt(conversation_id).rstrip()}\n\n{_DELEGATION_GUIDELINE}"
+                    ),
+                    **self._context_token_estimates.get(conversation_id, {}),
+                }
+                for source, token_count in _split_input_tokens(usage.get("prompt", 0), source_estimates).items():
+                    input_token_source_histogram.record(token_count, {**_metric_attrs, "gen_ai.input.source": source})
+                self._context_token_estimates.setdefault(
+                    conversation_id, {"tool_call_history": 0, "conversation_history": 0}
+                )["conversation_history"] += _estimate_token_count(
+                    "".join(self._response_parts.get(conversation_id, []))
+                )
                 elapsed_s = time.monotonic() - self._send_time
                 operation_duration_histogram.record(elapsed_s, _metric_attrs)
 
