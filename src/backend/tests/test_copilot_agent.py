@@ -283,6 +283,9 @@ async def test_copilot_agent_exception_drops_session(copilot_agent):
         assert events[0].code == "AGENT_ERROR"
         # Session should be dropped
         assert "conv-fail" not in copilot_agent._sessions
+        # Context token estimates must be dropped too, so the fresh session does not
+        # inherit the failed session's attribution
+        assert "conv-fail" not in copilot_agent._context_token_estimates
 
 
 @pytest.mark.asyncio

@@ -1509,9 +1509,10 @@ class CopilotAgent:
                 span.set_status(trace.StatusCode.ERROR, str(e))
                 logger.exception("CopilotAgent failed for conversation=%s", conversation_id)
                 yield ErrorEvent(message=str(e), code="AGENT_ERROR")
-                # Drop the broken session so next turn gets a fresh one
-                self._sessions.pop(conversation_id, None)
-                self._registered_handlers.discard(conversation_id)
+                # Drop the broken session so next turn gets a fresh one. This also
+                # clears the context token estimates, which would otherwise attribute
+                # the failed session's history to the replacement session.
+                await self._discard_session(conversation_id)
                 if self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
