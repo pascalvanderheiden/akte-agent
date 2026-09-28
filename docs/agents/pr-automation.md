@@ -18,7 +18,7 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 | `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize | Removes every other reviewer (including on drafts) and requests `copilot-pull-request-reviewer[bot]` once the PR is ready. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
 | `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
-| `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled | Relabels `ready-to-merge` and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
+| `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled, `schedule` every 10 minutes | Relabels `ready-to-merge`, takes the PR out of draft if it still is one, and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
 | `approve-gated-runs.yml` | `schedule`, every 10 minutes, plus `workflow_dispatch` | Safety net. Takes any non-Copilot reviewer back out of the queue, applies the `reviewed` label, and releases held runs. **Its schedule does not fire reliably** — see "The schedule trigger is unreliable". |
 
@@ -166,8 +166,17 @@ run. So `pull_request_review` cannot be relied on as the entry point, and
 sweep. It keys the label to the reviewed **commit**, not to the PR, so a push
 landing after a review does not leave a stale label behind.
 
-`pr-auto-merge` was already immune to this, because its gate is "Copilot
-reviewed this exact head commit", not "the PR carries the `reviewed` label".
+`pr-auto-merge`'s **gate** was already immune to this, because it asks "did
+Copilot review this exact head commit", not "does the PR carry the `reviewed`
+label". Its **triggers** were not. With no `pull_request_review` event, the only
+event left was `workflow_run` on CI — so a review landing *after* CI had already
+finished fired nothing at all, and the PR sat approved and green indefinitely.
+PR #85 did exactly that: CI green at 12:13, review approved at 15:08, no further
+run, no merge.
+
+That is why `pr-auto-merge` now also runs on a ten-minute `schedule`. The sweep
+re-evaluates every open PR against the identical gate and merges at most one per
+run. It is the backstop; the events remain the fast path.
 
 ## Draft pull requests
 
@@ -182,6 +191,16 @@ person who delegated the task to review it. Two GitHub behaviours shape how
 - **Removing a reviewer from a draft works normally.** So the human review
   request is cleared as soon as the PR is opened, rather than sitting in
   someone's queue for however long the draft lasts.
+- **Copilot's automatic code review runs on drafts anyway.** So a draft can be
+  approved, green, and fully qualified while still being unmergeable, because
+  `gh pr merge` refuses a draft outright.
+
+That last point used to strand PRs permanently. The coding agent does not
+reliably take its own PR out of draft — PRs #79–#82 merged, then #83–#87 all
+stalled as approved drafts — and nothing else in the chain un-drafts. So
+`pr-auto-merge` no longer treats draft as disqualifying: it evaluates the PR
+normally and, only once every other gate has passed, calls `gh pr ready` just
+before merging. A PR that fails a gate is left exactly as the agent had it.
 
 `pr-copilot-review` deliberately runs on a draft's pushes too. An earlier
 version skipped `synchronize` while draft, reasoning that the cleanup had
