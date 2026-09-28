@@ -65,6 +65,7 @@ class BlobSkillService:
         self.local_base_dir = Path(local_base_dir)
         self._container_client: ContainerClient | None = None
         self._credential: DefaultAzureCredential | None = None
+        self._unavailability_reason: str | None = None
 
     async def initialize(self) -> None:
         """Initialize the blob container client.
@@ -74,6 +75,7 @@ class BlobSkillService:
         (Managed Identity / dev Entra ID). If neither is configured the
         service no-ops.
         """
+        self._unavailability_reason = None
         conn_str = self.settings.blob_storage_connection_string
         endpoint = self.settings.blob_storage_endpoint
         container = self.settings.blob_skills_container
@@ -111,11 +113,11 @@ class BlobSkillService:
             )
         except ResourceExistsError:
             pass  # already provisioned — the account answered, so it is reachable
-        except HttpResponseError as exc:
-            # Reachable, but this request was refused (e.g. RBAC still
-            # propagating). Keep the client: reads may well succeed.
-            logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
         except (TimeoutError, ServiceRequestError, ClientAuthenticationError) as exc:
+            # ClientAuthenticationError subclasses HttpResponseError, so this
+            # branch must be checked first or auth failures would be swallowed
+            # by the broader "refused but reachable" handler below.
+            self._unavailability_reason = type(exc).__name__
             logger.warning(
                 "Blob storage at %s unreachable within %ds (%s) — using local skills only. "
                 "Expected when running outside the private endpoint's VNet.",
@@ -124,6 +126,10 @@ class BlobSkillService:
                 type(exc).__name__,
             )
             await self._disable()
+        except HttpResponseError as exc:
+            # Reachable, but this request was refused (e.g. RBAC still
+            # propagating). Keep the client: reads may well succeed.
+            logger.warning("Blob container probe refused (status=%s) — continuing", exc.status_code)
 
     async def _disable(self) -> None:
         """Drop the unusable client so ``is_available`` reports False."""
@@ -139,6 +145,11 @@ class BlobSkillService:
     @property
     def is_available(self) -> bool:
         return self._container_client is not None
+
+    @property
+    def unavailability_reason(self) -> str | None:
+        """Return the disabling probe exception type, or None if unconfigured or available."""
+        return self._unavailability_reason
 
     def local_dir(self, use_case: str) -> Path:
         """Return the local directory for a specific use-case."""

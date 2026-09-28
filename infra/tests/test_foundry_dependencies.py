@@ -172,23 +172,16 @@ class AgentServiceModelEnvironmentTests(unittest.TestCase):
             if resource["type"] == "Microsoft.App/containerApps"
         )
         environment = app["properties"]["template"]["containers"][0]["env"]
-        values = {item["name"]: item["value"] for item in environment}
-        self.assertEqual(
-            "[parameters('orchestratorModelDeployment')]",
-            values["MODEL_DEPLOYMENT_ORCHESTRATOR"],
-        )
-        self.assertEqual(
-            "[parameters('deepReasoningModelDeployment')]",
-            values["MODEL_DEPLOYMENT_DEEP_REASONING"],
-        )
-        self.assertEqual(
-            "[parameters('fastModelDeployment')]",
-            values["MODEL_DEPLOYMENT_FAST"],
-        )
-        self.assertEqual(
-            "[parameters('foundryModelDeployment')]",
-            values["FOUNDRY_MODEL_DEPLOYMENT"],
-        )
+        for name, parameter in (
+            ("MODEL_DEPLOYMENT_ORCHESTRATOR", "orchestratorModelDeployment"),
+            ("MODEL_DEPLOYMENT_DEEP_REASONING", "deepReasoningModelDeployment"),
+            ("MODEL_DEPLOYMENT_FAST", "fastModelDeployment"),
+            ("FOUNDRY_MODEL_DEPLOYMENT", "foundryModelDeployment"),
+        ):
+            self.assertRegex(
+                environment,
+                rf"createObject\('name',\s*'{name}',\s*'value',\s*parameters\('{parameter}'\)\)",
+            )
 
     def test_main_wires_role_outputs_into_agent_service_and_azd_outputs(self):
         main = (Path(__file__).resolve().parents[1] / "main.bicep").read_text()
