@@ -55,6 +55,7 @@ class FilteringSpanProcessor(BatchSpanProcessor):
 # GenAI metric bucket boundaries per OTel semantic conventions
 _TOKEN_BUCKETS = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 _DURATION_BUCKETS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92)
+_TOOL_CALL_BUCKETS = (1, 2, 4, 8, 16, 32, 64)
 
 # Module-level reference for the tracer provider (used by instrument_fastapi_app)
 _tracer_provider: TracerProvider | None = None
@@ -98,7 +99,7 @@ def setup_telemetry(settings: Settings) -> None:
                 views=[
                     View(
                         instrument_name="gen_ai.agent.tool_calls",
-                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_DURATION_BUCKETS),
+                        aggregation=ExplicitBucketHistogramAggregation(boundaries=_TOOL_CALL_BUCKETS),
                     ),
                     View(
                         instrument_name="gen_ai.tool.duration",

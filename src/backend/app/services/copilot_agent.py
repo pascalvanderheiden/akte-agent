@@ -927,6 +927,10 @@ class CopilotAgent:
             if _github
             else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
         )
+        _metric_base_attrs = {
+            "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
+            "gen_ai.request.model": self.settings.foundry_model_deployment,
+        }
         _invoke_span_attrs: dict = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.system": "github" if _github else "openai",
@@ -1290,8 +1294,7 @@ class CopilotAgent:
                                     {
                                         "gen_ai.tool.name": tool_name,
                                         "gen_ai.operation.name": "execute_tool",
-                                        "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
-                                        "gen_ai.request.model": self.settings.foundry_model_deployment,
+                                        **_metric_base_attrs,
                                     },
                                 )
                                 q.put_nowait(
@@ -1433,8 +1436,7 @@ class CopilotAgent:
                 # Record GenAI metrics (token usage + operation duration)
                 _metric_attrs = {
                     "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.provider.name": "github" if _github else "azure.ai.openai",
-                    "gen_ai.request.model": self.settings.foundry_model_deployment,
+                    **_metric_base_attrs,
                     "server.address": _server_addr,
                 }
                 if usage.get("prompt", 0):
