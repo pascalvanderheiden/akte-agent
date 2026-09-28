@@ -21,7 +21,7 @@ LOCAL_ROLE_MODELS = {
     "deep-reasoning": "gpt-6-sol",
     "fast": "gpt-6-astra",
 }
-DEFAULT_SUBAGENTS = (
+DEFAULT_SUBAGENTS: tuple[dict[str, Any], ...] = (
     {
         "name": "deep-reasoning-analyst",
         "description": "Handles complex analysis requiring deep, deliberate reasoning.",
