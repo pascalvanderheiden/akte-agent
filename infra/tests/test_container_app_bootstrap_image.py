@@ -18,6 +18,15 @@ def compile_template(module):
     )
 
 
+def reject_duplicate_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def iter_resources(template):
     resources = template.get("resources", [])
     if isinstance(resources, dict):
@@ -43,7 +52,10 @@ class ContainerAppBootstrapImageTests(unittest.TestCase):
         cls.bootstrap_template = compile_template(INFRA / "modules" / "container-app-image.bicep")
 
     def test_azd_resource_exists_flags_preserve_deployed_images(self):
-        parameters = json.loads((INFRA / "main.parameters.json").read_text())["parameters"]
+        parameters = json.loads(
+            (INFRA / "main.parameters.json").read_text(),
+            object_pairs_hook=reject_duplicate_keys,
+        )["parameters"]
         self.assertEqual(
             "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}",
             parameters["agentServiceExists"]["value"],

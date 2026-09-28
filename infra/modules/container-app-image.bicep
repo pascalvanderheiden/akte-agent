@@ -25,7 +25,12 @@ resource deployedApp 'Microsoft.App/containerApps@2024-03-01' existing = if (exi
 }
 
 var deployedImage = exists ? deployedApp!.properties.template.containers[0].image : ''
-var bootstrapRepository = split(bootstrapImage, ':')[0]
+var bootstrapImageWithoutDigest = split(bootstrapImage, '@')[0]
+var bootstrapTagSeparator = lastIndexOf(bootstrapImageWithoutDigest, ':')
+var bootstrapPathSeparator = lastIndexOf(bootstrapImageWithoutDigest, '/')
+var bootstrapRepository = bootstrapTagSeparator > bootstrapPathSeparator
+  ? substring(bootstrapImageWithoutDigest, 0, bootstrapTagSeparator)
+  : bootstrapImageWithoutDigest
 var legacyBootstrapRepository = 'mcr.microsoft.com/azuredocs/containerapps-helloworld'
 var isBootstrap = empty(deployedImage) || startsWith(deployedImage, '${bootstrapRepository}:') || startsWith(deployedImage, '${legacyBootstrapRepository}:')
 
