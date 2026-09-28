@@ -256,7 +256,6 @@ class AIServiceStatus(BaseModel):
     configured: bool = False
     foundryEndpoint: str = ""
     foundryModelDeployment: str = ""
-    code: str = "INTERNAL_ERROR"
 
 
 class ModelCatalogueItem(BaseModel):
