@@ -7,7 +7,7 @@ usable for development without any Azure dependency.
 
 Partition keys: conversations -> /userId, messages -> /conversationId, skills -> /name
 
-Denial signatures and the per-operation latency bound are documented in
+Denial signatures and the latency bounds are documented in
 ``docs/cosmos-persistence.md``.
 """
 
@@ -16,7 +16,10 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -43,13 +46,15 @@ _SLOW_OPERATION_THRESHOLD_MS = 500
 # and far below the blackhole cost.
 _COSMOS_PROBE_TIMEOUT_S = 10
 
-# Bound on a single item read or write once the account has been accepted as
-# reachable. The account can still become unreachable mid-process (a routing or
-# DNS change moves traffic off the private endpoint), and the SDK's own retry
-# ladder then stalls each call for ~40s. Two seconds is four times the
-# slow-operation threshold above, so it never trips a healthy call, while
-# capping what a blocked Cosmos can add to one response.
+# Fallback bound on a single item read or write outside a chat request. The SDK
+# retry ladder can stall for ~40s; two seconds caps that wait while remaining
+# four times the slow-operation threshold above.
 _COSMOS_OPERATION_TIMEOUT_S = 2
+
+# Total time that one /chat request may spend waiting on Cosmos, accumulated
+# across its persistence calls. Model execution between calls does not consume
+# this budget.
+_COSMOS_REQUEST_PERSISTENCE_BUDGET_S = 0.75
 
 # Substrings that identify the two distinct reasons Cosmos answers 403. The
 # network denial is the account firewall rejecting the source of the request
@@ -74,7 +79,28 @@ _RBAC_DENIAL_MARKERS = (
 NETWORK_DENIAL_SIGNATURE = "Cosmos persistence denied by network rules (firewall)"
 RBAC_DENIAL_SIGNATURE = "Cosmos persistence denied by RBAC role assignment"
 UNCLASSIFIED_DENIAL_SIGNATURE = "Cosmos persistence denied (unclassified 403)"
-UNREACHABLE_SIGNATURE = "Cosmos persistence unreachable (timed out)"
+OPERATION_TIMEOUT_SIGNATURE = "Cosmos persistence operation timed out"
+
+
+@dataclass
+class _PersistenceBudget:
+    remaining_s: float
+
+
+_persistence_budget: ContextVar[_PersistenceBudget | None] = ContextVar(
+    "cosmos_persistence_budget",
+    default=None,
+)
+
+
+@contextmanager
+def cosmos_persistence_budget() -> Iterator[None]:
+    """Limit aggregate Cosmos wait time for a chat request."""
+    token = _persistence_budget.set(_PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S))
+    try:
+        yield
+    finally:
+        _persistence_budget.reset(token)
 
 
 def _denial_signature(exc: CosmosHttpResponseError) -> str:
@@ -190,28 +216,32 @@ class CosmosService:
         return True
 
     async def _bounded(self, operation: str, call: Awaitable[T]) -> T:
-        """Run one Cosmos item call under the per-operation latency bound.
+        """Run one Cosmos item call under its operation and request bounds.
 
-        Two failure modes are made explicit here so neither is silent and
-        neither is slow:
+        Chat requests share an aggregate persistence budget across calls,
+        including work in detached agent tasks. Other callers retain the
+        per-operation bound.
 
-        * a blackholed account (no route to the private endpoint) never
-          answers, and the SDK's retry ladder would stall the caller for ~40s.
-          ``asyncio.wait_for`` caps that at ``_COSMOS_OPERATION_TIMEOUT_S``.
-        * a 403 is logged under a signature that names *why* Cosmos refused —
-          network (firewall) or RBAC — because the two have different owners.
+        A timeout only means the operation exceeded its budget; it does not
+        establish whether Cosmos was unreachable, slow, or throttled.
 
         The exception is re-raised either way: callers decide whether to fail
         open, and this method does not change that.
         """
+        budget = _persistence_budget.get()
+        timeout: float = _COSMOS_OPERATION_TIMEOUT_S
+        if budget is not None:
+            timeout = min(timeout, budget.remaining_s)
+
+        started = time.monotonic()
         try:
-            return await asyncio.wait_for(call, timeout=_COSMOS_OPERATION_TIMEOUT_S)
+            return await asyncio.wait_for(call, timeout=timeout)
         except TimeoutError:
             logger.error(
-                "%s: operation=%s got no response within %ss — the account is not reachable from this host",
-                UNREACHABLE_SIGNATURE,
+                "%s: operation=%s exceeded its %.3fs budget",
+                OPERATION_TIMEOUT_SIGNATURE,
                 operation,
-                _COSMOS_OPERATION_TIMEOUT_S,
+                timeout,
             )
             raise
         except CosmosHttpResponseError as exc:
@@ -233,6 +263,9 @@ class CosmosService:
                     detail,
                 )
             raise
+        finally:
+            if budget is not None:
+                budget.remaining_s = max(0.0, budget.remaining_s - (time.monotonic() - started))
 
     async def _fallback_to_sqlite(self) -> None:
         """Tear down the unusable Cosmos client and open the SQLite backend."""

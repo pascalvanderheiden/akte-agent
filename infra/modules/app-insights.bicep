@@ -65,7 +65,7 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
                 or signal contains "Cosmos persistence denied by network rules (firewall)"
                 or signal contains "Cosmos persistence denied by RBAC role assignment"
                 or signal contains "Cosmos persistence denied (unclassified 403)"
-                or signal contains "Cosmos persistence unreachable (timed out)"
+                or signal contains "Cosmos persistence operation timed out"
                 or (signal contains "CosmosHttpResponseError" and signal contains "403")
           '''
           timeAggregation: 'Count'

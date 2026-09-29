@@ -26,23 +26,27 @@ in #120.
 ## Latency bound
 
 Beyond a refusal, the account can stop answering altogether — a blackholed
-route gets no refusal, only dropped packets. Two bounds keep that off the
+route gets no refusal, only dropped packets. Bounds keep that off the
 response path:
 
 - **Startup probe** — `_COSMOS_PROBE_TIMEOUT_S` (10s). One database read at
   init; if it does not answer, the service falls back to local SQLite instead
   of keeping a client whose every call stalls.
-- **Per operation** — `_COSMOS_OPERATION_TIMEOUT_S` (2s). Every single-item
-  read and write on the response path runs under `asyncio.wait_for`, because
-  the account can become unreachable *after* the probe passed. Without it the
-  SDK's retry ladder stalls each call for roughly 40 seconds. The bound is four
-  times the 500 ms slow-operation warning threshold, so a healthy call never
-  trips it.
+- **Per operation** — `_COSMOS_OPERATION_TIMEOUT_S` (2s). Single-item reads
+  and writes run under `asyncio.wait_for`, so a call cannot spend the SDK's
+  roughly 40-second retry ladder waiting for a response.
+- **Per `/chat` request** — `_COSMOS_REQUEST_PERSISTENCE_BUDGET_S` (750ms).
+  All Cosmos calls made while setting up and running a chat share one aggregate
+  wait-time budget, including calls in the detached agent task. Time spent
+  waiting for model execution between Cosmos calls does not consume the budget.
+  This caps cumulative Cosmos delay without making a long-running model turn
+  exhaust its persistence budget before the assistant response is saved.
 
-A timeout logs `Cosmos persistence unreachable (timed out)` and raises, which
-preserves the existing behaviour at each call site: the hosted agent catches it
-and answers without persisting (fail-open), while callers that treat
-persistence as required still fail — just in 2 seconds rather than 40.
+A timeout logs `Cosmos persistence operation timed out` and raises, preserving
+the existing behaviour at each call site. A timeout says only that the
+operation exceeded its time budget; it does not distinguish an unreachable
+account from a slow or throttled response. Firewall denials are classified
+separately from the explicit 403 service response above.
 
 `list_messages` is deliberately not bounded this way: it is a history query
 whose legitimate duration scales with the conversation, not a per-turn write.

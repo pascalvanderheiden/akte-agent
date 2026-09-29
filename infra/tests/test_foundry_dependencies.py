@@ -218,7 +218,7 @@ class ApplicationInsightsAlertTests(unittest.TestCase):
             "Cosmos persistence denied by network rules (firewall)",
             "Cosmos persistence denied by RBAC role assignment",
             "Cosmos persistence denied (unclassified 403)",
-            "Cosmos persistence unreachable (timed out)",
+            "Cosmos persistence operation timed out",
         ):
             self.assertIn(signature, query)
             self.assertIn(signature, cosmos_service)

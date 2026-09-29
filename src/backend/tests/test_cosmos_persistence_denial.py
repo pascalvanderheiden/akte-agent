@@ -24,10 +24,11 @@ from app.models import Message, MessageRole
 from app.services import cosmos_service as cosmos_module
 from app.services.cosmos_service import (
     NETWORK_DENIAL_SIGNATURE,
+    OPERATION_TIMEOUT_SIGNATURE,
     RBAC_DENIAL_SIGNATURE,
     UNCLASSIFIED_DENIAL_SIGNATURE,
-    UNREACHABLE_SIGNATURE,
     CosmosService,
+    cosmos_persistence_budget,
 )
 
 FIREWALL_DENIAL = (
@@ -112,7 +113,7 @@ async def test_blocked_cosmos_fails_within_the_operation_bound(
     elapsed = time.monotonic() - started
 
     assert elapsed < 1, "a blocked Cosmos must not hold the response open"
-    assert UNREACHABLE_SIGNATURE in "\n".join(record.getMessage() for record in caplog.records)
+    assert OPERATION_TIMEOUT_SIGNATURE in "\n".join(record.getMessage() for record in caplog.records)
 
 
 async def test_operation_bound_stays_below_the_startup_probe_budget() -> None:
@@ -138,8 +139,25 @@ async def test_reads_on_the_response_path_fail_open_when_cosmos_is_blocked(
         assert await service.get_session_mapping("conversation-1") is None
 
     # The read path swallows the timeout, so the log line is the only evidence
-    # an operator gets that Cosmos stopped answering.
+    # an operator gets that the bounded read failed.
     logged = "\n".join(record.getMessage() for record in caplog.records)
-    assert logged.count(UNREACHABLE_SIGNATURE) == 2
+    assert logged.count(OPERATION_TIMEOUT_SIGNATURE) == 2
     assert "get_conversation" in logged
     assert "get_session_mapping" in logged
+
+
+async def test_time_between_cosmos_calls_does_not_consume_chat_persistence_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.15)
+
+    class _SlowButResponsiveContainer:
+        async def upsert_item(self, *_args, **_kwargs):
+            await asyncio.sleep(0.06)
+
+    service = _cosmos_service(_SlowButResponsiveContainer())
+
+    with cosmos_persistence_budget():
+        await service.upsert_message(_message())
+        await asyncio.sleep(0.2)
+        await service.upsert_message(_message())
