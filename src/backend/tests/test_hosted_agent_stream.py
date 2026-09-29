@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models import ContentEvent
+from app.services import cosmos_service as cosmos_module
 
 
 class _FakeInvocationAgentServerHost:
@@ -182,3 +183,48 @@ async def test_stream_response_ends_deferred_span_on_cancellation(hosted_main):
 
     span.set_attribute.assert_any_call("kratos.handler_duration_ms", 2000)
     span.end.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted_main, monkeypatch):
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
+
+    class SlowCosmos:
+        async def upsert_message(self, _message):
+            await asyncio.sleep(3600)
+
+    class FastAgent:
+        def set_conversation_use_case(self, *_args):
+            return None
+
+        def set_conversation_mcp_tokens(self, *_args):
+            return None
+
+        async def run(self, **_kwargs):
+            yield ContentEvent(content="hello")
+
+        def get_run_stats(self, _conversation_id):
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0,
+                "time_to_first_token_ms": 0,
+                "model_latency_ms": 0,
+            }
+
+    hosted_main._cosmos_service = SlowCosmos()
+    hosted_main._copilot_agent = FastAgent()
+
+    started = asyncio.get_running_loop().time()
+    chunks = await _collect_stream(
+        hosted_main._stream_response(
+            "synthetic-invocation",
+            "synthetic-conversation",
+            "hello",
+            "default",
+        )
+    )
+
+    assert asyncio.get_running_loop().time() - started < 0.5
+    assert any('"event": "done"' in chunk for chunk in chunks)

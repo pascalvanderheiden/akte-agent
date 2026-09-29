@@ -37,10 +37,11 @@ response path:
   roughly 40-second retry ladder waiting for a response.
 - **Per `/chat` request** — `_COSMOS_REQUEST_PERSISTENCE_BUDGET_S` (750ms).
   All Cosmos calls made while setting up and running a chat share one aggregate
-  wait-time budget, including calls in the detached agent task. Time spent
-  waiting for model execution between Cosmos calls does not consume the budget.
-  This caps cumulative Cosmos delay without making a long-running model turn
-  exhaust its persistence budget before the assistant response is saved.
+  wait-time budget, including calls in the detached agent task and the
+  Foundry-hosted-agent invocation. Time spent waiting for model execution
+  between Cosmos calls does not consume the budget. This caps cumulative Cosmos
+  delay without making a long-running model turn exhaust its persistence budget
+  before the assistant response is saved.
 
 A timeout logs `Cosmos persistence operation timed out` and raises, preserving
 the existing behaviour at each call site. A timeout says only that the

@@ -81,7 +81,7 @@ from app.personas import (
 )
 from app.services.blob_skill_service import BlobSkillService
 from app.services.copilot_agent import CopilotAgent, InvocationTelemetry
-from app.services.cosmos_service import CosmosService
+from app.services.cosmos_service import CosmosService, cosmos_persistence_budget
 from app.services.skill_registry import SkillRegistry
 
 logging.basicConfig(
@@ -406,7 +406,7 @@ def _collect_generated_files(response_text: str) -> list[tuple[str, bytes]]:
     return files
 
 
-async def _stream_response(
+async def _stream_response_impl(
     invocation_id: str,
     conversation_id: str,
     message: str,
@@ -579,6 +579,32 @@ async def _stream_response(
     yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id, 'conversation_id': conversation_id})}\n\n".encode()
 
 
+async def _stream_response(
+    invocation_id: str,
+    conversation_id: str,
+    message: str,
+    use_case: str,
+    mcp_access_tokens: dict[str, str] | None = None,
+    token_source: dict | None = None,
+    locale: Locale | None = None,
+    model_selection: str = "auto",
+    persistence_budget=None,
+):
+    """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
+    with cosmos_persistence_budget(persistence_budget):
+        async for event in _stream_response_impl(
+            invocation_id,
+            conversation_id,
+            message,
+            use_case,
+            mcp_access_tokens,
+            token_source,
+            locale,
+            model_selection,
+        ):
+            yield event
+
+
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
@@ -726,30 +752,31 @@ async def handle_invoke(request: Request) -> Response:
     # pre-warmed sandbox warms only the shared core, so the first real request
     # for a given use-case pays a small one-time load instead of every sandbox
     # loading all use-cases up front.
-    try:
-        if runtime_foundry_endpoint and (
-            runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
-            or runtime_foundry_deployment
-            != _copilot_agent.settings.foundry_model_deployment
-        ):
-            await _copilot_agent.update_config(
-                runtime_foundry_endpoint, runtime_foundry_deployment
-            )
-        stored_use_case = None
-        if _cosmos_service is not None:
-            existing = await _cosmos_service.get_conversation(
-                conversation_id, "default-user"
-            )
-            if existing:
-                require_identified_history(existing.useCase)
-                require_not_retired(existing.useCase)
-                require_persona_match(use_case, existing.useCase)
-                stored_use_case = existing.useCase
-        use_case = resolve_use_case(use_case, stored_use_case)
-        require_not_retired(use_case)
-        await _ensure_registry(use_case)
-    except (PersonaUnavailable, PersonaMismatch) as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    with cosmos_persistence_budget() as persistence_budget:
+        try:
+            if runtime_foundry_endpoint and (
+                runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
+                or runtime_foundry_deployment
+                != _copilot_agent.settings.foundry_model_deployment
+            ):
+                await _copilot_agent.update_config(
+                    runtime_foundry_endpoint, runtime_foundry_deployment
+                )
+            stored_use_case = None
+            if _cosmos_service is not None:
+                existing = await _cosmos_service.get_conversation(
+                    conversation_id, "default-user"
+                )
+                if existing:
+                    require_identified_history(existing.useCase)
+                    require_not_retired(existing.useCase)
+                    require_persona_match(use_case, existing.useCase)
+                    stored_use_case = existing.useCase
+            use_case = resolve_use_case(use_case, stored_use_case)
+            require_not_retired(use_case)
+            await _ensure_registry(use_case)
+        except (PersonaUnavailable, PersonaMismatch) as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     return StreamingResponse(
         _stream_response(
@@ -760,6 +787,7 @@ async def handle_invoke(request: Request) -> Response:
             mcp_access_tokens,
             locale=locale,
             model_selection=model_selection,
+            persistence_budget=persistence_budget,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,

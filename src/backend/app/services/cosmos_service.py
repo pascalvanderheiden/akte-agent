@@ -94,11 +94,15 @@ _persistence_budget: ContextVar[_PersistenceBudget | None] = ContextVar(
 
 
 @contextmanager
-def cosmos_persistence_budget() -> Iterator[None]:
+def cosmos_persistence_budget(
+    budget: _PersistenceBudget | None = None,
+) -> Iterator[_PersistenceBudget]:
     """Limit aggregate Cosmos wait time for a chat request."""
-    token = _persistence_budget.set(_PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S))
+    token = _persistence_budget.set(
+        budget or _PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S)
+    )
     try:
-        yield
+        yield _persistence_budget.get()
     finally:
         _persistence_budget.reset(token)
 
