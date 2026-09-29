@@ -221,6 +221,9 @@ async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted
     hosted_main._cosmos_service = cosmos
     hosted_main._copilot_agent = FastAgent()
 
+    with cosmos_module.cosmos_persistence_budget() as persistence_budget:
+        pass
+
     started = asyncio.get_running_loop().time()
     with caplog.at_level(logging.ERROR):
         chunks = await _collect_stream(
@@ -229,6 +232,7 @@ async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted
                 "synthetic-conversation",
                 "hello",
                 "default",
+                persistence_budget=persistence_budget,
             )
         )
 
@@ -236,4 +240,8 @@ async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted
     events = _json_data_events(chunks)
     assert any(event["event"] == "content" and event["data"]["content"] == "hello" for event in events)
     assert any('"event": "done"' in chunk for chunk in chunks)
-    assert OPERATION_TIMEOUT_SIGNATURE in "\n".join(record.getMessage() for record in caplog.records)
+    timeout_logs = [
+        record.getMessage() for record in caplog.records if OPERATION_TIMEOUT_SIGNATURE in record.getMessage()
+    ]
+    assert len(timeout_logs) == 2
+    assert "0.000s budget" in timeout_logs[-1]
