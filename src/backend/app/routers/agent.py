@@ -118,7 +118,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         if conversation and request_selection and conversation.modelSelection != model_selection:
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
-            await cosmos.upsert_conversation(conversation)
+            await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
     except BaseException:
         await cosmos.release_conversation_lock(body.conversationId, run_lock)
         raise
@@ -158,7 +158,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 content=body.message,
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(user_message)
+            await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
 
             # Resolve use-case system prompt from the registry
             registries = getattr(app.state, "registries", {})
@@ -322,7 +322,9 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             if gateway_session_id:
                 logger.info("Gateway session for conversation=%s: %s", body.conversationId, gateway_session_id)
                 try:
-                    await cosmos.upsert_session_mapping(body.conversationId, gateway_session_id)
+                    await cosmos.upsert_session_mapping(
+                        body.conversationId, gateway_session_id, lock_token=run_lock.lease_token
+                    )
                 except Exception:
                     logger.warning("Failed to persist gateway session mapping (non-fatal)", exc_info=True)
 
@@ -353,7 +355,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 },
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(assistant_message)
+            await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
 
             # Generate follow-up questions (best-effort, non-blocking)
             try:

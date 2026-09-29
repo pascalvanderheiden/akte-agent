@@ -1,11 +1,13 @@
 """Deleting a conversation must also delete its persisted messages."""
 
 import asyncio
+import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+import pytest
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
 
 from app.config import Settings
 from app.models import Conversation, Message
@@ -60,17 +62,63 @@ class _Items:
             raise StopAsyncIteration from None
 
 
+class _SharedMessages:
+    def __init__(self, items=None, calls=None):
+        self.items = {
+            (item["conversationId"], item["id"]): {**item, "_etag": str(index)}
+            for index, item in enumerate(items or [], start=1)
+        }
+        self.calls = calls if calls is not None else []
+        self._next_etag = len(self.items) + 1
+
+    async def create_item(self, item):
+        key = (item["conversationId"], item["id"])
+        if key in self.items:
+            raise CosmosResourceExistsError(status_code=409)
+        self.items[key] = {**item, "_etag": str(self._next_etag)}
+        self._next_etag += 1
+
+    async def read_item(self, item, partition_key):
+        try:
+            return dict(self.items[(partition_key, item)])
+        except KeyError:
+            raise CosmosResourceNotFoundError(status_code=404) from None
+
+    async def replace_item(self, item, body, etag, match_condition):
+        key = (body["conversationId"], item)
+        existing = self.items.get(key)
+        if existing is None or existing["_etag"] != etag:
+            raise CosmosHttpResponseError(status_code=412)
+        self.items[key] = {**body, "_etag": str(self._next_etag)}
+        self._next_etag += 1
+
+    async def delete_item(self, item, partition_key, etag=None, match_condition=None):
+        key = (partition_key, item)
+        existing = self.items.get(key)
+        if existing is None:
+            raise CosmosResourceNotFoundError(status_code=404)
+        if etag is not None and existing["_etag"] != etag:
+            raise CosmosHttpResponseError(status_code=412)
+        del self.items[key]
+        if item != "__conversation_lease__":
+            self.calls.append(("messages", item, partition_key))
+
+    def query_items(self, query, parameters, partition_key):
+        return _Items(
+            [
+                {"id": item["id"]}
+                for (cid, _), item in self.items.items()
+                if cid == partition_key and "lockToken" not in item
+            ]
+        )
+
+
 async def test_cosmos_delete_conversation_deletes_message_partition_first():
     calls: list[tuple[str, str, str]] = []
 
-    def delete_message(item, partition_key):
-        calls.append(("messages", item, partition_key))
-        if item == "m2":
-            raise CosmosResourceNotFoundError()  # already gone: still a successful cascade
-
-    messages = SimpleNamespace(
-        query_items=lambda **kwargs: _Items([{"id": "m1"}, {"id": "m2"}]),
-        delete_item=AsyncMock(side_effect=delete_message),
+    messages = _SharedMessages(
+        [{"id": "m1", "conversationId": "c1"}, {"id": "m2", "conversationId": "c1"}],
+        calls,
     )
     conversations = SimpleNamespace(
         delete_item=AsyncMock(
@@ -95,7 +143,41 @@ async def test_cosmos_delete_conversation_deletes_message_partition_first():
     ]
 
 
-async def test_delete_waits_for_active_chat_persistence(tmp_path):
+async def test_cosmos_delete_waits_for_chat_lease_from_another_service_instance():
+    messages = _SharedMessages()
+    chat_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    delete_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    chat_service._messages_container = messages
+    delete_service._messages_container = messages
+    delete_service._conversations_container = SimpleNamespace(delete_item=AsyncMock())
+    delete_service._sessions_container = SimpleNamespace(delete_item=AsyncMock())
+    now = datetime.now(UTC)
+    run_lock = await chat_service.acquire_conversation_lock("active")
+
+    with pytest.raises(RuntimeError, match="Conversation lease is not owned"):
+        await delete_service.upsert_message(
+            Message(id="late", conversationId="active", role="assistant", content="done", createdAt=now),
+            lock_token=str(uuid.uuid4()),
+        )
+    assert ("active", "late") not in messages.items
+
+    delete_task = asyncio.create_task(delete_service.delete_conversation("active", "default-user"))
+    await asyncio.sleep(0.05)
+    assert not delete_task.done()
+
+    await chat_service.release_conversation_lock("active", run_lock)
+    await delete_task
+
+    assert delete_service._conversations_container.delete_item.await_count == 1
+    with pytest.raises(RuntimeError, match="Conversation lease is not owned"):
+        await chat_service.upsert_message(
+            Message(id="after-delete", conversationId="active", role="assistant", content="late", createdAt=now),
+            lock_token=run_lock.lease_token,
+        )
+    assert ("active", "after-delete") not in messages.items
+
+
+async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
     cosmos = CosmosService(Settings(cosmos_db_endpoint="", local_data_dir=str(tmp_path)))
     await cosmos.initialize()
     now = datetime.now(UTC)

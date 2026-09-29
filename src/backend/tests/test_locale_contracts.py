@@ -47,17 +47,20 @@ def transport(monkeypatch, tmp_path):
     messages = []
     mappings = {}
 
-    async def persist(message):
+    async def persist(message, lock_token=None):
         messages.append(message)
 
-    async def save_mapping(conversation, session):
+    async def save_mapping(conversation, session, lock_token=None):
         mappings[conversation] = session
 
+    conversation_lock = SimpleNamespace(lease_token=None)
     cosmos = SimpleNamespace(
         get_conversation=AsyncMock(return_value=None),
         upsert_message=persist,
         get_session_mapping=AsyncMock(side_effect=lambda conversation: mappings.get(conversation)),
         upsert_session_mapping=save_mapping,
+        acquire_conversation_lock=AsyncMock(return_value=conversation_lock),
+        release_conversation_lock=AsyncMock(),
     )
     callback = None
     sent = []
