@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import logging
 import sys
 import types
 from pathlib import Path
@@ -10,8 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import Settings
 from app.models import ContentEvent
 from app.services import cosmos_service as cosmos_module
+from app.services.cosmos_service import OPERATION_TIMEOUT_SIGNATURE, CosmosService
 
 
 class _FakeInvocationAgentServerHost:
@@ -186,11 +189,11 @@ async def test_stream_response_ends_deferred_span_on_cancellation(hosted_main):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted_main, monkeypatch):
+async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted_main, monkeypatch, caplog):
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
 
-    class SlowCosmos:
-        async def upsert_message(self, _message):
+    class BlackholedMessages:
+        async def upsert_item(self, *_args, **_kwargs):
             await asyncio.sleep(3600)
 
     class FastAgent:
@@ -213,18 +216,24 @@ async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted
                 "model_latency_ms": 0,
             }
 
-    hosted_main._cosmos_service = SlowCosmos()
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    cosmos._messages_container = BlackholedMessages()
+    hosted_main._cosmos_service = cosmos
     hosted_main._copilot_agent = FastAgent()
 
     started = asyncio.get_running_loop().time()
-    chunks = await _collect_stream(
-        hosted_main._stream_response(
-            "synthetic-invocation",
-            "synthetic-conversation",
-            "hello",
-            "default",
+    with caplog.at_level(logging.ERROR):
+        chunks = await _collect_stream(
+            hosted_main._stream_response(
+                "synthetic-invocation",
+                "synthetic-conversation",
+                "hello",
+                "default",
+            )
         )
-    )
 
     assert asyncio.get_running_loop().time() - started < 0.5
+    events = _json_data_events(chunks)
+    assert any(event["event"] == "content" and event["data"]["content"] == "hello" for event in events)
     assert any('"event": "done"' in chunk for chunk in chunks)
+    assert OPERATION_TIMEOUT_SIGNATURE in "\n".join(record.getMessage() for record in caplog.records)

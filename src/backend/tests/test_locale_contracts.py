@@ -189,7 +189,7 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     transport.client.app.state.cosmos_service = cosmos
 
     started = time.monotonic()
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         response = transport.client.post(
             "/api/agent/chat",
             json={
@@ -201,10 +201,14 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     elapsed = time.monotonic() - started
 
     assert response.status_code == 200
-    assert "AGENT_ERROR" in response.text
+    assert "AGENT_ERROR" not in response.text
+    assert "Synthetic English reply" in response.text
+    assert "event: done" in response.text
     assert elapsed < 0.7, "Cosmos calls across the chat request must share the sub-second budget"
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert cosmos_module.OPERATION_TIMEOUT_SIGNATURE in logged
+    assert "Failed to persist user message to Cosmos (non-fatal)" in logged
+    assert "Failed to persist assistant message to Cosmos (non-fatal)" in logged
     assert "unreachable" not in logged
 
 

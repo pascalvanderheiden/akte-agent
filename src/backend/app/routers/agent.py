@@ -155,7 +155,13 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 content=body.message,
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(user_message)
+            try:
+                await cosmos.upsert_message(user_message)
+            except Exception:
+                logger.warning(
+                    "Failed to persist user message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
             # Resolve use-case system prompt from the registry
             registries = getattr(app.state, "registries", {})
@@ -350,7 +356,13 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 },
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(assistant_message)
+            try:
+                await cosmos.upsert_message(assistant_message)
+            except Exception:
+                logger.warning(
+                    "Failed to persist assistant message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
             # Generate follow-up questions (best-effort, non-blocking)
             try:

@@ -591,18 +591,27 @@ async def _stream_response(
     persistence_budget=None,
 ):
     """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
-    with cosmos_persistence_budget(persistence_budget):
-        async for event in _stream_response_impl(
-            invocation_id,
-            conversation_id,
-            message,
-            use_case,
-            mcp_access_tokens,
-            token_source,
-            locale,
-            model_selection,
-        ):
+    stream = _stream_response_impl(
+        invocation_id,
+        conversation_id,
+        message,
+        use_case,
+        mcp_access_tokens,
+        token_source,
+        locale,
+        model_selection,
+    )
+    try:
+        while True:
+            with cosmos_persistence_budget(persistence_budget):
+                try:
+                    event = await anext(stream)
+                except StopAsyncIteration:
+                    break
             yield event
+    finally:
+        with cosmos_persistence_budget(persistence_budget):
+            await stream.aclose()
 
 
 @app.invoke_handler

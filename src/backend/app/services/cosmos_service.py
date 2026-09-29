@@ -98,9 +98,7 @@ def cosmos_persistence_budget(
     budget: _PersistenceBudget | None = None,
 ) -> Iterator[_PersistenceBudget]:
     """Limit aggregate Cosmos wait time for a chat request."""
-    token = _persistence_budget.set(
-        budget or _PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S)
-    )
+    token = _persistence_budget.set(budget or _PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S))
     try:
         yield _persistence_budget.get()
     finally:
