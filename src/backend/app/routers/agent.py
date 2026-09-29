@@ -109,10 +109,19 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if conversation and request_selection and conversation.modelSelection != model_selection:
-        conversation.modelSelection = model_selection
-        conversation.updatedAt = datetime.now(UTC)
-        await cosmos.upsert_conversation(conversation)
+    run_lock = await cosmos.acquire_conversation_lock(body.conversationId)
+    try:
+        if conversation:
+            conversation = await cosmos.get_conversation(body.conversationId, "default-user")
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation and request_selection and conversation.modelSelection != model_selection:
+            conversation.modelSelection = model_selection
+            conversation.updatedAt = datetime.now(UTC)
+            await cosmos.upsert_conversation(conversation)
+    except BaseException:
+        await cosmos.release_conversation_lock(body.conversationId, run_lock)
+        raise
 
     # Stamp kratos attributes on the current (HTTP) span so every request is
     # filterable by use-case, conversation, and optional eval run.
@@ -383,10 +392,15 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         finally:
             await event_queue.put(sentinel)
             otel_context.detach(token)
+            await cosmos.release_conversation_lock(body.conversationId, run_lock)
 
     # Launch the agent run detached from the request lifecycle. It keeps
     # running (and persists to Cosmos) even if the client disconnects.
-    run_task = asyncio.create_task(run_agent())
+    try:
+        run_task = asyncio.create_task(run_agent())
+    except BaseException:
+        await cosmos.release_conversation_lock(body.conversationId, run_lock)
+        raise
     _background_runs.add(run_task)
     run_task.add_done_callback(_background_runs.discard)
 

@@ -54,6 +54,8 @@ class CosmosService:
         self._settings_container: Any = None
         self._sessions_container: Any = None
         self._sqlite_db: aiosqlite.Connection | None = None
+        self._conversation_locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._conversation_locks_guard = asyncio.Lock()
 
     def _using_sqlite(self) -> bool:
         """Return True when the SQLite backend is active."""
@@ -240,6 +242,35 @@ class CosmosService:
         await self._sqlite_db.execute(f"DELETE FROM {table}")  # noqa: S608
         await self._sqlite_db.commit()
 
+    async def acquire_conversation_lock(self, conversation_id: str) -> asyncio.Lock:
+        """Acquire a conversation lock, retaining it until explicitly released."""
+        async with self._conversation_locks_guard:
+            lock, users = self._conversation_locks.get(conversation_id, (asyncio.Lock(), 0))
+            self._conversation_locks[conversation_id] = (lock, users + 1)
+        try:
+            await lock.acquire()
+        except BaseException:
+            async with self._conversation_locks_guard:
+                current_lock, users = self._conversation_locks[conversation_id]
+                if users == 1:
+                    del self._conversation_locks[conversation_id]
+                else:
+                    self._conversation_locks[conversation_id] = (current_lock, users - 1)
+            raise
+        return lock
+
+    async def release_conversation_lock(self, conversation_id: str, lock: asyncio.Lock) -> None:
+        """Release a previously acquired conversation lock."""
+        async with self._conversation_locks_guard:
+            current_lock, users = self._conversation_locks[conversation_id]
+            if current_lock is not lock:
+                raise RuntimeError("Conversation lock does not match")
+            lock.release()
+            if users == 1:
+                del self._conversation_locks[conversation_id]
+            else:
+                self._conversation_locks[conversation_id] = (lock, users - 1)
+
     # ─── Conversations ────────────────────────────────────────────────────────
 
     async def upsert_conversation(self, conversation: Conversation) -> None:
@@ -286,18 +317,23 @@ class CosmosService:
         return [Conversation(**item) async for item in items]
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> None:
-        """Delete a conversation and every message in its partition.
+        """Delete a conversation and its related persisted data.
 
         Messages are deleted first so a failure leaves the conversation in
         place and the delete can be retried rather than orphaning messages.
+        The lock also waits for any detached chat run to finish persisting.
         """
-        await self.delete_messages(conversation_id)
-        if self._using_sqlite():
-            await self._sqlite_delete("conversations", conversation_id, user_id)
-            return
-        if not self._conversations_container:
-            return
-        await self._conversations_container.delete_item(item=conversation_id, partition_key=user_id)
+        lock = await self.acquire_conversation_lock(conversation_id)
+        try:
+            await self.delete_messages(conversation_id)
+            await self.delete_session_mapping(conversation_id)
+            if self._using_sqlite():
+                await self._sqlite_delete("conversations", conversation_id, user_id)
+            elif self._conversations_container:
+                await self._conversations_container.delete_item(item=conversation_id, partition_key=user_id)
+            logger.info("Conversation deletion completed: conversation_id=%s", conversation_id)
+        finally:
+            await self.release_conversation_lock(conversation_id, lock)
 
     # ─── Messages ─────────────────────────────────────────────────────────────
 
@@ -428,7 +464,7 @@ class CosmosService:
             return
         if not self._sessions_container:
             return
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(CosmosResourceNotFoundError):
             await self._sessions_container.delete_item(item=conversation_id, partition_key=conversation_id)
 
     async def delete_all_session_mappings(self) -> None:

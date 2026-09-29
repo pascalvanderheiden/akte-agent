@@ -3,7 +3,7 @@ import { test, expect, request, type APIRequestContext } from "@playwright/test"
 import { BACKEND_URL, chatOnce, CHAT_TIMEOUT_MS } from "./helpers";
 
 // App Insights ingestion is asynchronous, so the denial count is only asserted
-// once this run's own final request is queryable (the watermark).
+// once this run's final log marker is queryable in the same pipeline.
 const TELEMETRY_WATERMARK_TIMEOUT_MS = 300_000;
 const TELEMETRY_POLL_INTERVAL_MS = 15_000;
 
@@ -32,19 +32,20 @@ async function expectNoCosmosFirewallDenials(
   conversationId: string,
   startedAt: Date,
 ): Promise<void> {
-  // Two GET .../messages requests carry this conversation's id: the history
-  // check and the post-delete verification, which is the run's last request.
-  const watermark = `
-    requests
+  // The deletion marker is emitted after run completion and cleanup through
+  // the same log exporter as Cosmos denial records.
+  const completionMarker = `
+    traces
     | where timestamp >= datetime(${startedAt.toISOString()})
-    | where url contains "/api/conversations/${conversationId}/messages"
+    | extend text = strcat(message, " ", tostring(customDimensions))
+    | where text has "Conversation deletion completed" and text has "${conversationId}"
     | count
   `;
   const deadline = Date.now() + TELEMETRY_WATERMARK_TIMEOUT_MS;
-  while (queryCount(appId, watermark, "telemetry watermark") < 2) {
+  while (queryCount(appId, completionMarker, "telemetry completion marker") < 1) {
     if (Date.now() >= deadline) {
       throw new Error(
-        `App Insights did not ingest this smoke run's final request within ${TELEMETRY_WATERMARK_TIMEOUT_MS / 1000}s; ` +
+        `App Insights did not ingest this smoke run's completion marker within ${TELEMETRY_WATERMARK_TIMEOUT_MS / 1000}s; ` +
           "cannot prove the run produced no Cosmos firewall denials",
       );
     }

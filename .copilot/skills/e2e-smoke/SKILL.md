@@ -26,7 +26,7 @@ load per use-case, chat round-trips, evals API, and traces API.
 |------|---------|---------|
 | `01-health.spec.ts` | API + SWA | `/health` 200, frontend HTML serves, runtime `config.json` points at expected backend |
 | `02-scenarios.spec.ts` | `/api/use-cases/{uc}/evals/scenarios` | Every use-case returns ≥1 scenario; required shape (`name`, `prompt`, `expected_signal_keywords`) |
-| `03-chat.spec.ts` | `/api/agent/chat` SSE + conversation history + App Insights | Sends a tiny prompt, asserts both messages persist, deletes the conversation and verifies its messages are gone, then (once App Insights has ingested the run's final request, bounded at 5 min) rejects Cosmos firewall-denial telemetry during the run |
+| `03-chat.spec.ts` | `/api/agent/chat` SSE + conversation history + App Insights | Sends a tiny prompt, asserts both messages persist, deletes the conversation and verifies its related data is gone, then (once App Insights has ingested the run's completion log marker, bounded at 5 min) rejects Cosmos firewall-denial telemetry during the run |
 | `04-evals.spec.ts` | `/api/use-cases/{uc}/evals/runs` | At least one completed validation run exists; per-run detail returns scenarios array |
 | `05-traces.spec.ts` | `/api/traces/operations` | ≥1 operation in lookback window; per-operation detail returns spans |
 | `06-ui.spec.ts` | browser | Frontend loads without console errors (smoke gate) |
