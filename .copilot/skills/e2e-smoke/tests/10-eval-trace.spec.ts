@@ -243,9 +243,12 @@ for (const locale of ["en", "nl"] as const) {
     await expect(page.getByText(other === "nl" ? /21 mrt 2026/ : /21 Mar 2026/).first()).toBeVisible();
     await language(page).selectOption(locale);
     await expect(page.getByText(completedRun.results[0].response, { exact: true })).toBeVisible();
-    expect(state.starts).toEqual([{ mode: "validation", scenarios: [] }]);
+    expect(state.starts).toEqual([{ mode: "validation", scenarios: [scenario.name] }]);
     await page.getByRole("button", { name: ui[locale]["eval.runFoundry"], exact: true }).click();
-    expect(state.starts).toEqual([{ mode: "validation", scenarios: [] }, { mode: "foundry", scenarios: [] }]);
+    expect(state.starts).toEqual([
+      { mode: "validation", scenarios: [scenario.name] },
+      { mode: "foundry", scenarios: [scenario.name] },
+    ]);
   });
 
   test(`${locale}: trace selection, category filters, lookback and raw diagnostics survive switch and refresh`, async ({ page }) => {
@@ -346,6 +349,10 @@ for (const locale of ["en", "nl"] as const) {
     state.fail = "start";
     await page.getByRole("button", { name: ui[locale]["trace.refresh"], exact: true }).click();
     await expect(page.getByText(ui[locale]["eval.noScenarios"], { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: ui[locale]["eval.runValidation"], exact: true })).toBeDisabled();
+    state.scenarios = [scenario];
+    await page.getByRole("button", { name: ui[locale]["trace.refresh"], exact: true }).click();
+    await expect(page.getByText(scenario.name, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: ui[locale]["eval.runValidation"], exact: true }).click();
     await expect(page.getByRole("alert").filter({ hasText: "EVAL_START" })).toContainText(ui[locale]["error.EVAL_START"]);
     await expect(page.getByText(ui[locale]["eval.status.completed"], { exact: true })).toHaveCount(0);
