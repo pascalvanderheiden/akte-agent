@@ -58,12 +58,19 @@ hooks:
                 BUILD_TS="$$(date +%s)"
                 azd env set KRATOS_BUILD_TS "$$BUILD_TS"
                 echo "KRATOS_BUILD_TS=$$BUILD_TS (forces new hosted-agent version)"
+                SOURCE_REVISION="$$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+                azd env set KRATOS_SOURCE_REVISION "$$SOURCE_REVISION"
+                echo "KRATOS_SOURCE_REVISION=$$SOURCE_REVISION"
         windows:
             shell: pwsh
             run: |
                 $$BuildTs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
                 azd env set KRATOS_BUILD_TS "$$BuildTs"
                 Write-Host "KRATOS_BUILD_TS=$$BuildTs (forces new hosted-agent version)"
+                $$SourceRevision = git rev-parse HEAD 2>$$null
+                if (-not $$SourceRevision) { $$SourceRevision = "unknown" }
+                azd env set KRATOS_SOURCE_REVISION "$$SourceRevision"
+                Write-Host "KRATOS_SOURCE_REVISION=$$SourceRevision"
     preprovision:
         posix:
             shell: sh

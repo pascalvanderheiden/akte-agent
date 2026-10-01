@@ -642,6 +642,7 @@ async def handle_invoke(request: Request) -> Response:
             content={
                 "status": "warm",
                 "ready": _copilot_agent is not None,
+                "source_revision": os.environ.get("KRATOS_SOURCE_REVISION", "unknown"),
                 "startup_ms": _startup_total_ms,
                 "phases": _startup_phases,
                 "loaded_use_cases": sorted(set(_registries) - RETIRED_PERSONAS),

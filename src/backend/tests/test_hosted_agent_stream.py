@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.requests import Request
 
 from app.config import Settings
 from app.models import ContentEvent
@@ -56,6 +57,37 @@ async def _collect_stream(stream):
     async for chunk in stream:
         chunks.append(chunk.decode())
     return chunks
+
+
+@pytest.mark.asyncio
+async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch):
+    hosted_main._copilot_agent = object()
+    monkeypatch.setenv("KRATOS_SOURCE_REVISION", "synthetic-revision")
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": b'{"warmup": true}',
+            "more_body": False,
+        }
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/invocations",
+            "headers": [],
+            "query_string": b"",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "scheme": "http",
+        },
+        receive,
+    )
+
+    response = await hosted_main.handle_invoke(request)
+
+    assert json.loads(response.body)["source_revision"] == "synthetic-revision"
 
 
 def _json_data_events(chunks):

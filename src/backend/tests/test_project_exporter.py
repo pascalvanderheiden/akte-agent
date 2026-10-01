@@ -145,6 +145,7 @@ def test_assemble_renders_agent_yaml_with_persona(exporter: ProjectExporter, tmp
     assert "environment_variables:" in agent_yaml
     # Cosmos DB database is per-export to avoid collisions.
     assert "kratos-agent-synthetic-review" in agent_yaml
+    assert "KRATOS_SOURCE_REVISION" in agent_yaml
 
     manifest = (out / "src" / "hosted-agent" / "agent.manifest.yaml").read_text()
     assert "name: synthetic-review" in manifest
