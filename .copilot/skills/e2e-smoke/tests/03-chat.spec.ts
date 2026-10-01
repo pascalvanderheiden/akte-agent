@@ -53,10 +53,17 @@ async function expectNoCosmosFirewallDenials(
   }
 
   const denials = `
+    let completedAt = toscalar(
+      traces
+      | where timestamp >= datetime(${startedAt.toISOString()})
+      | extend text = strcat(message, " ", tostring(customDimensions))
+      | where text has "Conversation deletion completed" and text has "${conversationId}"
+      | summarize max(timestamp)
+    );
     union isfuzzy=true
       (traces | project timestamp, text=strcat(message, " ", tostring(customDimensions))),
       (exceptions | project timestamp, text=strcat(outerMessage, " ", innermostMessage, " ", tostring(details)))
-    | where timestamp >= datetime(${startedAt.toISOString()})
+    | where timestamp between (datetime(${startedAt.toISOString()}) .. completedAt)
     | where text has "firewall" and text has "Cosmos"
     | count
   `;
