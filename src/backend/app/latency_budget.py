@@ -17,9 +17,19 @@ INTERACTIVE_P95_BUDGET_S = 30.0
 # request slower than this is out of budget regardless of how much work it did.
 COMPLEX_REQUEST_CEILING_S = 120.0
 
+# Aggregate time one invocation may spend waiting on Cosmos persistence, shared
+# across every read and write it makes (preflight lookups, user message,
+# assistant message). Model execution between calls does not consume it. Both
+# the backend `/chat` route and the Foundry hosted agent enforce this one value
+# through `app.services.cosmos_service.cosmos_persistence_budget`. It is a slice
+# of the p50 budget so a denied or blackholed Cosmos cannot, on its own, push an
+# ordinary request out of budget.
+COSMOS_PERSISTENCE_BUDGET_S = 0.75
+
 INTERACTIVE_P50_BUDGET_MS = int(INTERACTIVE_P50_BUDGET_S * 1000)
 INTERACTIVE_P95_BUDGET_MS = int(INTERACTIVE_P95_BUDGET_S * 1000)
 COMPLEX_REQUEST_CEILING_MS = int(COMPLEX_REQUEST_CEILING_S * 1000)
+COSMOS_PERSISTENCE_BUDGET_MS = int(COSMOS_PERSISTENCE_BUDGET_S * 1000)
 
 # Eval scenarios exercise full, tool-heavy hosted-agent turns, so the default
 # per-scenario threshold is the complex-request ceiling. Scenarios that stand in

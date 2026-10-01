@@ -193,6 +193,9 @@ async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
 
     class BlackholedMessages:
+        async def read_item(self, *_args, **_kwargs):
+            await asyncio.sleep(3600)
+
         async def upsert_item(self, *_args, **_kwargs):
             await asyncio.sleep(3600)
 
