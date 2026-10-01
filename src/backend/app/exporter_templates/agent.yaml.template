@@ -54,3 +54,5 @@ environment_variables:
   # when env vars are identical — see foundry-hosted-agents skill).
   - name: _BUILD_TS
     value: $${KRATOS_BUILD_TS}
+  - name: KRATOS_SOURCE_REVISION
+    value: $${KRATOS_SOURCE_REVISION}

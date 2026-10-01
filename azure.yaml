@@ -159,6 +159,9 @@ hooks:
             BUILD_TS="$(date +%s)"
             azd env set KRATOS_BUILD_TS "$BUILD_TS"
             echo "KRATOS_BUILD_TS=$BUILD_TS (forces new hosted-agent version)"
+            SOURCE_REVISION="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+            azd env set KRATOS_SOURCE_REVISION "$SOURCE_REVISION"
+            echo "KRATOS_SOURCE_REVISION=$SOURCE_REVISION"
     preprovision:
         name: preprovision
         kind: sh
