@@ -372,7 +372,7 @@ class CosmosService:
                 raise
             except Exception:
                 logger.warning("Failed to renew conversation lease: conversation_id=%s", conversation_id)
-                return
+                continue
 
     async def _release_cosmos_lease(self, conversation_id: str, token: str) -> None:
         """Delete the lease only if it is still owned by this operation."""
