@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -24,9 +25,14 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import aiosqlite
+from azure.core import MatchConditions
 from azure.core.exceptions import ClientAuthenticationError, ServiceRequestError
 from azure.cosmos.aio import CosmosClient
-from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.cosmos.exceptions import (
+    CosmosHttpResponseError,
+    CosmosResourceExistsError,
+    CosmosResourceNotFoundError,
+)
 from azure.identity.aio import DefaultAzureCredential
 
 from app.config import Settings
@@ -45,6 +51,18 @@ _SLOW_OPERATION_THRESHOLD_MS = 500
 # surfacing anything. Ten seconds is far above a healthy in-VNet container read
 # and far below the blackhole cost.
 _COSMOS_PROBE_TIMEOUT_S = 10
+_CONVERSATION_LEASE_ID = "__conversation_lease__"
+_CONVERSATION_LEASE_SECONDS = 60
+_CONVERSATION_LEASE_RENEW_SECONDS = 15
+
+
+@dataclass
+class ConversationLock:
+    """A process-local lock paired with a Cosmos lease when Cosmos is active."""
+
+    local_lock: asyncio.Lock
+    lease_token: str | None = None
+    renewal_task: asyncio.Task | None = None
 
 # Fallback bound on a single item read or write outside a chat request. The SDK
 # retry ladder can stall for ~40s; two seconds caps that wait while remaining
@@ -137,6 +155,8 @@ class CosmosService:
         self._settings_container: Any = None
         self._sessions_container: Any = None
         self._sqlite_db: aiosqlite.Connection | None = None
+        self._conversation_locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self._conversation_locks_guard = asyncio.Lock()
 
     def _using_sqlite(self) -> bool:
         """Return True when the SQLite backend is active."""
@@ -375,9 +395,158 @@ class CosmosService:
         await self._sqlite_db.execute(f"DELETE FROM {table}")  # noqa: S608
         await self._sqlite_db.commit()
 
+    async def acquire_conversation_lock(self, conversation_id: str) -> ConversationLock:
+        """Acquire a conversation lock, coordinating across Cosmos-backed replicas."""
+        async with self._conversation_locks_guard:
+            lock, users = self._conversation_locks.get(conversation_id, (asyncio.Lock(), 0))
+            self._conversation_locks[conversation_id] = (lock, users + 1)
+        try:
+            await lock.acquire()
+        except BaseException:
+            await self._discard_conversation_lock(conversation_id, lock, release=False)
+            raise
+        acquired = ConversationLock(local_lock=lock)
+        try:
+            if not self._using_sqlite() and self._messages_container:
+                acquired.lease_token = await self._acquire_cosmos_lease(conversation_id)
+                acquired.renewal_task = asyncio.create_task(
+                    self._renew_cosmos_lease(conversation_id, acquired.lease_token)
+                )
+            return acquired
+        except BaseException:
+            await self._discard_conversation_lock(conversation_id, lock)
+            raise
+
+    async def release_conversation_lock(self, conversation_id: str, lock: ConversationLock) -> None:
+        """Release a previously acquired local lock and Cosmos lease."""
+        if lock.renewal_task is not None:
+            lock.renewal_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await lock.renewal_task
+        try:
+            if lock.lease_token is not None:
+                await self._release_cosmos_lease(conversation_id, lock.lease_token)
+        finally:
+            await self._discard_conversation_lock(conversation_id, lock.local_lock)
+
+    async def _discard_conversation_lock(
+        self, conversation_id: str, lock: asyncio.Lock, *, release: bool = True
+    ) -> None:
+        async with self._conversation_locks_guard:
+            current_lock, users = self._conversation_locks[conversation_id]
+            if current_lock is not lock:
+                raise RuntimeError("Conversation lock does not match")
+            if release and lock.locked():
+                lock.release()
+            if users == 1:
+                del self._conversation_locks[conversation_id]
+            else:
+                self._conversation_locks[conversation_id] = (lock, users - 1)
+
+    def _lease_document(self, conversation_id: str, token: str) -> dict[str, Any]:
+        return {
+            "id": _CONVERSATION_LEASE_ID,
+            "conversationId": conversation_id,
+            "lockToken": token,
+            "expiresAt": time.time() + _CONVERSATION_LEASE_SECONDS,
+        }
+
+    async def _acquire_cosmos_lease(self, conversation_id: str) -> str:
+        """Create or take over an expired lease using Cosmos ETag concurrency."""
+        assert self._messages_container is not None
+        token = str(uuid.uuid4())
+        while True:
+            document = self._lease_document(conversation_id, token)
+            try:
+                await self._messages_container.create_item(document)
+                return token
+            except CosmosResourceExistsError:
+                pass
+
+            try:
+                existing = await self._messages_container.read_item(
+                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                )
+            except CosmosResourceNotFoundError:
+                continue
+            if existing.get("expiresAt", 0) > time.time():
+                await asyncio.sleep(0.1)
+                continue
+
+            try:
+                await self._messages_container.replace_item(
+                    item=_CONVERSATION_LEASE_ID,
+                    body=document,
+                    etag=existing["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+                return token
+            except CosmosHttpResponseError as exc:
+                if exc.status_code not in (404, 409, 412):
+                    raise
+
+    async def _renew_cosmos_lease(self, conversation_id: str, token: str) -> None:
+        """Keep a live chat's cross-replica lease from expiring."""
+        assert self._messages_container is not None
+        while True:
+            await asyncio.sleep(_CONVERSATION_LEASE_RENEW_SECONDS)
+            try:
+                existing = await self._messages_container.read_item(
+                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                )
+                if existing.get("lockToken") != token or existing.get("expiresAt", 0) <= time.time():
+                    return
+                await self._messages_container.replace_item(
+                    item=_CONVERSATION_LEASE_ID,
+                    body=self._lease_document(conversation_id, token),
+                    etag=existing["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Failed to renew conversation lease: conversation_id=%s", conversation_id)
+                continue
+
+    async def _release_cosmos_lease(self, conversation_id: str, token: str) -> None:
+        """Delete the lease only if it is still owned by this operation."""
+        assert self._messages_container is not None
+        try:
+            existing = await self._messages_container.read_item(
+                item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+            )
+            if existing.get("lockToken") == token:
+                await self._messages_container.delete_item(
+                    item=_CONVERSATION_LEASE_ID,
+                    partition_key=conversation_id,
+                    etag=existing["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
+        except CosmosResourceNotFoundError:
+            return
+        except CosmosHttpResponseError as exc:
+            if exc.status_code not in (404, 409, 412):
+                raise
+
+    async def _require_conversation_lease(self, conversation_id: str, token: str | None) -> None:
+        """Reject persistence when another replica owns the conversation lease."""
+        if self._using_sqlite() or not self._messages_container:
+            return
+        try:
+            existing = await self._messages_container.read_item(
+                item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+            )
+        except CosmosResourceNotFoundError:
+            if token is not None:
+                raise RuntimeError(f"Conversation lease is not owned: conversation_id={conversation_id}") from None
+            return
+        if token is None or existing.get("lockToken") != token or existing.get("expiresAt", 0) <= time.time():
+            raise RuntimeError(f"Conversation lease is not owned: conversation_id={conversation_id}")
+
     # ─── Conversations ────────────────────────────────────────────────────────
 
-    async def upsert_conversation(self, conversation: Conversation) -> None:
+    async def upsert_conversation(self, conversation: Conversation, lock_token: str | None = None) -> None:
+        await self._require_conversation_lease(conversation.id, lock_token)
         if self._using_sqlite():
             doc = conversation.model_dump(mode="json")
             await self._sqlite_upsert("conversations", conversation.id, conversation.userId, doc)
@@ -385,11 +554,58 @@ class CosmosService:
         if not self._conversations_container:
             return
         start = time.monotonic()
+        previous: dict[str, Any] | None
         try:
-            await self._bounded(
-                "upsert_conversation",
-                self._conversations_container.upsert_item(conversation.model_dump(mode="json")),
-            )
+            try:
+                previous = await self._bounded(
+                    "read_conversation_for_update",
+                    self._conversations_container.read_item(
+                        item=conversation.id, partition_key=conversation.userId
+                    ),
+                )
+            except CosmosResourceNotFoundError:
+                previous = None
+            document = conversation.model_dump(mode="json")
+            if previous is None:
+                persisted = await self._bounded("create_conversation", self._conversations_container.create_item(document))
+            else:
+                persisted = await self._bounded(
+                    "replace_conversation",
+                    self._conversations_container.replace_item(
+                        item=conversation.id,
+                        body=document,
+                        etag=previous["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    ),
+                )
+            try:
+                await self._require_conversation_lease(conversation.id, lock_token)
+            except RuntimeError:
+                with contextlib.suppress(CosmosResourceNotFoundError):
+                    if previous is None:
+                        await self._bounded(
+                            "rollback_created_conversation",
+                            self._conversations_container.delete_item(
+                                item=conversation.id,
+                                partition_key=conversation.userId,
+                                etag=persisted["_etag"],
+                                match_condition=MatchConditions.IfNotModified,
+                            ),
+                        )
+                    else:
+                        await self._bounded(
+                            "rollback_conversation",
+                            self._conversations_container.replace_item(
+                                item=conversation.id,
+                                body={key: value for key, value in previous.items() if not key.startswith("_")},
+                                etag=persisted["_etag"],
+                                match_condition=MatchConditions.IfNotModified,
+                            ),
+                        )
+                raise
+        except CosmosHttpResponseError as exc:
+            logger.error("Cosmos upsert_conversation failed: status=%s, message=%s", exc.status_code, exc.message)
+            raise
         finally:
             elapsed_ms = (time.monotonic() - start) * 1000
             if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
@@ -424,16 +640,28 @@ class CosmosService:
         return [Conversation(**item) async for item in items]
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> None:
-        if self._using_sqlite():
-            await self._sqlite_delete("conversations", conversation_id, user_id)
-            return
-        if not self._conversations_container:
-            return
-        await self._conversations_container.delete_item(item=conversation_id, partition_key=user_id)
+        """Delete a conversation and its related persisted data.
+
+        Messages are deleted first so a failure leaves the conversation in
+        place and the delete can be retried rather than orphaning messages.
+        The lock also waits for any detached chat run to finish persisting.
+        """
+        lock = await self.acquire_conversation_lock(conversation_id)
+        try:
+            await self.delete_messages(conversation_id)
+            await self.delete_session_mapping(conversation_id)
+            if self._using_sqlite():
+                await self._sqlite_delete("conversations", conversation_id, user_id)
+            elif self._conversations_container:
+                await self._conversations_container.delete_item(item=conversation_id, partition_key=user_id)
+            logger.info("Conversation deletion completed: conversation_id=%s", conversation_id)
+        finally:
+            await self.release_conversation_lock(conversation_id, lock)
 
     # ─── Messages ─────────────────────────────────────────────────────────────
 
-    async def upsert_message(self, message: Message) -> None:
+    async def upsert_message(self, message: Message, lock_token: str | None = None) -> None:
+        await self._require_conversation_lease(message.conversationId, lock_token)
         if self._using_sqlite():
             doc = message.model_dump(mode="json")
             await self._sqlite_upsert("messages", message.id, message.conversationId, doc)
@@ -446,6 +674,15 @@ class CosmosService:
                 "upsert_message",
                 self._messages_container.upsert_item(message.model_dump(mode="json")),
             )
+            try:
+                await self._require_conversation_lease(message.conversationId, lock_token)
+            except RuntimeError:
+                with contextlib.suppress(CosmosResourceNotFoundError):
+                    await self._messages_container.delete_item(item=message.id, partition_key=message.conversationId)
+                raise
+        except CosmosHttpResponseError as exc:
+            logger.error("Cosmos upsert_message failed: status=%s, message=%s", exc.status_code, exc.message)
+            raise
         finally:
             elapsed_ms = (time.monotonic() - start) * 1000
             if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
@@ -460,7 +697,7 @@ class CosmosService:
         if not self._messages_container:
             return []
         start = time.monotonic()
-        query = "SELECT * FROM c WHERE c.conversationId = @cid ORDER BY c.createdAt ASC"
+        query = "SELECT * FROM c WHERE c.conversationId = @cid AND NOT IS_DEFINED(c.lockToken) ORDER BY c.createdAt ASC"
         params: list[dict[str, str]] = [{"name": "@cid", "value": conversation_id}]
         items = self._messages_container.query_items(query=query, parameters=params, partition_key=conversation_id)
         results = [Message(**item) async for item in items]
@@ -468,6 +705,27 @@ class CosmosService:
         if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
             logger.warning("Slow Cosmos operation: list_messages took %.0f ms (%d items)", elapsed_ms, len(results))
         return results
+
+    async def delete_messages(self, conversation_id: str) -> None:
+        """Delete every message stored in a conversation's partition."""
+        if self._using_sqlite():
+            assert self._sqlite_db is not None
+            await self._sqlite_db.execute("DELETE FROM messages WHERE partition_key = ?", (conversation_id,))
+            await self._sqlite_db.commit()
+            return
+        if not self._messages_container:
+            return
+        items = self._messages_container.query_items(
+            query=("SELECT c.id FROM c WHERE c.conversationId = @cid AND NOT IS_DEFINED(c.lockToken)"),
+            parameters=[{"name": "@cid", "value": conversation_id}],
+            partition_key=conversation_id,
+        )
+        message_ids = [item["id"] async for item in items]
+        for message_id in message_ids:
+            try:
+                await self._messages_container.delete_item(item=message_id, partition_key=conversation_id)
+            except CosmosResourceNotFoundError:
+                continue
 
     # ─── Settings ─────────────────────────────────────────────────────────────
 
@@ -505,8 +763,11 @@ class CosmosService:
 
     # ─── Sessions (SDK session ID mapping) ────────────────────────────────────
 
-    async def upsert_session_mapping(self, conversation_id: str, agent_session_id: str) -> None:
+    async def upsert_session_mapping(
+        self, conversation_id: str, agent_session_id: str, lock_token: str | None = None
+    ) -> None:
         """Store the gateway agent session ID for a conversation."""
+        await self._require_conversation_lease(conversation_id, lock_token)
         doc = {
             "id": conversation_id,
             "conversationId": conversation_id,
@@ -517,7 +778,53 @@ class CosmosService:
             return
         if not self._sessions_container:
             return
-        await self._bounded("upsert_session_mapping", self._sessions_container.upsert_item(doc))
+        previous = None
+        with contextlib.suppress(CosmosResourceNotFoundError):
+            previous = await self._bounded(
+                "read_session_mapping_for_update",
+                self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id),
+            )
+        persisted = await self._bounded("upsert_session_mapping", self._sessions_container.upsert_item(doc))
+        try:
+            await self._require_conversation_lease(conversation_id, lock_token)
+        except RuntimeError:
+            with contextlib.suppress(CosmosResourceNotFoundError):
+                if previous is None:
+                    await self._bounded(
+                        "rollback_created_session_mapping",
+                        self._sessions_container.delete_item(
+                            item=conversation_id,
+                            partition_key=conversation_id,
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        ),
+                    )
+                else:
+                    await self._bounded(
+                        "rollback_session_mapping",
+                        self._sessions_container.replace_item(
+                            item=conversation_id,
+                            body={key: value for key, value in previous.items() if not key.startswith("_")},
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        ),
+                    )
+            raise
+        try:
+            await self._require_conversation_lease(conversation_id, lock_token)
+        except RuntimeError:
+            try:
+                existing = await self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id)
+                if existing.get("agentSessionId") == agent_session_id:
+                    await self._sessions_container.delete_item(
+                        item=conversation_id,
+                        partition_key=conversation_id,
+                        etag=existing["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    )
+            except CosmosResourceNotFoundError:
+                pass
+            raise
 
     async def get_session_mapping(self, conversation_id: str) -> str | None:
         """Return the gateway agent session ID for a conversation, or None."""
@@ -542,7 +849,7 @@ class CosmosService:
             return
         if not self._sessions_container:
             return
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(CosmosResourceNotFoundError):
             await self._sessions_container.delete_item(item=conversation_id, partition_key=conversation_id)
 
     async def delete_all_session_mappings(self) -> None:

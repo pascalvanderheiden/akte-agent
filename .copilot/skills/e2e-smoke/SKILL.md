@@ -26,7 +26,7 @@ load per use-case, chat round-trips, evals API, and traces API.
 |------|---------|---------|
 | `01-health.spec.ts` | API + SWA | `/health` 200, frontend HTML serves, runtime `config.json` points at expected backend |
 | `02-scenarios.spec.ts` | `/api/use-cases/{uc}/evals/scenarios` | Every use-case returns ≥1 scenario; required shape (`name`, `prompt`, `expected_signal_keywords`) |
-| `03-chat.spec.ts` | `/api/agent/chat` SSE | Sends a tiny prompt, asserts a non-empty assistant response inside `CHAT_TIMEOUT_MS` |
+| `03-chat.spec.ts` | `/api/agent/chat` SSE + conversation history + App Insights | Sends a tiny prompt, asserts both messages persist, deletes the conversation and verifies its related data is gone, then (once App Insights has ingested the run's completion log marker, bounded at 5 min) rejects Cosmos firewall-denial telemetry during the run |
 | `04-evals.spec.ts` | `/api/use-cases/{uc}/evals/runs` | At least one completed validation run exists; per-run detail returns scenarios array |
 | `05-traces.spec.ts` | `/api/traces/operations` | ≥1 operation in lookback window; per-operation detail returns spans |
 | `06-ui.spec.ts` | browser | Frontend loads without console errors (smoke gate) |
@@ -43,6 +43,7 @@ load per use-case, chat round-trips, evals API, and traces API.
 | `KRATOS_USE_CASES` | curated personas discovered from `/api/use-cases` | Comma-separated |
 | `CHAT_TIMEOUT_MS` | `60000` | Chat round-trip ceiling |
 | `TRACES_LOOKBACK_HOURS` | `6` | App Insights query window |
+| `KRATOS_APP_INSIGHTS_ID` | unset | App Insights resource ID for the Cosmos firewall-denial check; required in CI, otherwise telemetry check explicitly skipped |
 | `SKIP_BROWSER` | unset | Set to `1` to skip browser tests (CI / no-chromium hosts) |
 
 **No deployment endpoints are hardcoded in this repo — it is public.** `run.sh`
@@ -50,6 +51,11 @@ resolves the target from the local `azd` environment (`.azure/`, gitignored), so
 the suite always follows whichever env is currently selected. Export
 `KRATOS_FRONTEND_URL` / `KRATOS_BACKEND_URL` to override, e.g. in CI. If neither
 source provides them, the run fails fast instead of silently hitting a stale env.
+The telemetry check uses `az monitor app-insights query` (Azure CLI
+`application-insights` extension) and requires an Azure login with query access.
+The auto-deploy smoke job supplies both the login and resource ID. Without
+`KRATOS_APP_INSIGHTS_ID`, local runs still assert persisted history and report
+an explicit telemetry skip; CI fails instead of silently skipping the gate.
 
 `KRATOS_USE_CASES` defaults to the deployment's **curated** personas (those with
 `curated: true`), because the frontend persona selector only exposes those —

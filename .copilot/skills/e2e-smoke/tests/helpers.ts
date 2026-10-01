@@ -40,8 +40,8 @@ export async function chatOnce(
   prompt: string,
   useCase: string,
   timeoutMs = CHAT_TIMEOUT_MS,
+  conversationId = `e2e-smoke-${Date.now()}`,
 ): Promise<{ text: string; ok: boolean; status: number }> {
-  const conversationId = `e2e-smoke-${Date.now()}`;
   const ac = new AbortController();
   const to = setTimeout(() => ac.abort(), timeoutMs);
 

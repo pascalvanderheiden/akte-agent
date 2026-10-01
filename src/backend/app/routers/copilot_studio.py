@@ -59,6 +59,7 @@ async def copilot_studio_chat(
             require_identified_history(conversation.useCase)
             require_not_retired(conversation.useCase)
             require_persona_match(body.useCase, conversation.useCase)
+    conversation_was_found = conversation is not None
     use_case = resolve_use_case(body.useCase, conversation.useCase if conversation else None)
     require_available(use_case, request.app.state.registries)
 
@@ -79,50 +80,57 @@ async def copilot_studio_chat(
         await cosmos.upsert_conversation(conversation)
         conversation_id = conversation.id
 
-    # Persist the incoming user message
-    user_msg = Message(
-        id=str(uuid.uuid4()),
-        conversationId=conversation_id,
-        role=MessageRole.USER,
-        content=body.message,
-        createdAt=datetime.now(UTC),
-    )
-    await cosmos.upsert_message(user_msg)
+    lock = await cosmos.acquire_conversation_lock(conversation_id)
+    try:
+        if body.conversationId and conversation_was_found:
+            conversation = await cosmos.get_conversation(conversation_id, "copilot-studio")
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Invoke hosted agent and collect the full reply
-    parts: list[str] = []
-    agent_session_id = await cosmos.get_session_mapping(conversation_id)
-    async for event_dict in foundry_proxy.invoke(
-        message=body.message,
-        conversation_id=conversation_id,
-        use_case=use_case,
-        locale=body.locale,
-        agent_session_id=agent_session_id,
-        model_selection=conversation.modelSelection if conversation else requested_selection,
-    ):
-        event_name = event_dict.get("event")
-        event_data = event_dict.get("data", {})
-        if event_name == "content":
-            parts.append(event_data.get("content", ""))
-        elif event_name == "error":
-            logger.error("Agent error (copilot-studio): %s", event_data.get("message", ""))
-            raise HTTPException(status_code=502, detail={"code": "AGENT_ERROR"})
-        elif event_name == "_gateway_session":
-            await cosmos.upsert_session_mapping(conversation_id, event_data["agentSessionId"])
+        user_msg = Message(
+            id=str(uuid.uuid4()),
+            conversationId=conversation_id,
+            role=MessageRole.USER,
+            content=body.message,
+            createdAt=datetime.now(UTC),
+        )
+        await cosmos.upsert_message(user_msg, lock_token=lock.lease_token)
 
-    full_reply = "".join(parts)
+        parts: list[str] = []
+        agent_session_id = await cosmos.get_session_mapping(conversation_id)
+        async for event_dict in foundry_proxy.invoke(
+            message=body.message,
+            conversation_id=conversation_id,
+            use_case=use_case,
+            locale=body.locale,
+            agent_session_id=agent_session_id,
+            model_selection=conversation.modelSelection if conversation else requested_selection,
+        ):
+            event_name = event_dict.get("event")
+            event_data = event_dict.get("data", {})
+            if event_name == "content":
+                parts.append(event_data.get("content", ""))
+            elif event_name == "error":
+                logger.error("Agent error (copilot-studio): %s", event_data.get("message", ""))
+                raise HTTPException(status_code=502, detail={"code": "AGENT_ERROR"})
+            elif event_name == "_gateway_session":
+                await cosmos.upsert_session_mapping(
+                    conversation_id, event_data["agentSessionId"], lock_token=lock.lease_token
+                )
 
-    # Persist assistant response
-    assistant_msg = Message(
-        id=str(uuid.uuid4()),
-        conversationId=conversation_id,
-        role=MessageRole.ASSISTANT,
-        content=full_reply,
-        createdAt=datetime.now(UTC),
-    )
-    await cosmos.upsert_message(assistant_msg)
+        full_reply = "".join(parts)
+        assistant_msg = Message(
+            id=str(uuid.uuid4()),
+            conversationId=conversation_id,
+            role=MessageRole.ASSISTANT,
+            content=full_reply,
+            createdAt=datetime.now(UTC),
+        )
+        await cosmos.upsert_message(assistant_msg, lock_token=lock.lease_token)
 
-    return CopilotStudioResponse(
-        conversationId=conversation_id,
-        reply=full_reply,
-    )
+        return CopilotStudioResponse(
+            conversationId=conversation_id,
+            reply=full_reply,
+        )
+    finally:
+        await cosmos.release_conversation_lock(conversation_id, lock)

@@ -101,22 +101,26 @@ async def get_messages(conversation_id: str, request: Request) -> list[Message]:
 async def update_conversation(conversation_id: str, body: ConversationUpdate, request: Request) -> Conversation:
     """Update a conversation's mutable fields (currently: title)."""
     cosmos = _get_cosmos(request)
-    conversation = await cosmos.get_conversation(conversation_id, "default-user")
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    if body.title is not None:
-        conversation.title = body.title
-    requested_model = body.modelId or body.selectedModelId or body.modelSelection
-    if requested_model is not None:
-        try:
-            conversation.modelSelection = ModelRouting(
-                getattr(request.app.state, "settings", get_settings())
-            ).validate_selection(requested_model)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    conversation.updatedAt = datetime.now(UTC)
-    await cosmos.upsert_conversation(conversation)
-    return conversation
+    lock = await cosmos.acquire_conversation_lock(conversation_id)
+    try:
+        conversation = await cosmos.get_conversation(conversation_id, "default-user")
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if body.title is not None:
+            conversation.title = body.title
+        requested_model = body.modelId or body.selectedModelId or body.modelSelection
+        if requested_model is not None:
+            try:
+                conversation.modelSelection = ModelRouting(
+                    getattr(request.app.state, "settings", get_settings())
+                ).validate_selection(requested_model)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        conversation.updatedAt = datetime.now(UTC)
+        await cosmos.upsert_conversation(conversation, lock_token=lock.lease_token)
+        return conversation
+    finally:
+        await cosmos.release_conversation_lock(conversation_id, lock)
 
 
 @router.delete("/{conversation_id}", status_code=204)
