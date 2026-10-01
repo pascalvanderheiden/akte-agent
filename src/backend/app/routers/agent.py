@@ -115,6 +115,8 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             conversation = await cosmos.get_conversation(body.conversationId, "default-user")
             if not conversation:
                 raise HTTPException(status_code=404, detail="Conversation not found")
+            if not request_selection:
+                model_selection = conversation.modelSelection
         if conversation and request_selection and conversation.modelSelection != model_selection:
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
