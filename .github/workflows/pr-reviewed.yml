@@ -32,10 +32,11 @@ permissions:
 
 jobs:
   reviewed:
-    # The review API strips the `[bot]` suffix in some payloads and keeps it in
-    # others, so match on the prefix rather than the exact login.
+    # Review events may identify the same reviewer as `Copilot`, while the PR
+    # reviews API reports `copilot-pull-request-reviewer` (sometimes with [bot]).
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event.review.user.login == 'Copilot' ||
       startsWith(github.event.review.user.login, 'copilot-pull-request-reviewer')
     runs-on: ubuntu-latest
     steps:

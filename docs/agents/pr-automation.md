@@ -30,10 +30,10 @@ can be replayed by hand when something goes sideways.
 
 - **The Copilot workflow-approval gate must be off**, under Settings → Copilot →
   Cloud agent → Actions workflow approval → *Require approval for workflow
-  runs*. Leave it on and every run on a Copilot PR is held in `action_required`,
-  which stalls the event-driven chain. Current same-repository Copilot-triggered
-  review runs have been observed in `action_required`; that is evidence the gate
-  is on. This is the single most important setting here;
+  runs*. Runs held in `action_required` stall the event-driven chain even after
+  the setting changes; replay those existing runs with `approve-gated-runs`.
+  An old held run alone does not prove the setting is still enabled. This is
+  the single most important setting here;
   see "Approval gating" for why nothing can work around it. Repository admin
   only, and there is no API for it.
 - **`GITHUB_TOKEN` with `actions: write` releases held runs.** Not a PAT. The
@@ -199,6 +199,10 @@ Copilot's automatic code review can raise a `pull_request_review: submitted`
 event. That event is the fast path for `pr-reviewed`, `pr-address-review`, and
 `pr-auto-merge`; `approve-gated-runs` still reconciles the `reviewed` label by
 reviewed **commit**, so a later push cannot leave a stale label behind.
+Review events can name the reviewer `Copilot` even when the PR reviews API
+names it `copilot-pull-request-reviewer`. Both event names must pass the
+`pr-reviewed` and `pr-auto-merge` job filters; otherwise the event creates a
+workflow run whose job is immediately skipped.
 
 The event-driven path only works when the Copilot workflow-approval gate is
 off. If enabled, the event's workflows may all be created as
