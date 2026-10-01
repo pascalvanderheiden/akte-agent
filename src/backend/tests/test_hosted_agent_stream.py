@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import logging
 import sys
 import types
 from pathlib import Path
@@ -10,7 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import Settings
 from app.models import ContentEvent
+from app.services import cosmos_service as cosmos_module
+from app.services.cosmos_service import OPERATION_TIMEOUT_SIGNATURE, CosmosService
 
 
 class _FakeInvocationAgentServerHost:
@@ -182,3 +186,62 @@ async def test_stream_response_ends_deferred_span_on_cancellation(hosted_main):
 
     span.set_attribute.assert_any_call("kratos.handler_duration_ms", 2000)
     span.end.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_response_shares_cosmos_budget_across_message_writes(hosted_main, monkeypatch, caplog):
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
+
+    class BlackholedMessages:
+        async def upsert_item(self, *_args, **_kwargs):
+            await asyncio.sleep(3600)
+
+    class FastAgent:
+        def set_conversation_use_case(self, *_args):
+            return None
+
+        def set_conversation_mcp_tokens(self, *_args):
+            return None
+
+        async def run(self, **_kwargs):
+            yield ContentEvent(content="hello")
+
+        def get_run_stats(self, _conversation_id):
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0,
+                "time_to_first_token_ms": 0,
+                "model_latency_ms": 0,
+            }
+
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    cosmos._messages_container = BlackholedMessages()
+    hosted_main._cosmos_service = cosmos
+    hosted_main._copilot_agent = FastAgent()
+
+    with cosmos_module.cosmos_persistence_budget() as persistence_budget:
+        pass
+
+    started = asyncio.get_running_loop().time()
+    with caplog.at_level(logging.ERROR):
+        chunks = await _collect_stream(
+            hosted_main._stream_response(
+                "synthetic-invocation",
+                "synthetic-conversation",
+                "hello",
+                "default",
+                persistence_budget=persistence_budget,
+            )
+        )
+
+    assert asyncio.get_running_loop().time() - started < 0.5
+    events = _json_data_events(chunks)
+    assert any(event["event"] == "content" and event["data"]["content"] == "hello" for event in events)
+    assert any('"event": "done"' in chunk for chunk in chunks)
+    timeout_logs = [
+        record.getMessage() for record in caplog.records if OPERATION_TIMEOUT_SIGNATURE in record.getMessage()
+    ]
+    assert len(timeout_logs) == 2
+    assert "0.000s budget" in timeout_logs[-1]

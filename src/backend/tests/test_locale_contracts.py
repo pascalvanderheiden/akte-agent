@@ -4,12 +4,15 @@ The SDK and follow-up model below are deterministic fixtures, NOT live evaluatio
 No Azure services, credentials or model calls are used.
 """
 
+import asyncio
 import base64
 import importlib.util
 import json
+import logging
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,7 +26,9 @@ from app.config import Settings
 from app.models import MessageRole
 from app.personas import RETIRED_PERSONAS
 from app.routers import agent, copilot_studio
+from app.services import cosmos_service as cosmos_module
 from app.services.copilot_agent import CopilotAgent
+from app.services.cosmos_service import CosmosService
 from app.services.foundry_agent_proxy import FoundryAgentProxy
 from app.services.skill_registry import SkillRegistry
 
@@ -157,6 +162,54 @@ def transport(monkeypatch, tmp_path):
         invoke=invoke,
         hosted=hosted,
     )
+
+
+def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monkeypatch, caplog):
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.15)
+
+    class SlowConversations:
+        async def read_item(self, *_args, **_kwargs):
+            await asyncio.sleep(0.1)
+            return {
+                "id": "synthetic-conversation",
+                "userId": "default-user",
+                "title": "Synthetic",
+                "useCase": "akte-agent",
+                "createdAt": "2026-09-29T00:00:00Z",
+                "updatedAt": "2026-09-29T00:00:00Z",
+            }
+
+    class BlackholedMessages:
+        async def upsert_item(self, *_args, **_kwargs):
+            await asyncio.sleep(3600)
+
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    cosmos._conversations_container = SlowConversations()
+    cosmos._messages_container = BlackholedMessages()
+    transport.client.app.state.cosmos_service = cosmos
+
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING):
+        response = transport.client.post(
+            "/api/agent/chat",
+            json={
+                "conversationId": "synthetic-conversation",
+                "message": "Continue",
+                "useCase": "akte-agent",
+            },
+        )
+    elapsed = time.monotonic() - started
+
+    assert response.status_code == 200
+    assert "AGENT_ERROR" not in response.text
+    assert "Synthetic English reply" in response.text
+    assert "event: done" in response.text
+    assert elapsed < 0.7, "Cosmos calls across the chat request must share the sub-second budget"
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert cosmos_module.OPERATION_TIMEOUT_SIGNATURE in logged
+    assert "Failed to persist user message to Cosmos (non-fatal)" in logged
+    assert "Failed to persist assistant message to Cosmos (non-fatal)" in logged
+    assert "unreachable" not in logged
 
 
 @pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))
