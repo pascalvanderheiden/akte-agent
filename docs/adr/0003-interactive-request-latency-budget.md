@@ -38,6 +38,16 @@ an order of magnitude. The 120 s single-request ceiling bounds the acknowledged
 complex-request tail: a request above it is out of budget no matter how much
 work it did, and is worth an operator's attention.
 
+Conversation persistence gets a fixed slice of that budget: one invocation may
+spend at most 750 ms in aggregate waiting on Cosmos, across every read and
+write it makes (preflight lookups, the user message and the assistant message
+share it — it is not per message). Persistence is non-fatal, so a denied or
+blackholed Cosmos costs at most that slice and the response still succeeds.
+The slice sits well inside the 2 s p50 budget, so Cosmos alone cannot push an
+ordinary request out of budget. The backend `/chat` route and the Foundry
+hosted agent enforce it through the same `cosmos_persistence_budget` context
+manager; see `docs/cosmos-persistence.md`.
+
 The budget is a policy decision, not a fitted statistic. Revisit it here — with
 new before/after measurements — rather than quietly relaxing an alert threshold.
 
@@ -45,8 +55,9 @@ new before/after measurements — rather than quietly relaxing an alert threshol
 
 The values live in `src/backend/app/latency_budget.py`
 (`INTERACTIVE_P50_BUDGET_S`, `INTERACTIVE_P95_BUDGET_S`,
-`COMPLEX_REQUEST_CEILING_S` and their `_MS` equivalents). Keep that module, this
-table and any alert query synchronized.
+`COMPLEX_REQUEST_CEILING_S`, `COSMOS_PERSISTENCE_BUDGET_S` and their `_MS`
+equivalents). Keep that module, this ADR and any alert query synchronized;
+tests import the values from there rather than restating them.
 
 **Eval scenarios.** `EvalScenario.max_duration_ms` is the per-scenario duration
 threshold. Eval scenarios exercise full tool-heavy turns, so an unset threshold

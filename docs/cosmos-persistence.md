@@ -35,13 +35,21 @@ response path:
 - **Per operation** — `_COSMOS_OPERATION_TIMEOUT_S` (2s). Single-item reads
   and writes run under `asyncio.wait_for`, so a call cannot spend the SDK's
   roughly 40-second retry ladder waiting for a response.
-- **Per `/chat` request** — `_COSMOS_REQUEST_PERSISTENCE_BUDGET_S` (750ms).
+- **Per `/chat` request** — `COSMOS_PERSISTENCE_BUDGET_S` (750ms), owned by
+  `src/backend/app/latency_budget.py` (ADR 0003).
   All Cosmos calls made while setting up and running a chat share one aggregate
   wait-time budget, including calls in the detached agent task and the
   Foundry-hosted-agent invocation. Time spent waiting for model execution
   between Cosmos calls does not consume the budget. This caps cumulative Cosmos
   delay without making a long-running model turn exhaust its persistence budget
   before the assistant response is saved.
+
+The conversation-lease check that guards every message and conversation write
+is a Cosmos read too, so it runs under the same bound and classification: a
+firewall 403 on it logs the network signature rather than escaping
+unclassified. `tests/test_hosted_agent_persistence_budget.py` proves this at the
+hosted-agent invocation entry point against a faked network denial and a
+healthy fake.
 
 A timeout logs `Cosmos persistence operation timed out` and raises, preserving
 the existing behaviour at each call site. A timeout says only that the

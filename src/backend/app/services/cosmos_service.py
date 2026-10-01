@@ -36,6 +36,7 @@ from azure.cosmos.exceptions import (
 from azure.identity.aio import DefaultAzureCredential
 
 from app.config import Settings
+from app.latency_budget import COSMOS_PERSISTENCE_BUDGET_S
 from app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
@@ -64,15 +65,16 @@ class ConversationLock:
     lease_token: str | None = None
     renewal_task: asyncio.Task | None = None
 
+
 # Fallback bound on a single item read or write outside a chat request. The SDK
 # retry ladder can stall for ~40s; two seconds caps that wait while remaining
 # four times the slow-operation threshold above.
 _COSMOS_OPERATION_TIMEOUT_S = 2
 
-# Total time that one /chat request may spend waiting on Cosmos, accumulated
-# across its persistence calls. Model execution between calls does not consume
-# this budget.
-_COSMOS_REQUEST_PERSISTENCE_BUDGET_S = 0.75
+# Total time that one /chat request or hosted-agent invocation may spend waiting
+# on Cosmos, accumulated across its persistence calls. The value is owned by the
+# ADR 0003 latency-budget module.
+_COSMOS_REQUEST_PERSISTENCE_BUDGET_S = COSMOS_PERSISTENCE_BUDGET_S
 
 # Substrings that identify the two distinct reasons Cosmos answers 403. The
 # network denial is the account firewall rejecting the source of the request
@@ -265,6 +267,10 @@ class CosmosService:
                 operation,
                 timeout,
             )
+            raise
+        except CosmosResourceNotFoundError:
+            # A miss is an answer, not a persistence failure: callers that look
+            # up optional documents (conversation lease, prior version) expect it.
             raise
         except CosmosHttpResponseError as exc:
             detail = next(iter((exc.message or "").splitlines()), "")
@@ -533,8 +539,9 @@ class CosmosService:
         if self._using_sqlite() or not self._messages_container:
             return
         try:
-            existing = await self._messages_container.read_item(
-                item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+            existing = await self._bounded(
+                "read_conversation_lease",
+                self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
             )
         except CosmosResourceNotFoundError:
             if token is not None:
@@ -559,15 +566,15 @@ class CosmosService:
             try:
                 previous = await self._bounded(
                     "read_conversation_for_update",
-                    self._conversations_container.read_item(
-                        item=conversation.id, partition_key=conversation.userId
-                    ),
+                    self._conversations_container.read_item(item=conversation.id, partition_key=conversation.userId),
                 )
             except CosmosResourceNotFoundError:
                 previous = None
             document = conversation.model_dump(mode="json")
             if previous is None:
-                persisted = await self._bounded("create_conversation", self._conversations_container.create_item(document))
+                persisted = await self._bounded(
+                    "create_conversation", self._conversations_container.create_item(document)
+                )
             else:
                 persisted = await self._bounded(
                     "replace_conversation",

@@ -17,7 +17,7 @@ import time
 from datetime import UTC, datetime
 
 import pytest
-from azure.cosmos.exceptions import CosmosHttpResponseError
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
 
 from app.config import Settings
 from app.models import Message, MessageRole
@@ -51,7 +51,14 @@ def _message() -> Message:
     )
 
 
-class _RefusingContainer:
+class _NoLeaseContainer:
+    """Messages container with no conversation lease held by another replica."""
+
+    async def read_item(self, *_args, **_kwargs):
+        raise CosmosResourceNotFoundError(status_code=404, message="lease not found")
+
+
+class _RefusingContainer(_NoLeaseContainer):
     """Cosmos container that answers every write with one HTTP error."""
 
     def __init__(self, status_code: int, message: str, sub_status: int | None = None) -> None:
@@ -64,6 +71,9 @@ class _RefusingContainer:
 
 class _BlackholedContainer:
     """Cosmos container that never answers, like a blocked network path."""
+
+    async def read_item(self, *_args, **_kwargs):
+        await asyncio.sleep(3600)
 
     async def upsert_item(self, *_args, **_kwargs):
         await asyncio.sleep(3600)
@@ -151,7 +161,7 @@ async def test_time_between_cosmos_calls_does_not_consume_chat_persistence_budge
 ) -> None:
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.15)
 
-    class _SlowButResponsiveContainer:
+    class _SlowButResponsiveContainer(_NoLeaseContainer):
         async def upsert_item(self, *_args, **_kwargs):
             await asyncio.sleep(0.06)
 
