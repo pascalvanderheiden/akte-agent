@@ -6,6 +6,9 @@ persistence falls back to a local SQLite database so the full backend is
 usable for development without any Azure dependency.
 
 Partition keys: conversations -> /userId, messages -> /conversationId, skills -> /name
+
+Denial signatures and the latency bounds are documented in
+``docs/cosmos-persistence.md``.
 """
 
 import asyncio
@@ -14,9 +17,12 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import aiosqlite
 from azure.core import MatchConditions
@@ -33,6 +39,8 @@ from app.config import Settings
 from app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Log a warning if a Cosmos operation takes longer than this (ms)
 _SLOW_OPERATION_THRESHOLD_MS = 500
@@ -55,6 +63,80 @@ class ConversationLock:
     local_lock: asyncio.Lock
     lease_token: str | None = None
     renewal_task: asyncio.Task | None = None
+
+# Fallback bound on a single item read or write outside a chat request. The SDK
+# retry ladder can stall for ~40s; two seconds caps that wait while remaining
+# four times the slow-operation threshold above.
+_COSMOS_OPERATION_TIMEOUT_S = 2
+
+# Total time that one /chat request may spend waiting on Cosmos, accumulated
+# across its persistence calls. Model execution between calls does not consume
+# this budget.
+_COSMOS_REQUEST_PERSISTENCE_BUDGET_S = 0.75
+
+# Substrings that identify the two distinct reasons Cosmos answers 403. The
+# network denial is the account firewall rejecting the source of the request
+# (public network access disabled, traffic arriving off the private endpoint);
+# the RBAC denial is a recognised caller without the data-plane role.
+_NETWORK_DENIAL_MARKERS = (
+    "firewall",
+    "public internet",
+    "network rules",
+    "virtual network",
+    "endpoint is blocked",
+)
+_RBAC_DENIAL_MARKERS = (
+    "rbac",
+    "request blocked by auth",
+    "not authorized to perform action",
+    "does not have required",
+)
+
+# Persistence-failure log signatures. Keep these synchronized with the alert
+# query in infra/modules/app-insights.bicep.
+NETWORK_DENIAL_SIGNATURE = "Cosmos persistence denied by network rules (firewall)"
+RBAC_DENIAL_SIGNATURE = "Cosmos persistence denied by RBAC role assignment"
+UNCLASSIFIED_DENIAL_SIGNATURE = "Cosmos persistence denied (unclassified 403)"
+OPERATION_TIMEOUT_SIGNATURE = "Cosmos persistence operation timed out"
+
+
+@dataclass
+class _PersistenceBudget:
+    remaining_s: float
+
+
+_persistence_budget: ContextVar[_PersistenceBudget | None] = ContextVar(
+    "cosmos_persistence_budget",
+    default=None,
+)
+
+
+@contextmanager
+def cosmos_persistence_budget(
+    budget: _PersistenceBudget | None = None,
+) -> Iterator[_PersistenceBudget]:
+    """Limit aggregate Cosmos wait time for a chat request."""
+    token = _persistence_budget.set(budget or _PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S))
+    try:
+        yield _persistence_budget.get()
+    finally:
+        _persistence_budget.reset(token)
+
+
+def _denial_signature(exc: CosmosHttpResponseError) -> str:
+    """Return the log signature for a 403, split by *why* Cosmos refused.
+
+    A network denial means the request never had a valid path to the account
+    and is an infrastructure fault; an RBAC denial means the path was fine and
+    the identity is missing a data-plane role. Chasing the wrong one costs
+    hours, so they never share a message.
+    """
+    detail = (exc.message or "").lower()
+    if any(marker in detail for marker in _NETWORK_DENIAL_MARKERS):
+        return NETWORK_DENIAL_SIGNATURE
+    if any(marker in detail for marker in _RBAC_DENIAL_MARKERS):
+        return RBAC_DENIAL_SIGNATURE
+    return UNCLASSIFIED_DENIAL_SIGNATURE
 
 
 class CosmosService:
@@ -154,6 +236,58 @@ class CosmosService:
             )
             return False
         return True
+
+    async def _bounded(self, operation: str, call: Awaitable[T]) -> T:
+        """Run one Cosmos item call under its operation and request bounds.
+
+        Chat requests share an aggregate persistence budget across calls,
+        including work in detached agent tasks. Other callers retain the
+        per-operation bound.
+
+        A timeout only means the operation exceeded its budget; it does not
+        establish whether Cosmos was unreachable, slow, or throttled.
+
+        The exception is re-raised either way: callers decide whether to fail
+        open, and this method does not change that.
+        """
+        budget = _persistence_budget.get()
+        timeout: float = _COSMOS_OPERATION_TIMEOUT_S
+        if budget is not None:
+            timeout = min(timeout, budget.remaining_s)
+
+        started = time.monotonic()
+        try:
+            return await asyncio.wait_for(call, timeout=timeout)
+        except TimeoutError:
+            logger.error(
+                "%s: operation=%s exceeded its %.3fs budget",
+                OPERATION_TIMEOUT_SIGNATURE,
+                operation,
+                timeout,
+            )
+            raise
+        except CosmosHttpResponseError as exc:
+            detail = next(iter((exc.message or "").splitlines()), "")
+            if exc.status_code == 403:
+                logger.error(
+                    "%s: operation=%s status=%s substatus=%s detail=%s",
+                    _denial_signature(exc),
+                    operation,
+                    exc.status_code,
+                    getattr(exc, "sub_status", None),
+                    detail,
+                )
+            else:
+                logger.error(
+                    "Cosmos %s failed: status=%s, message=%s",
+                    operation,
+                    exc.status_code,
+                    detail,
+                )
+            raise
+        finally:
+            if budget is not None:
+                budget.remaining_s = max(0.0, budget.remaining_s - (time.monotonic() - started))
 
     async def _fallback_to_sqlite(self) -> None:
         """Tear down the unusable Cosmos client and open the SQLite backend."""
@@ -423,38 +557,50 @@ class CosmosService:
         previous: dict[str, Any] | None
         try:
             try:
-                previous = await self._conversations_container.read_item(
-                    item=conversation.id, partition_key=conversation.userId
+                previous = await self._bounded(
+                    "read_conversation_for_update",
+                    self._conversations_container.read_item(
+                        item=conversation.id, partition_key=conversation.userId
+                    ),
                 )
             except CosmosResourceNotFoundError:
                 previous = None
             document = conversation.model_dump(mode="json")
             if previous is None:
-                persisted = await self._conversations_container.create_item(document)
+                persisted = await self._bounded("create_conversation", self._conversations_container.create_item(document))
             else:
-                persisted = await self._conversations_container.replace_item(
-                    item=conversation.id,
-                    body=document,
-                    etag=previous["_etag"],
-                    match_condition=MatchConditions.IfNotModified,
+                persisted = await self._bounded(
+                    "replace_conversation",
+                    self._conversations_container.replace_item(
+                        item=conversation.id,
+                        body=document,
+                        etag=previous["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    ),
                 )
             try:
                 await self._require_conversation_lease(conversation.id, lock_token)
             except RuntimeError:
                 with contextlib.suppress(CosmosResourceNotFoundError):
                     if previous is None:
-                        await self._conversations_container.delete_item(
-                            item=conversation.id,
-                            partition_key=conversation.userId,
-                            etag=persisted["_etag"],
-                            match_condition=MatchConditions.IfNotModified,
+                        await self._bounded(
+                            "rollback_created_conversation",
+                            self._conversations_container.delete_item(
+                                item=conversation.id,
+                                partition_key=conversation.userId,
+                                etag=persisted["_etag"],
+                                match_condition=MatchConditions.IfNotModified,
+                            ),
                         )
                     else:
-                        await self._conversations_container.replace_item(
-                            item=conversation.id,
-                            body={key: value for key, value in previous.items() if not key.startswith("_")},
-                            etag=persisted["_etag"],
-                            match_condition=MatchConditions.IfNotModified,
+                        await self._bounded(
+                            "rollback_conversation",
+                            self._conversations_container.replace_item(
+                                item=conversation.id,
+                                body={key: value for key, value in previous.items() if not key.startswith("_")},
+                                etag=persisted["_etag"],
+                                match_condition=MatchConditions.IfNotModified,
+                            ),
                         )
                 raise
         except CosmosHttpResponseError as exc:
@@ -472,7 +618,10 @@ class CosmosService:
         if not self._conversations_container:
             return None
         try:
-            item = await self._conversations_container.read_item(item=conversation_id, partition_key=user_id)
+            item = await self._bounded(
+                "get_conversation",
+                self._conversations_container.read_item(item=conversation_id, partition_key=user_id),
+            )
             return Conversation(**item)
         except Exception:
             return None
@@ -521,7 +670,10 @@ class CosmosService:
             return
         start = time.monotonic()
         try:
-            await self._messages_container.upsert_item(message.model_dump(mode="json"))
+            await self._bounded(
+                "upsert_message",
+                self._messages_container.upsert_item(message.model_dump(mode="json")),
+            )
             try:
                 await self._require_conversation_lease(message.conversationId, lock_token)
             except RuntimeError:
@@ -626,7 +778,38 @@ class CosmosService:
             return
         if not self._sessions_container:
             return
-        await self._sessions_container.upsert_item(doc)
+        previous = None
+        with contextlib.suppress(CosmosResourceNotFoundError):
+            previous = await self._bounded(
+                "read_session_mapping_for_update",
+                self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id),
+            )
+        persisted = await self._bounded("upsert_session_mapping", self._sessions_container.upsert_item(doc))
+        try:
+            await self._require_conversation_lease(conversation_id, lock_token)
+        except RuntimeError:
+            with contextlib.suppress(CosmosResourceNotFoundError):
+                if previous is None:
+                    await self._bounded(
+                        "rollback_created_session_mapping",
+                        self._sessions_container.delete_item(
+                            item=conversation_id,
+                            partition_key=conversation_id,
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        ),
+                    )
+                else:
+                    await self._bounded(
+                        "rollback_session_mapping",
+                        self._sessions_container.replace_item(
+                            item=conversation_id,
+                            body={key: value for key, value in previous.items() if not key.startswith("_")},
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        ),
+                    )
+            raise
         try:
             await self._require_conversation_lease(conversation_id, lock_token)
         except RuntimeError:
@@ -651,7 +834,10 @@ class CosmosService:
         if not self._sessions_container:
             return None
         try:
-            item = await self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id)
+            item = await self._bounded(
+                "get_session_mapping",
+                self._sessions_container.read_item(item=conversation_id, partition_key=conversation_id),
+            )
             return item.get("agentSessionId")
         except Exception:
             return None

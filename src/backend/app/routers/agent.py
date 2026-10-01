@@ -34,6 +34,7 @@ from app.personas import (
     require_persona_match,
     resolve_use_case,
 )
+from app.services.cosmos_service import cosmos_persistence_budget
 from app.services.follow_up_service import generate_follow_ups
 from app.services.model_routing import ModelRouting
 
@@ -92,6 +93,11 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     - done: Completion signal with metrics
     - error: Error details
     """
+    with cosmos_persistence_budget():
+        return await _chat(body, request)
+
+
+async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
     conversation = await cosmos.get_conversation(body.conversationId, "default-user")
@@ -160,7 +166,13 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 content=body.message,
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
+            try:
+                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
+            except Exception:
+                logger.warning(
+                    "Failed to persist user message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
             # Resolve use-case system prompt from the registry
             registries = getattr(app.state, "registries", {})
@@ -357,7 +369,13 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 },
                 createdAt=datetime.now(UTC),
             )
-            await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
+            try:
+                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
+            except Exception:
+                logger.warning(
+                    "Failed to persist assistant message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
             # Generate follow-up questions (best-effort, non-blocking)
             try:

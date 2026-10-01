@@ -56,6 +56,103 @@ Prerequisites: [azd](https://learn.microsoft.com/azure/developer/azure-developer
 
 Redeploy code only with `azd deploy`; tear down with `azd down`. Optional read-only Azure SRE Agent: see [docs/sre-agent.md](docs/sre-agent.md).
 
+### Diagnose Cosmos persistence after a rollout
+
+Cosmos has public network access disabled. The Container App must reach its
+`Sql` private endpoint through the app VNet, with the Cosmos hostname resolving
+through the VNet-linked `privatelink.documents.azure.com` private DNS zone to a
+**private IP**. A service endpoint or a public DNS answer is not a substitute;
+do not open public access or add Cosmos firewall rules to work around a routing
+failure. See `infra/modules/cosmos-db.bicep` and `infra/modules/network.bicep`.
+The hosted-agent's separate Blob/local-only behavior is described in
+[ADR 0002](docs/adr/0002-hosted-agent-local-only-skills.md).
+
+After the network fix is deployed, use the selected `azd` environment to find
+the Container App and Application Insights resources (do not commit their names
+or endpoints). From **inside the running Container App**, resolve the hostname
+in `COSMOS_DB_ENDPOINT` (for example with `az containerapp exec` and Python's
+`socket.getaddrinfo`); confirm it returns a private endpoint IP, not a public
+address. Check the private endpoint connection, DNS zone link to the app VNet,
+and Cosmos public-network setting. The current smoke suite does not verify
+persisted message contents, so perform this manual round-trip with synthetic data:
+
+1. In the deployed UI, create a new conversation and send a unique synthetic
+   prompt. Wait for a non-empty assistant response, and note the conversation ID.
+2. Reload or reopen that conversation so its messages are fetched again from the
+   backend. In the browser's Network panel, inspect the response from
+   `GET /api/conversations/{conversation_id}/messages`.
+3. Confirm the returned JSON contains the exact user prompt with `role: "user"`
+   and the non-empty assistant reply with `role: "assistant"`.
+
+Repeat with representative synthetic conversations during the observation
+window. Successful HTTP responses alone do **not** prove persistence: writes are
+fail-open. If DNS is public, investigate VNet DNS and service-endpoint routing
+before changing RBAC. If DNS is private but writes fail, inspect the exception:
+firewall/network-denial text (including a 403) is not proof of an RBAC error.
+
+Keep representative synthetic conversations flowing for **30 continuous
+minutes after deployment**, including both reads and writes. In the deployed
+Application Insights Logs, set explicit UTC start/end timestamps for this
+window, allow for ingestion delay, and check the persistence warnings (the
+alert in `infra/modules/app-insights.bicep` uses these exact messages):
+
+```kusto
+traces
+| where timestamp between (datetime(<start-UTC>) .. datetime(<end-UTC>))
+| where message in ("Failed to persist user message to Cosmos (non-fatal)",
+                    "Failed to persist assistant message to Cosmos (non-fatal)")
+| project timestamp, operation_Id, message
+```
+
+Search exception details over the same window as well:
+
+```kusto
+exceptions
+| where timestamp between (datetime(<start-UTC>) .. datetime(<end-UTC>))
+| extend error = strcat(outerMessage, " ", tostring(details))
+| where error has "Cosmos" and (error has "firewall" or error has "network rules")
+| summarize firewall_denials = count()
+```
+
+Inspect correlated exception details to distinguish firewall-denial signatures
+from RBAC denials; a 403 alone does not distinguish them. If exception details
+are not exported to this table, inspect the warning's correlated trace/span
+instead. Record **zero firewall-denial traces**, the number of
+successful persisted conversations, the window and deployment revision in the
+incident, but do not paste raw traces (which may contain identifiers or data)
+into the public repo. An empty result without representative traffic or
+working telemetry is inconclusive.
+
+Measure latency over the **same** window from individual top-level
+`invoke_agent` spans (the duration field is a per-span duration in
+`dependencies`/`requests`):
+
+```kusto
+union requests, dependencies
+| where timestamp between (datetime(<start-UTC>) .. datetime(<end-UTC>))
+| where name == "invoke_agent kratos-agent"
+| where tostring(customDimensions["gen_ai.operation.name"]) == "invoke_agent"
+| summarize arg_max(timestamp, *) by id
+| extend duration_s = duration / 1s
+| summarize requests = count(), p50_s = percentile(duration_s, 50),
+            p95_s = percentile(duration_s, 95)
+```
+
+Compare against the pre-rollout incident baseline (p50 **0.111 s**, p95
+**0.205 s**). This check requires p95 **under 1 s** and **within 2×** baseline
+(at most 0.410 s), not merely under the broader [ADR 0003](docs/adr/0003-interactive-request-latency-budget.md)
+budget; do not change that ADR's budget. If there are too few metric samples,
+verify telemetry ingestion before drawing conclusions. Correlate slow
+operations with Cosmos denial/persistence warnings and their timestamps to
+attribute the regression; if the gap remains without denials, open a separate
+issue with sanitized, isolated traces and the before/after sample counts.
+Track Blob registry-loading authorization failures separately: the local-disk
+fallback can mask them, and they are not evidence of healthy Blob access.
+This section is a runbook, not evidence that the live checks passed. Keep issue
+#126 open until the post-deployment result is recorded, latency is attributed
+(or a residual-latency issue is opened), and a separate Blob follow-up issue is
+created.
+
 ## Run locally
 
 Runs the backend with SQLite and Azurite instead of Cosmos DB and Blob Storage, and a GitHub Copilot token instead of Foundry models. Requires Docker.
