@@ -18,6 +18,19 @@ function queryCount(appId: string, query: string, what: string): number {
   return count;
 }
 
+function queryTimestamp(appId: string, query: string, what: string): Date | undefined {
+  const output = execFileSync(
+    "az",
+    ["monitor", "app-insights", "query", "--app", appId, "--analytics-query", query, "--output", "json"],
+    { encoding: "utf8", timeout: 30_000 },
+  );
+  const value = JSON.parse(output).tables?.[0]?.rows?.[0]?.[0];
+  if (value === null || value === undefined) return undefined;
+  const timestamp = new Date(value);
+  expect(Number.isNaN(timestamp.getTime()), `${what} query must return a timestamp`).toBe(false);
+  return timestamp;
+}
+
 async function deleteAndVerifyConversation(api: APIRequestContext, conversationId: string): Promise<void> {
   const url = `${BACKEND_URL}/api/conversations/${encodeURIComponent(conversationId)}`;
   const deleted = await api.delete(url);
@@ -39,10 +52,11 @@ async function expectNoCosmosFirewallDenials(
     | where timestamp >= datetime(${startedAt.toISOString()})
     | extend text = strcat(message, " ", tostring(customDimensions))
     | where text has "Conversation deletion completed" and text has "${conversationId}"
-    | count
+    | summarize completionTimestamp=max(timestamp)
   `;
   const deadline = Date.now() + TELEMETRY_WATERMARK_TIMEOUT_MS;
-  while (queryCount(appId, completionMarker, "telemetry completion marker") < 1) {
+  let completedAt = queryTimestamp(appId, completionMarker, "telemetry completion marker");
+  while (!completedAt) {
     if (Date.now() >= deadline) {
       throw new Error(
         `App Insights did not ingest this smoke run's completion marker within ${TELEMETRY_WATERMARK_TIMEOUT_MS / 1000}s; ` +
@@ -50,20 +64,14 @@ async function expectNoCosmosFirewallDenials(
       );
     }
     await new Promise((resolve) => setTimeout(resolve, TELEMETRY_POLL_INTERVAL_MS));
+    completedAt = queryTimestamp(appId, completionMarker, "telemetry completion marker");
   }
 
   const denials = `
-    let completedAt = toscalar(
-      traces
-      | where timestamp >= datetime(${startedAt.toISOString()})
-      | extend text = strcat(message, " ", tostring(customDimensions))
-      | where text has "Conversation deletion completed" and text has "${conversationId}"
-      | summarize max(timestamp)
-    );
     union isfuzzy=true
       (traces | project timestamp, text=strcat(message, " ", tostring(customDimensions))),
       (exceptions | project timestamp, text=strcat(outerMessage, " ", innermostMessage, " ", tostring(details)))
-    | where timestamp between (datetime(${startedAt.toISOString()}) .. completedAt)
+    | where timestamp between (datetime(${startedAt.toISOString()}) .. datetime(${completedAt.toISOString()}))
     | where text has "firewall" and text has "Cosmos"
     | count
   `;

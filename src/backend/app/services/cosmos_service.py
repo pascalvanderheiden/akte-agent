@@ -420,18 +420,42 @@ class CosmosService:
         if not self._conversations_container:
             return
         start = time.monotonic()
+        previous: dict[str, Any] | None
         try:
-            persisted = await self._conversations_container.upsert_item(conversation.model_dump(mode="json"))
+            try:
+                previous = await self._conversations_container.read_item(
+                    item=conversation.id, partition_key=conversation.userId
+                )
+            except CosmosResourceNotFoundError:
+                previous = None
+            document = conversation.model_dump(mode="json")
+            if previous is None:
+                persisted = await self._conversations_container.create_item(document)
+            else:
+                persisted = await self._conversations_container.replace_item(
+                    item=conversation.id,
+                    body=document,
+                    etag=previous["_etag"],
+                    match_condition=MatchConditions.IfNotModified,
+                )
             try:
                 await self._require_conversation_lease(conversation.id, lock_token)
             except RuntimeError:
                 with contextlib.suppress(CosmosResourceNotFoundError):
-                    await self._conversations_container.delete_item(
-                        item=conversation.id,
-                        partition_key=conversation.userId,
-                        etag=persisted["_etag"],
-                        match_condition=MatchConditions.IfNotModified,
-                    )
+                    if previous is None:
+                        await self._conversations_container.delete_item(
+                            item=conversation.id,
+                            partition_key=conversation.userId,
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        )
+                    else:
+                        await self._conversations_container.replace_item(
+                            item=conversation.id,
+                            body={key: value for key, value in previous.items() if not key.startswith("_")},
+                            etag=persisted["_etag"],
+                            match_condition=MatchConditions.IfNotModified,
+                        )
                 raise
         except CosmosHttpResponseError as exc:
             logger.error("Cosmos upsert_conversation failed: status=%s, message=%s", exc.status_code, exc.message)

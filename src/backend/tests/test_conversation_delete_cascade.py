@@ -203,3 +203,39 @@ async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
         assert await cosmos.get_session_mapping("active") is None
     finally:
         await cosmos.close()
+
+
+async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease_loss():
+    old = {"id": "c1", "userId": "default-user", "title": "old", "_etag": "1"}
+    conversations = SimpleNamespace(
+        read_item=AsyncMock(return_value=old),
+        replace_item=AsyncMock(
+            side_effect=[
+                {"id": "c1", "userId": "default-user", "title": "new", "_etag": "2"},
+                None,
+            ]
+        ),
+    )
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    cosmos._conversations_container = conversations
+    cosmos._messages_container = SimpleNamespace(
+        read_item=AsyncMock(side_effect=CosmosResourceNotFoundError(status_code=404))
+    )
+
+    with pytest.raises(RuntimeError, match="Conversation lease is not owned"):
+        await cosmos.upsert_conversation(
+            Conversation(
+                id="c1",
+                userId="default-user",
+                title="new",
+                createdAt=datetime.now(UTC),
+                updatedAt=datetime.now(UTC),
+            ),
+            lock_token=str(uuid.uuid4()),
+        )
+
+    assert conversations.replace_item.await_args_list[1].kwargs["body"] == {
+        "id": "c1",
+        "userId": "default-user",
+        "title": "old",
+    }
