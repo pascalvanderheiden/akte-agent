@@ -4,17 +4,10 @@ name: PR reviewed by Copilot
 # labels the PR `reviewed` and releases any CI workflow runs left sitting in
 # `action_required`.
 #
-# That release step is now a leftover. It mattered when *Require approval for
-# workflow runs* was enabled under Settings -> Copilot -> Cloud agent, which
-# held every run on a Copilot pull request; this repository has that disabled,
-# so runs start on their own. Keeping the step costs nothing and covers the
-# setting being turned back on.
-#
-# Note this workflow has historically never fired on its own: Copilot's
-# automatic code review raised no `pull_request_review` event. Enabling *Allow
-# Copilot to approve pull requests* may change that, since an approval is a
-# review submission. `approve-gated-runs` reconciles the label either way, so
-# the chain does not depend on the answer.
+# When *Require approval for workflow runs* is enabled under Settings ->
+# Copilot -> Cloud agent, this review-triggered run can itself be held in
+# `action_required`. Disable that setting for the reliable fast path; the
+# scheduled `approve-gated-runs` workflow remains a best-effort fallback.
 #
 # Deterministic, so a plain GitHub Action rather than an agentic workflow.
 

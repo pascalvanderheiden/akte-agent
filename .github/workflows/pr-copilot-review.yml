@@ -15,15 +15,17 @@ name: PR review by Copilot
 #
 # Note on the approval gate: runs on the Copilot coding agent's pull requests
 # are held in `action_required` unless *Require approval for workflow runs* is
-# disabled under Settings -> Copilot -> Cloud agent. This repository has it
-# disabled, so these runs start on their own. If it is ever turned back on,
-# nothing here can release them — `POST /actions/runs/{id}/approve` refuses
-# same-repo runs — and `approve-gated-runs` has to re-run them instead. See
+# disabled under Settings -> Copilot -> Cloud agent. When enabled, this run can
+# itself be held, so the scheduled `approve-gated-runs` fallback must replay it.
+# The reliable fast path requires the setting to be disabled. See
 # docs/agents/pr-automation.md.
 
 on:
   pull_request_target:
-    types: [opened, reopened, ready_for_review, synchronize]
+    # The coding agent requests the delegator as reviewer after it finishes,
+    # which is later than `opened`/`synchronize`; handle that request immediately
+    # instead of waiting for the best-effort schedule to remove it.
+    types: [opened, reopened, ready_for_review, review_requested, synchronize]
   schedule:
     # Every ten minutes, matching `pr-auto-merge`. The coding agent leaves its
     # pull requests in draft when it finishes, and finishing raises no webhook —
@@ -60,14 +62,11 @@ permissions:
 jobs:
   request-review:
     # Deliberately unconditional, including on a draft's pushes. An earlier
-    # version skipped `synchronize` while draft, on the assumption that the
-    # reviewer cleanup had already happened when the PR was opened. It had not:
-    # the coding agent adds the reviewer at some point during drafting, and the
-    # `opened` run is held in `action_required` anyway, so the only run that
-    # ever reached the cleanup was a `synchronize` one — which was the run being
-    # skipped. The result was a human sitting in the review queue for hours.
-    # The script itself skips the review request on a draft, so the extra runs
-    # are cheap.
+    # version skipped `synchronize` while draft, on the assumption that reviewer
+    # cleanup had already happened when the PR was opened. The coding agent can
+    # request its delegator later, so `review_requested` is now another fast
+    # path; the schedule remains a fallback when a run is held or missed. The
+    # script skips asking Copilot to review an unfinished draft.
     runs-on: ubuntu-latest
     steps:
       - name: Resolve the pull request

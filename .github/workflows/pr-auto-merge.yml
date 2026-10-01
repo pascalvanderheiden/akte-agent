@@ -14,12 +14,10 @@ name: Auto-merge reviewed PRs
 # `pull_request_target: labeled` only exists for a human applying
 # `ready-to-merge` by hand.
 #
-# Those two were assumed to cover every ordering. They do not. Copilot's
-# *automatic* code review raises no `pull_request_review` event — see the note in
-# `pr-reviewed` — so when the review lands after CI has already finished, there
-# is no event left to fire and the PR sits approved and green forever. Hence the
-# `schedule` sweep below, which re-evaluates every open PR against the identical
-# gate. It is the backstop, not the fast path.
+# `pull_request_review` is the fast path once the Copilot workflow-approval gate
+# is disabled. If the gate is enabled, the event's run can be held in
+# `action_required`; the `schedule` sweep is a best-effort backstop, not a
+# reliable substitute for disabling the gate.
 #
 # The gate is "Copilot reviewed this exact head commit", not "the PR carries the
 # `reviewed` label". The label is written by GITHUB_TOKEN and so cannot be a

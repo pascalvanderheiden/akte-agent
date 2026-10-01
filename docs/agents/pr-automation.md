@@ -15,8 +15,8 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 
 | Workflow | Trigger | What it does |
 | --- | --- | --- |
-| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, synchronize, plus `schedule` every 10 minutes | Removes every other reviewer (including on drafts), takes a coding-agent PR out of draft once the agent has finished, and requests `copilot-pull-request-reviewer[bot]`. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
-| `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases the CI runs sitting in `action_required`. **Does not fire on its own** — see "Copilot's review raises no event". |
+| `pr-copilot-review.yml` | `pull_request_target`: opened, reopened, ready_for_review, review_requested, synchronize, plus `schedule` every 10 minutes | Removes every other reviewer (including on drafts), including the coding agent's late request for the delegator; takes a coding-agent PR out of draft once the agent has finished; requests `copilot-pull-request-reviewer[bot]`. Drops stale `reviewed` / `ready-to-merge` / `needs-fixes` labels when the head commit moves. |
+| `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases CI runs sitting in `action_required`. |
 | `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled, `schedule` every 10 minutes | Relabels `ready-to-merge`, takes the PR out of draft if it still is one, and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
 | `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
@@ -31,7 +31,9 @@ can be replayed by hand when something goes sideways.
 - **The Copilot workflow-approval gate must be off**, under Settings → Copilot →
   Cloud agent → Actions workflow approval → *Require approval for workflow
   runs*. Leave it on and every run on a Copilot PR is held in `action_required`,
-  which stalls the whole chain. This is the single most important setting here;
+  which stalls the event-driven chain. Current same-repository Copilot-triggered
+  review runs have been observed in `action_required`; that is evidence the gate
+  is on. This is the single most important setting here;
   see "Approval gating" for why nothing can work around it. Repository admin
   only, and there is no API for it.
 - **`GITHUB_TOKEN` with `actions: write` releases held runs.** Not a PAT. The
@@ -191,29 +193,23 @@ Two details about held `workflow_run` runs, both learned the hard way:
 - Because of that, the sweeper is load-bearing: without it, every PR stalls
   fully reviewed and fully green but unmerged.
 
-## Copilot's review raises no event
+## Copilot's review event
 
-Copilot's automatic code review does **not** raise a workflow-triggering
-`pull_request_review` event. Observed on two consecutive PRs: the review was
-submitted, and no run of `pr-reviewed` was created at all — not a held run, no
-run. So `pull_request_review` cannot be relied on as the entry point, and
-`pr-reviewed` in practice only ever runs via `workflow_dispatch`.
+Copilot's automatic code review can raise a `pull_request_review: submitted`
+event. That event is the fast path for `pr-reviewed`, `pr-address-review`, and
+`pr-auto-merge`; `approve-gated-runs` still reconciles the `reviewed` label by
+reviewed **commit**, so a later push cannot leave a stale label behind.
 
-`approve-gated-runs` therefore reconciles the `reviewed` label itself on every
-sweep. It keys the label to the reviewed **commit**, not to the PR, so a push
-landing after a review does not leave a stale label behind.
+The event-driven path only works when the Copilot workflow-approval gate is
+off. If enabled, the event's workflows may all be created as
+`action_required` without running, including the workflow that labels the PR
+and addresses open comments. The schedule is only a best-effort fallback, not a
+reliable substitute for disabling the gate.
 
-`pr-auto-merge`'s **gate** was already immune to this, because it asks "did
-Copilot review this exact head commit", not "does the PR carry the `reviewed`
-label". Its **triggers** were not. With no `pull_request_review` event, the only
-event left was `workflow_run` on CI — so a review landing *after* CI had already
-finished fired nothing at all, and the PR sat approved and green indefinitely.
-PR #85 did exactly that: CI green at 12:13, review approved at 15:08, no further
-run, no merge.
-
-That is why `pr-auto-merge` now also runs on a ten-minute `schedule`. The sweep
-re-evaluates every open PR against the identical gate and merges at most one per
-run. It is the backstop; the events remain the fast path.
+`pr-auto-merge` continues to verify the Copilot review belongs to the current
+head commit and requires no unresolved review threads plus green CI. Its
+ten-minute schedule is a backstop for event ordering and missed runs, not the
+normal path.
 
 ## Draft pull requests
 

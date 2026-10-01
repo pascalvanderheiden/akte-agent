@@ -91,10 +91,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # `pr-reviewed` is meant to do this on `pull_request_review`, but
-          # GitHub raises no workflow-triggering review event for Copilot's
-          # automatic code review, so that workflow never fires on its own.
-          # Reconciling here covers every PR regardless of ordering.
+          # `pr-reviewed` labels on `pull_request_review`; reconciling here
+          # covers a held/missed event and any ordering where the review run
+          # arrives after this sweep.
           prs=$(gh pr list --repo "$REPO" --state open --limit 100 \
                   --json number,headRefOid,labels \
                   --jq '.[] | select([.labels[].name] | index("reviewed") == null)
