@@ -484,6 +484,14 @@ class CosmosService:
                 return await self._bounded(operation, call)
             except (CosmosResourceExistsError, CosmosResourceNotFoundError):
                 raise
+            except CosmosHttpResponseError as exc:
+                if operation == "replace_conversation_lease" and exc.status_code in (404, 409, 412):
+                    raise
+                if observed_contention:
+                    raise ConversationLeaseContentionError(
+                        f"Lease contention ended without acquisition: conversation_id={conversation_id}"
+                    ) from exc
+                raise
             except Exception as exc:
                 if observed_contention:
                     raise ConversationLeaseContentionError(

@@ -247,6 +247,39 @@ async def test_degraded_lock_fails_closed_after_observing_another_replica_lease(
     await owner.release_conversation_lock("contended", owner_lock)
 
 
+async def test_lease_takeover_retries_etag_conflict_after_observed_contention():
+    messages = _SharedMessages(
+        [
+            {
+                "id": "__conversation_lease__",
+                "conversationId": "racing",
+                "lockToken": "previous-owner",
+                "expiresAt": time.time() + 0.02,
+            }
+        ]
+    )
+    replace_item = messages.replace_item
+    replacements = 0
+
+    async def replace_with_one_race(*args, **kwargs):
+        nonlocal replacements
+        replacements += 1
+        if replacements == 1:
+            raise CosmosHttpResponseError(status_code=412)
+        await replace_item(*args, **kwargs)
+
+    messages.replace_item = replace_with_one_race
+    service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    service._messages_container = messages
+
+    with cosmos_persistence_budget() as budget:
+        budget.remaining_s = 1
+        token = await service._acquire_cosmos_lease("racing")
+
+    assert token
+    assert replacements == 2
+
+
 async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
     cosmos = CosmosService(Settings(cosmos_db_endpoint="", local_data_dir=str(tmp_path)))
     await cosmos.initialize()

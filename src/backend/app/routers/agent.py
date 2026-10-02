@@ -142,7 +142,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         ):
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
-            await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            try:
+                await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            except Exception:
+                logger.warning("Failed to persist model selection update (non-fatal)", exc_info=True)
     except BaseException:
         await cosmos.release_conversation_lock(body.conversationId, run_lock)
         raise

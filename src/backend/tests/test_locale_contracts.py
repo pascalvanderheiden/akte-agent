@@ -294,6 +294,36 @@ def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transpor
     assert response.json()["detail"] == "Conversation not found"
 
 
+def test_chat_streams_requested_model_when_persisting_selection_times_out(transport):
+    existing = SimpleNamespace(useCase="akte-agent", modelSelection="auto", updatedAt=None)
+    lock = SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
+    cosmos = SimpleNamespace(
+        get_conversation=AsyncMock(side_effect=[existing, TimeoutError("budget exhausted")]),
+        acquire_conversation_lock=AsyncMock(return_value=lock),
+        release_conversation_lock=AsyncMock(),
+        upsert_conversation=AsyncMock(side_effect=TimeoutError("budget exhausted")),
+        upsert_message=AsyncMock(),
+        get_session_mapping=AsyncMock(return_value=None),
+        upsert_session_mapping=AsyncMock(),
+    )
+    transport.client.app.state.cosmos_service = cosmos
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+            "selectedModelId": "gpt-6-luna",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Synthetic English reply" in response.text
+    assert existing.modelSelection == "gpt-6-luna"
+    cosmos.upsert_conversation.assert_awaited_once()
+
+
 @pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))
 @pytest.mark.parametrize("strip_fields", [False, True])
 async def test_hosted_retirement_denies_cached_and_lazy_gateway_paths(transport, name, strip_fields):
