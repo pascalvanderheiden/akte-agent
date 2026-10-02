@@ -115,7 +115,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    run_lock = await cosmos.acquire_conversation_lock(body.conversationId)
+    run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
     try:
         if conversation:
             conversation = await cosmos.get_conversation(body.conversationId, "default-user")

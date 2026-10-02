@@ -239,7 +239,7 @@ class CosmosService:
             return False
         return True
 
-    async def _bounded(self, operation: str, call: Awaitable[T]) -> T:
+    async def _bounded(self, operation: str, call: Awaitable[T], *, use_request_budget: bool = True) -> T:
         """Run one Cosmos item call under its operation and request bounds.
 
         Chat requests share an aggregate persistence budget across calls,
@@ -252,7 +252,7 @@ class CosmosService:
         The exception is re-raised either way: callers decide whether to fail
         open, and this method does not change that.
         """
-        budget = _persistence_budget.get()
+        budget = _persistence_budget.get() if use_request_budget else None
         timeout: float = _COSMOS_OPERATION_TIMEOUT_S
         if budget is not None:
             timeout = min(timeout, budget.remaining_s)
@@ -401,7 +401,9 @@ class CosmosService:
         await self._sqlite_db.execute(f"DELETE FROM {table}")  # noqa: S608
         await self._sqlite_db.commit()
 
-    async def acquire_conversation_lock(self, conversation_id: str) -> ConversationLock:
+    async def acquire_conversation_lock(
+        self, conversation_id: str, *, allow_degraded: bool = False
+    ) -> ConversationLock:
         """Acquire a conversation lock, coordinating across Cosmos-backed replicas."""
         async with self._conversation_locks_guard:
             lock, users = self._conversation_locks.get(conversation_id, (asyncio.Lock(), 0))
@@ -420,6 +422,8 @@ class CosmosService:
                         self._renew_cosmos_lease(conversation_id, acquired.lease_token)
                     )
                 except Exception as exc:
+                    if not allow_degraded:
+                        raise
                     logger.warning(
                         "Cosmos conversation lease unavailable; continuing with process-local lock (%s)",
                         type(exc).__name__,
@@ -518,6 +522,7 @@ class CosmosService:
                 existing = await self._bounded(
                     "read_conversation_lease",
                     self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
+                    use_request_budget=False,
                 )
                 if existing.get("lockToken") != token or existing.get("expiresAt", 0) <= time.time():
                     return
@@ -529,6 +534,7 @@ class CosmosService:
                         etag=existing["_etag"],
                         match_condition=MatchConditions.IfNotModified,
                     ),
+                    use_request_budget=False,
                 )
             except asyncio.CancelledError:
                 raise
@@ -543,6 +549,7 @@ class CosmosService:
             existing = await self._bounded(
                 "read_conversation_lease",
                 self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
+                use_request_budget=False,
             )
             if existing.get("lockToken") == token:
                 await self._bounded(
@@ -553,6 +560,7 @@ class CosmosService:
                         etag=existing["_etag"],
                         match_condition=MatchConditions.IfNotModified,
                     ),
+                    use_request_budget=False,
                 )
         except CosmosResourceNotFoundError:
             return
@@ -560,7 +568,7 @@ class CosmosService:
             if exc.status_code not in (404, 409, 412):
                 raise
         except TimeoutError:
-            logger.warning("Cosmos conversation lease release exceeded the persistence budget")
+            logger.warning("Cosmos conversation lease release exceeded the operation timeout")
 
     async def _require_conversation_lease(self, conversation_id: str, token: str | None) -> None:
         """Reject persistence when another replica owns the conversation lease."""

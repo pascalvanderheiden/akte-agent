@@ -143,7 +143,7 @@ async def test_blackholed_lease_acquisition_fails_open_within_persistence_budget
     service = _cosmos_service(_BlackholedLeaseContainer())
     started = time.monotonic()
     with caplog.at_level(logging.WARNING), cosmos_persistence_budget():
-        lock = await service.acquire_conversation_lock("conversation-1")
+        lock = await service.acquire_conversation_lock("conversation-1", allow_degraded=True)
         await service.release_conversation_lock("conversation-1", lock)
     elapsed = time.monotonic() - started
 
@@ -152,6 +152,49 @@ async def test_blackholed_lease_acquisition_fails_open_within_persistence_budget
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert OPERATION_TIMEOUT_SIGNATURE in logged
     assert "Cosmos conversation lease unavailable" in logged
+
+
+async def test_lease_renewal_and_release_ignore_exhausted_request_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _LeaseContainer:
+        def __init__(self) -> None:
+            self.lease = {
+                "id": cosmos_module._CONVERSATION_LEASE_ID,
+                "lockToken": "owned-token",
+                "expiresAt": time.time() + 60,
+                "_etag": "1",
+            }
+            self.reads = 0
+            self.replacements = 0
+            self.deletes = 0
+
+        async def read_item(self, *_args, **_kwargs):
+            self.reads += 1
+            if self.reads > 1:
+                return {**self.lease, "lockToken": "new-owner"}
+            return dict(self.lease)
+
+        async def replace_item(self, *, body, **_kwargs):
+            self.replacements += 1
+            self.lease = {**body, "_etag": "2"}
+
+        async def delete_item(self, **_kwargs):
+            self.deletes += 1
+
+    monkeypatch.setattr(cosmos_module, "_CONVERSATION_LEASE_RENEW_SECONDS", 0)
+    container = _LeaseContainer()
+    service = _cosmos_service(container)
+
+    with cosmos_persistence_budget() as budget:
+        budget.remaining_s = 0
+        await service._renew_cosmos_lease("conversation-1", "owned-token")
+        container.reads = 0
+        await service._release_cosmos_lease("conversation-1", "owned-token")
+
+    assert container.reads == 1
+    assert container.replacements == 1
+    assert container.deletes == 1
 
 
 async def test_reads_on_the_response_path_fail_open_when_cosmos_is_blocked(

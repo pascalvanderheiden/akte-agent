@@ -69,7 +69,6 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
                 or signal contains "Cosmos persistence operation timed out"
                 or (signal contains "CosmosHttpResponseError" and signal contains "403")
             | summarize timestamp = min(timestamp) by operation_Id
-            | summarize count() by bin(timestamp, 15m)
           '''
           timeAggregation: 'Count'
           operator: 'GreaterThan'

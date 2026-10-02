@@ -197,7 +197,7 @@ class ApplicationInsightsAlertTests(unittest.TestCase):
         self.assertIn("exceptions", criterion["query"])
         self.assertIn("operation_Id", criterion["query"])
         self.assertIn("| summarize timestamp = min(timestamp) by operation_Id", criterion["query"])
-        self.assertIn("| summarize count() by bin(timestamp, 15m)", criterion["query"])
+        self.assertNotIn("| summarize count() by bin(timestamp, 15m)", criterion["query"])
         hosted_agent = (Path(__file__).resolve().parents[2] / "src" / "hosted-agent" / "main.py").read_text()
         for signature in (
             "Failed to persist user message to Cosmos (non-fatal)",

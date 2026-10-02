@@ -144,6 +144,24 @@ async def test_cosmos_delete_conversation_deletes_message_partition_first():
     ]
 
 
+async def test_cosmos_delete_fails_closed_when_lease_acquisition_is_throttled():
+    messages = _SharedMessages()
+    messages.create_item = AsyncMock(side_effect=CosmosHttpResponseError(status_code=429))
+    conversations = SimpleNamespace(delete_item=AsyncMock())
+    sessions = SimpleNamespace(delete_item=AsyncMock())
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    cosmos._messages_container = messages
+    cosmos._conversations_container = conversations
+    cosmos._sessions_container = sessions
+
+    with pytest.raises(CosmosHttpResponseError):
+        await cosmos.delete_conversation("c1", "default-user")
+
+    assert conversations.delete_item.await_count == 0
+    assert sessions.delete_item.await_count == 0
+    assert messages.calls == []
+
+
 async def test_cosmos_delete_waits_for_chat_lease_from_another_service_instance():
     messages = _SharedMessages()
     chat_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
