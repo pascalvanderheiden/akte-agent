@@ -481,9 +481,7 @@ class CosmosService:
             try:
                 existing = await self._bounded(
                     "read_conversation_lease",
-                    self._messages_container.read_item(
-                        item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
-                    ),
+                    self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
                 )
             except CosmosResourceNotFoundError:
                 continue
@@ -519,9 +517,7 @@ class CosmosService:
             try:
                 existing = await self._bounded(
                     "read_conversation_lease",
-                    self._messages_container.read_item(
-                        item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
-                    ),
+                    self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
                 )
                 if existing.get("lockToken") != token or existing.get("expiresAt", 0) <= time.time():
                     return
@@ -546,9 +542,7 @@ class CosmosService:
         try:
             existing = await self._bounded(
                 "read_conversation_lease",
-                self._messages_container.read_item(
-                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
-                ),
+                self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
             )
             if existing.get("lockToken") == token:
                 await self._bounded(
