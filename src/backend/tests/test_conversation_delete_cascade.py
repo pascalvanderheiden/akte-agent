@@ -247,6 +247,25 @@ async def test_degraded_lock_fails_closed_after_observing_another_replica_lease(
     await owner.release_conversation_lock("contended", owner_lock)
 
 
+@pytest.mark.parametrize(
+    "create_conflict",
+    [CosmosResourceExistsError(status_code=409), CosmosHttpResponseError(status_code=409)],
+)
+async def test_lease_create_conflict_then_failed_read_fails_closed(create_conflict):
+    class ConflictThenFailedRead:
+        async def create_item(self, _document):
+            raise create_conflict
+
+        async def read_item(self, *_args, **_kwargs):
+            raise CosmosHttpResponseError(status_code=429)
+
+    service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    service._messages_container = ConflictThenFailedRead()
+
+    with pytest.raises(ConversationLeaseContentionError):
+        await service.acquire_conversation_lock("contended", allow_degraded=True)
+
+
 async def test_lease_takeover_retries_etag_conflict_after_observed_contention():
     messages = _SharedMessages(
         [

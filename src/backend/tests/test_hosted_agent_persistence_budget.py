@@ -189,6 +189,14 @@ async def _invoke(hosted, payload: dict) -> tuple[int, list[dict]]:
     request.state.invocation_id = "synthetic-invocation"
     response = await hosted.handle_invoke(request)
     events = []
+    if not hasattr(response, "body_iterator"):
+        return response.status_code, [
+            {
+                "event": "blocked",
+                "headers": dict(response.headers),
+                "data": json.loads(response.body),
+            }
+        ]
     async for chunk in response.body_iterator:
         text = chunk.decode() if isinstance(chunk, bytes) else chunk
         if text.startswith("data: "):
@@ -199,7 +207,7 @@ async def _invoke(hosted, payload: dict) -> tuple[int, list[dict]]:
 
 
 @pytest.mark.parametrize("denial_latency_s", [0.0, COSMOS_PERSISTENCE_BUDGET_S * 2 / 3])
-async def test_network_denied_invocation_succeeds_within_one_persistence_budget(
+async def test_network_denied_invocation_is_blocked_within_one_persistence_budget(
     hosted, caplog: pytest.LogCaptureFixture, denial_latency_s: float
 ) -> None:
     clock = _CosmosClock()
@@ -214,11 +222,11 @@ async def test_network_denied_invocation_succeeds_within_one_persistence_budget(
             {"message": "Hello", "conversationId": "synthetic-conversation", "useCase": "akte-agent"},
         )
 
-    assert status == 200
-    assert [e["data"]["content"] for e in events if e["event"] == "content"] == ["Synthetic reply"]
-    assert any(e["event"] == "done" for e in events)
-    assert not [e for e in events if e["event"] == "error"]
-    assert events[-1] == {"event": "invocation_done"}
+    assert status == 503
+    assert events[0]["event"] == "blocked"
+    assert events[0]["headers"]["x-kratos-cosmos-path"] == "blocked"
+    assert 0 <= int(events[0]["headers"]["x-kratos-persistence-budget-remaining-ms"]) <= COSMOS_PERSISTENCE_BUDGET_MS
+    assert events[0]["data"]["error"] == "Hosted-agent Cosmos private path is unavailable"
 
     # One budget for the whole invocation: the preflight read, the user message
     # and the assistant message together, not one budget per message.
@@ -228,8 +236,8 @@ async def test_network_denied_invocation_succeeds_within_one_persistence_budget(
     assert NETWORK_DENIAL_SIGNATURE in logged
     assert RBAC_DENIAL_SIGNATURE not in logged
     assert UNCLASSIFIED_DENIAL_SIGNATURE not in logged
-    assert "Failed to persist user message to Cosmos (non-fatal)" in logged
-    assert "Failed to persist assistant message to Cosmos (non-fatal)" in logged
+    assert "Failed to persist user message to Cosmos (non-fatal)" not in logged
+    assert "Failed to persist assistant message to Cosmos (non-fatal)" not in logged
 
 
 async def test_healthy_cosmos_persists_both_messages_within_the_budget(
@@ -279,6 +287,36 @@ async def test_degraded_backend_invocation_skips_hosted_agent_persistence(hosted
     assert any(event.get("event") == "done" for event in events)
     assert messages.items == {}
     assert hosted._copilot_agent.run_kwargs["persist_session_mapping"] is False
+
+
+async def test_hosted_preflight_uses_forwarded_remaining_budget_and_strips_metadata(hosted):
+    clock = _CosmosClock()
+
+    class SlowMissingConversation:
+        async def read_item(self, *_args, **_kwargs):
+            await asyncio.sleep(0.01)
+            raise CosmosResourceNotFoundError(status_code=404, message="not found")
+
+    hosted._cosmos_service = _cosmos(SlowMissingConversation(), _HealthyContainer(clock))
+    status, events = await _invoke(
+        hosted,
+        {
+            "message": "<persistence_budget_ms>80</persistence_budget_ms>Hello",
+            "conversationId": "synthetic-conversation",
+            "useCase": "akte-agent",
+            "persistenceAllowed": False,
+        },
+    )
+
+    diagnostic = next(
+        event["data"]
+        for event in events
+        if event.get("event") == "kratos_diag" and "persistence_budget_remaining_ms" in event.get("data", {})
+    )
+    assert status == 200
+    assert 0 <= diagnostic["persistence_budget_remaining_ms"] < 80
+    assert hosted._copilot_agent.run_kwargs["message"] == "Hello"
+    assert diagnostic["persistence_mode"] == "disabled"
 
 
 def test_backend_and_hosted_agent_share_one_persistence_budget_policy(hosted) -> None:

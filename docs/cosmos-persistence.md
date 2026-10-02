@@ -135,10 +135,19 @@ is confirmed.
    container that the hostname in `COSMOS_DB_ENDPOINT` resolves to the Cosmos
    private endpoint. Without both checks, report the result as an application
    smoke only; startup can fall back to SQLite after a failed reachability probe.
-4. Live hosted-agent Cosmos persistence remains unverified. Hosted-agent unit
-   coverage exercises both outcomes at the invocation seam:
-   `test_network_denied_invocation_succeeds_within_one_persistence_budget`
-   proves a simulated denial stays bounded and non-fatal, while
+4. Run the API-only
+   `14-hosted-agent-persistence.spec.ts` smoke to invoke Foundry directly and
+   verify the hosted agent's own user and assistant writes through conversation
+   history; `/api/agent/chat` is deliberately not used because its backend writes
+   would mask missing hosted-agent writes. The check reports the hosted Cosmos
+   private path as blocked/skipped for local fallback, a network denial, or a
+   blackholed preflight. When the hosted path reports Cosmos available, missing
+   either message fails the smoke. Live hosted-agent Cosmos persistence remains
+   unverified until this check completes with both messages present. Hosted-agent
+   unit coverage exercises both outcomes at the invocation seam:
+   `test_network_denied_invocation_is_blocked_within_one_persistence_budget`
+   proves a direct invocation reports a simulated private-path denial as blocked
+   within the shared budget, while
    `test_healthy_cosmos_persists_both_messages_within_the_budget` verifies both
    writes against a fake container. These are not live persistence evidence.
    Foundry-hosted-agent networking to the private endpoint is a known platform
@@ -160,7 +169,7 @@ is confirmed.
 | A controlled network denial stays within the shared budget | `uv run pytest tests/test_hosted_agent_persistence_budget.py` |
 | Classified denials are queryable and repeated failures alert | Exact-signature KQL above; `ApplicationInsightsAlertTests` checks the enabled rule's query, window, and threshold |
 | Normal backend persistence works when the private path is available | Post-deploy `03-chat` verifies user and assistant messages only when backend Cosmos initialization and private-endpoint DNS resolution are confirmed |
-| Hosted-agent persistence works when its private path is available | Live hosted-agent persistence remains unverified; the healthy fake verifies code-path writes only, and a reachable live path must fail if either write is missing |
+| Hosted-agent persistence works when its private path is available | Direct `14-hosted-agent-persistence.spec.ts` smoke; blocked path is reported as skipped, while a reachable path must expose both hosted-agent writes |
 
 ### Separate platform limitation
 

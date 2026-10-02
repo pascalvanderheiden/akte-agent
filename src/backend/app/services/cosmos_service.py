@@ -68,7 +68,7 @@ class ConversationLock:
 
 
 class ConversationLeaseContentionError(RuntimeError):
-    """The request budget expired while another replica owned the lease."""
+    """The request could not acquire a lease after observing another owner."""
 
 
 # Fallback bound on a single item read or write outside a chat request. The SDK
@@ -120,14 +120,32 @@ _persistence_budget: ContextVar[_PersistenceBudget | None] = ContextVar(
 
 @contextmanager
 def cosmos_persistence_budget(
-    budget: _PersistenceBudget | None = None,
+    budget: _PersistenceBudget | float | None = None,
 ) -> Iterator[_PersistenceBudget]:
     """Limit aggregate Cosmos wait time for a chat request."""
-    token = _persistence_budget.set(budget or _PersistenceBudget(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S))
+    if isinstance(budget, _PersistenceBudget):
+        active_budget = budget
+    else:
+        remaining_s = _COSMOS_REQUEST_PERSISTENCE_BUDGET_S if budget is None else budget
+        active_budget = _PersistenceBudget(max(0.0, min(_COSMOS_REQUEST_PERSISTENCE_BUDGET_S, remaining_s)))
+    token = _persistence_budget.set(active_budget)
     try:
         yield _persistence_budget.get()
     finally:
         _persistence_budget.reset(token)
+
+
+def current_cosmos_persistence_budget_s() -> float | None:
+    """Return the remaining Cosmos budget in the current request context."""
+    budget = _persistence_budget.get()
+    return budget.remaining_s if budget is not None else None
+
+
+def update_cosmos_persistence_budget_s(remaining_s: float) -> None:
+    """Reduce the current request budget after work in a remote hosted agent."""
+    budget = _persistence_budget.get()
+    if budget is not None:
+        budget.remaining_s = min(budget.remaining_s, max(0.0, remaining_s))
 
 
 def _denial_signature(exc: CosmosHttpResponseError) -> str:
@@ -485,6 +503,8 @@ class CosmosService:
             except (CosmosResourceExistsError, CosmosResourceNotFoundError):
                 raise
             except CosmosHttpResponseError as exc:
+                if operation == "create_conversation_lease" and exc.status_code == 409:
+                    raise
                 if operation == "replace_conversation_lease" and exc.status_code in (404, 409, 412):
                     raise
                 if observed_contention:
@@ -513,7 +533,11 @@ class CosmosService:
                 )
                 return token
             except CosmosResourceExistsError:
-                pass
+                observed_contention = True
+            except CosmosHttpResponseError as exc:
+                if exc.status_code != 409:
+                    raise
+                observed_contention = True
 
             try:
                 existing = await lease_operation(

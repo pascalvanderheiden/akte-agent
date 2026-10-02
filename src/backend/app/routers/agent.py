@@ -34,7 +34,11 @@ from app.personas import (
     require_persona_match,
     resolve_use_case,
 )
-from app.services.cosmos_service import cosmos_persistence_budget
+from app.services.cosmos_service import (
+    ConversationLeaseContentionError,
+    cosmos_persistence_budget,
+    current_cosmos_persistence_budget_s,
+)
 from app.services.follow_up_service import generate_follow_ups
 from app.services.model_routing import ModelRouting
 
@@ -100,7 +104,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
 async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
-    conversation = await cosmos.get_conversation(body.conversationId, "default-user")
+    conversation = await cosmos.get_conversation(body.conversationId, "default-user", raise_on_error=True)
     if conversation:
         require_identified_history(conversation.useCase)
         require_not_retired(conversation.useCase)
@@ -115,7 +119,12 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
+    try:
+        run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
+    except ConversationLeaseContentionError as exc:
+        raise HTTPException(
+            status_code=409, detail="Conversation is busy; retry after the active turn completes"
+        ) from exc
     lease_failure_kwargs = {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
     conversation_revalidated = False
     try:
@@ -244,6 +253,9 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 mcp_access_tokens=body.mcpAccessTokens,
                 model_selection=model_selection,
                 persistence_allowed=not run_lock.lease_acquisition_failed,
+                persistence_budget_remaining_s=current_cosmos_persistence_budget_s(),
+                preflight_conversation_use_case=conversation.useCase if conversation else None,
+                preflight_conversation_checked=True,
             ):
                 event_name = event_dict.get("event")
                 event_data = event_dict.get("data", {})
