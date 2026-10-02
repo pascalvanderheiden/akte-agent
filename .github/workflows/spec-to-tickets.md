@@ -23,6 +23,8 @@ safe-outputs:
   # A PAT, not GITHUB_TOKEN: labels written by GITHUB_TOKEN raise no `labeled`
   # event, so the next stage of the chain would never fire.
   github-token: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
+  threat-detection:
+    continue-on-error: false
   create-issue:
     max: 12
     labels: [ticket, ready-for-agent]
@@ -63,6 +65,8 @@ safe-outputs:
 
    Record the parent's number from the `parent` field — that is the origin issue, needed in step 8. If `parent` is `null` the spec has no origin issue; note that and skip step 8 only.
 
+   **Recover before creating.** Read all existing sub-issues with `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/sub_issues --paginate`, and their bodies and dependencies. Also inspect linked issues from previous run comments in case linking failed. Reuse existing tickets, including closed tickets; never recreate completed work. If the existing set fully covers the spec and its dependency edges are correct, emit only the missing label transitions in steps 7-8. If previous output is partial or conflicting and cannot be safely completed with the configured outputs, call `report_incomplete` with the affected issue numbers and stop rather than duplicating tickets.
+
 2. **Decide whether there is enough to break down.** If the body is empty, a placeholder, or not actually a spec, call `noop` with a one-line reason and stop. Do not create issues, do not relabel. A short-but-concrete spec is ticketable; a contentless one is not.
 
 3. **Understand the codebase before slicing.** Read the root `CONTEXT.md`, any relevant records under `docs/adr/`, and the areas of `src/` the spec touches. Ticket titles and bodies must use the project's own domain vocabulary and respect existing ADRs in the area being changed.
@@ -87,13 +91,15 @@ safe-outputs:
 
    The `Blocked by` section of the body must agree with the `blocked_by` field; write `None (can start immediately)` when there are no blockers.
 
+   Temporary IDs must be `aw_` followed by 3-8 alphanumeric characters, for example `aw_task001`. Structured references, including `blocked_by` and `sub_issue_number`, use the bare ID (`["aw_task001"]`), never `#aw_task001`. Only Markdown body references use `#aw_task001`. Do not use IDs such as `aw_t1` (too short).
+
 6. **Link every ticket to the spec issue.** Emit one `link_sub_issue` per ticket, with `parent_issue_number` set to `${{ github.event.issue.number }}` and `sub_issue_number` set to that ticket's `temporary_id` from step 5.
 
 7. **Clear the trigger.** Emit `remove_labels` removing `to-ticket` from the triggering issue.
 
 8. **Advance the origin issue.** Emit `replace_label` on the origin issue number recorded in step 1, removing `specced` and adding `planned`. This is the only output that targets an issue other than the triggering one — set its issue number explicitly. Skip this step, and only this step, when the spec issue has no parent.
 
-Steps 5-8 are a set: emit all of them or none. If you reach step 5 you must complete 6, 7 and 8 in the same run, otherwise the spec is left labelled `to-ticket` with orphaned tickets hanging off it.
+For new tickets, steps 5-8 are a set: emit all of them or none. Recovery reuses the existing tickets and emits only missing label transitions.
 
 ## Safe Outputs
 

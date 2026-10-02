@@ -719,11 +719,12 @@ def test_postdeploy_preserves_roles_and_noninteractive_upload(
     assert cli_calls(log) == []
 
 
-def test_workflow_is_manual_and_deploy_only_does_not_configure_or_provision_sre() -> None:
+def test_workflow_deploys_main_and_deploy_only_does_not_configure_or_provision_sre() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
     # PyYAML's YAML 1.1 parser treats the Actions "on" key as boolean True.
     trigger = workflow[True]
-    assert set(trigger) == {"workflow_dispatch"}
+    assert set(trigger) == {"push", "workflow_dispatch"}
+    assert trigger["push"]["branches"] == ["main"]
     inputs = trigger["workflow_dispatch"]["inputs"]
     assert inputs["deploy_sre_agent"]["default"] is False
     steps = {step["name"]: step for step in workflow["jobs"]["deploy"]["steps"] if "name" in step}

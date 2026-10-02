@@ -6,12 +6,14 @@ name: Assign Copilot coding agent
 
 on:
   issues:
-    types: [labeled]
+    types: [labeled, unlabeled, closed]
+  schedule:
+    - cron: "13,23,33,43,53 * * * *"
   workflow_dispatch:
     inputs:
       issue_number:
-        description: Issue number to assign the Copilot coding agent to
-        required: true
+        description: Issue number to assign (empty sweeps ready tickets)
+        required: false
         type: number
 
 # The label is part of the group on purpose. Safe outputs apply several labels
@@ -31,22 +33,42 @@ permissions:
 
 jobs:
   assign:
-    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ready-for-agent'
+    if: >-
+      github.event_name != 'issues' || github.event.action == 'closed' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ready-for-agent') ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'to-ticket')
     runs-on: ubuntu-latest
     steps:
       - name: Assign Copilot coding agent
         env:
-          # A PAT or GitHub App token is preferred: assignments made with the default
-          # GITHUB_TOKEN do not always start the coding agent. Falls back so the
-          # workflow still runs (and fails loudly) when the secret is absent.
-          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN || secrets.GITHUB_TOKEN }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.action == 'labeled' && github.event.issue.number || inputs.issue_number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::COPILOT_ASSIGN_TOKEN is required to start the coding agent."
+            exit 1
+          fi
+
           owner="${REPO%/*}"
           name="${REPO#*/}"
+
+          if [ -n "${ISSUE_NUMBER:-}" ] && [ "$ISSUE_NUMBER" != "0" ]; then
+            if ! [[ "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "::error::issue_number must be numeric."
+              exit 1
+            fi
+            issues="$ISSUE_NUMBER"
+          else
+            issues=$(gh issue list --repo "$REPO" --state open \
+              --label ready-for-agent --limit 200 --json number --jq '.[].number')
+          fi
+          if [ -z "$issues" ]; then
+            echo "No ready tickets to assign."
+            exit 0
+          fi
 
           bot_id=$(gh api graphql \
             -f owner="$owner" -f name="$name" \
@@ -64,13 +86,17 @@ jobs:
             exit 1
           fi
 
-          issue=$(gh api graphql \
+          assign_issue() {
+            ISSUE_NUMBER="$1"
+            issue=$(gh api graphql \
             -f owner="$owner" -f name="$name" -F number="$ISSUE_NUMBER" \
             -f query='query($owner:String!, $name:String!, $number:Int!) {
               repository(owner:$owner, name:$name) {
                 issue(number:$number) {
                   id
                   state
+                  labels(first:100) { nodes { name } }
+                  parent { number labels(first:100) { nodes { name } } }
                   assignedActors(first:20) {
                     nodes { ... on Bot { id login } ... on User { id login } }
                   }
@@ -80,12 +106,33 @@ jobs:
 
           if [ "$(echo "$issue" | jq -r '.state')" != "OPEN" ]; then
             echo "Issue #$ISSUE_NUMBER is closed; nothing to assign."
-            exit 0
+            return 0
           fi
 
           if echo "$issue" | jq -e '.assignedActors.nodes[] | select(.login == "copilot-swe-agent")' >/dev/null; then
             echo "Copilot coding agent is already assigned to #$ISSUE_NUMBER."
-            exit 0
+            return 0
+          fi
+
+          if ! echo "$issue" | jq -e '.labels.nodes[] | select(.name == "ready-for-agent")' >/dev/null; then
+            echo "Issue #$ISSUE_NUMBER is not ready for the coding agent."
+            return 0
+          fi
+
+          # Creation labels arrive before safe outputs finish linking dependencies.
+          if echo "$issue" | jq -e '
+            any(.labels.nodes[]; .name == "ticket") and
+            (.parent == null or any(.parent.labels.nodes[]; .name == "to-ticket"))
+          ' >/dev/null; then
+            echo "Ticket #$ISSUE_NUMBER awaits a linked, complete spec breakdown."
+            return 0
+          fi
+
+          blockers=$(gh api --paginate "repos/$REPO/issues/$ISSUE_NUMBER/dependencies/blocked_by" \
+            --jq '.[] | select(.state != "closed") | .number')
+          if [ -n "$blockers" ]; then
+            echo "Issue #$ISSUE_NUMBER still has open blockers: $blockers"
+            return 0
           fi
 
           # replaceActorsForAssignable replaces the whole set, so keep the existing
@@ -99,3 +146,8 @@ jobs:
             --jq '.data.replaceActorsForAssignable.assignable.assignedActors.nodes[].login'
 
           echo "Assigned Copilot coding agent to #$ISSUE_NUMBER."
+          }
+
+          for number in $issues; do
+            assign_issue "$number"
+          done

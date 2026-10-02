@@ -171,6 +171,19 @@ jobs:
               return 0
             fi
 
+            mergeable=$(echo "$pr_json" | jq -r .mergeable)
+            if [ "$mergeable" = "CONFLICTING" ]; then
+              echo "PR #$PR has merge conflicts; delegating resolution instead of merging."
+              gh api "repos/$REPO/actions/workflows/pr-resolve-conflicts.yml/dispatches" \
+                -f ref="${{ github.event.repository.default_branch }}" \
+                -f "inputs[pr_number]=$PR"
+              return 0
+            fi
+            if [ "$mergeable" = "UNKNOWN" ]; then
+              echo "PR #$PR mergeability is pending; not merging."
+              return 0
+            fi
+
             # A draft is not disqualifying on its own. Copilot's automatic code
             # review runs on drafts, so an agent PR can be approved with every
             # check green and still sit here forever, because the coding agent
@@ -242,7 +255,7 @@ jobs:
 
             # This workflow and its siblings report their own check runs against the
             # PR head, so excluding them is what stops the gate waiting on itself.
-            ignore='["PR review by Copilot","PR reviewed by Copilot","Address Copilot review comments","Auto-merge reviewed PRs","Close parent issues"]'
+            ignore='["PR review by Copilot","PR reviewed by Copilot","Address Copilot review comments","Auto-merge reviewed PRs","Close parent issues","Resolve PR merge conflicts"]'
 
             # `$w` is bound before the membership test: inside `$ignore | index(...)`
             # the `.` context is the ignore array, not the check run.
@@ -346,6 +359,17 @@ jobs:
     with:
       pr_number: ${{ fromJSON(needs.merge.outputs.pr) }}
     secrets: inherit
+
+  release-tickets:
+    needs: merge
+    if: needs.merge.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign newly unblocked tickets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: gh workflow run assign-copilot.yml --repo "$REPO" --ref main
 
   # A merge made with GITHUB_TOKEN raises no `push` event, so `deploy.yml`'s own
   # push trigger never sees it. `workflow_dispatch` is exempt from that guard,

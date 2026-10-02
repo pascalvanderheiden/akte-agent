@@ -27,24 +27,23 @@ services:
             path: ./Dockerfile
             context: ../..
             remoteBuild: true
-        config:
-            container:
-                resources:
-                    cpu: "1"
-                    memory: 2Gi
-            env:
-                PERSONA_ASSETS_ROOT: /app/use-cases
-                BLOB_SKILLS_CONTAINER: skills
-                BLOB_STORAGE_ENDPOINT: ${AZURE_BLOB_STORAGE_ENDPOINT}
-                COSMOS_DB_DATABASE: kratos-agent
-                COSMOS_DB_ENDPOINT: ${AZURE_COSMOS_DB_ENDPOINT}
-                KEY_VAULT_URI: ${AZURE_KEY_VAULT_URI}
-                MODEL_DEPLOYMENT_ORCHESTRATOR: ${MODEL_DEPLOYMENT_ORCHESTRATOR}
-                MODEL_DEPLOYMENT_DEEP_REASONING: ${MODEL_DEPLOYMENT_DEEP_REASONING}
-                MODEL_DEPLOYMENT_FAST: ${MODEL_DEPLOYMENT_FAST}
-                MODEL_DEPLOYMENT_NAME: ${FOUNDRY_MODEL_DEPLOYMENT}
-                OBO_MCP_SERVER_MCP_URL: ${OBO_MCP_SERVER_MCP_URL}
-                OBO_MCP_SERVER_NAME: graph-obo
+        container:
+            resources:
+                cpu: "1"
+                memory: 2Gi
+        env:
+            PERSONA_ASSETS_ROOT: /app/use-cases
+            BLOB_SKILLS_CONTAINER: skills
+            BLOB_STORAGE_ENDPOINT: ${AZURE_BLOB_STORAGE_ENDPOINT}
+            COSMOS_DB_DATABASE: kratos-agent
+            COSMOS_DB_ENDPOINT: ${AZURE_COSMOS_DB_ENDPOINT}
+            KEY_VAULT_URI: ${AZURE_KEY_VAULT_URI}
+            MODEL_DEPLOYMENT_ORCHESTRATOR: ${MODEL_DEPLOYMENT_ORCHESTRATOR}
+            MODEL_DEPLOYMENT_DEEP_REASONING: ${MODEL_DEPLOYMENT_DEEP_REASONING}
+            MODEL_DEPLOYMENT_FAST: ${MODEL_DEPLOYMENT_FAST}
+            MODEL_DEPLOYMENT_NAME: ${FOUNDRY_MODEL_DEPLOYMENT}
+            OBO_MCP_SERVER_MCP_URL: ${OBO_MCP_SERVER_MCP_URL}
+            OBO_MCP_SERVER_NAME: graph-obo
     obo-mcp-server:
         project: ./src/obo-mcp-server
         host: containerapp

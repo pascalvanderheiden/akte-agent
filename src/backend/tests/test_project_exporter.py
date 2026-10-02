@@ -738,7 +738,10 @@ def test_assemble_azure_yaml_wires_app_insights(exporter: ProjectExporter, tmp_p
     exporter.assemble("synthetic-review", out)
 
     doc = yaml.safe_load((out / "azure.yaml").read_text())
-    env = doc["services"]["synthetic-review"]["config"]["env"]
+    service = doc["services"]["synthetic-review"]
+    assert "config" not in service
+    assert service["container"]["resources"] == {"cpu": "1", "memory": "2Gi"}
+    env = service["env"]
     assert env.get("APPLICATIONINSIGHTS_CONNECTION_STRING") == "${AZURE_APP_INSIGHTS_CONNECTION_STRING}"
 
 

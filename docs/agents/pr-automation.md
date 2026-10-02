@@ -1,6 +1,6 @@
 # PR automation
 
-Six plain GitHub Actions carry a pull request from "opened" to "merged, with
+Seven plain GitHub Actions carry a pull request from "opened" to "merged, with
 every completed parent issue closed". None of them needs an LLM, so none is an
 agentic workflow — where reasoning is genuinely required, the work is handed to
 the Copilot coding agent rather than done here.
@@ -19,9 +19,11 @@ pr-copilot-review  ->  pr-reviewed  ->  pr-auto-merge  ->  close-parent-issues
 | `pr-reviewed.yml` | `pull_request_review`: submitted (by Copilot) | Labels the PR `reviewed` and releases CI runs sitting in `action_required`. |
 | `pr-address-review.yml` | `pull_request_review`: submitted, `pull_request_target`: ready_for_review, synchronize | When Copilot's review of the current head left unresolved comments, asks the coding agent to fix them. See "Reviews that are not approvals". |
 | `pr-auto-merge.yml` | `pull_request_review`, `workflow_run` on CI / CI Pipeline / Dependency compatibility, `pull_request_target`: labeled, `schedule` every 10 minutes | Relabels `ready-to-merge`, takes the PR out of draft if it still is one, and squash-merges once Copilot has reviewed the current head, left no unresolved comments, and every CI check is green. |
-| `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes every ancestor whose sub-issues are now all closed: ticket -> spec -> origin issue. |
+| `close-parent-issues.yml` | `workflow_call` from `pr-auto-merge`, plus `pull_request_target`: closed | Walks up from each issue the PR closed and closes ancestors only when all sub-issues are closed and no planning/review hold remains: ticket -> spec -> origin issue. |
 | `pr-auto-merge.yml` → `deploy` job | after a successful merge | Dispatches `deploy.yml` on `main`. Needed because a `GITHUB_TOKEN` merge raises no `push` event, so `deploy.yml`'s push trigger never fires for auto-merges. |
+| `pr-auto-merge.yml` → `release-tickets` job | after a successful merge | Dispatches `assign-copilot.yml` to release tickets whose native dependency blockers have closed. |
 | `approve-gated-runs.yml` | `schedule`, every 10 minutes, plus `workflow_dispatch` | Safety net. Takes any non-Copilot reviewer back out of the queue, applies the `reviewed` label, and releases held runs. **Its schedule does not fire reliably** — see "The schedule trigger is unreliable". |
+| `pr-resolve-conflicts.yml` | `pull_request_target`, base-branch `push` / CI `workflow_run`, schedule and manual dispatch | Delegates merge conflicts to Copilot on the same PR branch, once per head/base pair, with a three-round cap. The merge gate also dispatches it when it finds a conflict. |
 
 Every workflow also takes a `workflow_dispatch` with a `pr_number`, so any step
 can be replayed by hand when something goes sideways.
@@ -65,6 +67,42 @@ can be replayed by hand when something goes sideways.
 - **The workflows must be on `main`.** `pull_request_target`, `workflow_run` and
   `workflow_call` all resolve against the default branch, so none of this runs
   from a feature branch.
+
+## Issue pipeline recovery
+
+`issue-to-spec` and `spec-to-tickets` keep threat detection enabled and set
+`continue-on-error: false`. A detector failure must block every safe output,
+not create specs/tickets while suppressing their links and label transitions.
+Compile both workflows with gh-aw v0.89.21 or later: older compiled locks can
+invoke the detector installer without its required architecture-specific SHA256
+pins. Do not hand-edit generated locks or disable detection to work around this.
+
+Retries inspect and reuse existing specs/tickets, including closed tickets.
+They repair missing label transitions only when the existing output is complete;
+ambiguous or partial output is reported for review rather than duplicated.
+Structured dependency references use bare temporary IDs (`aw_task001`), while
+Markdown body references use `#aw_task001`. IDs require 3-8 alphanumeric
+characters after `aw_`.
+
+When repairing a previous partial run, verify the native sub-issue links and
+dependency edges before changing labels. A completed spec changes its origin
+from `to-spec` to `specced`; a complete ticket breakdown clears the spec's
+`to-ticket` and changes the origin to `planned`. Remove `needs-review` only
+after actually reviewing the generated content. Do not rerun creation blindly.
+Recovery must not downgrade an origin already labelled `planned`.
+
+Parent closure stops on `to-spec`, `to-ticket`, `needs-review` or `needs-human`.
+A partial breakdown can leave every *created* ticket closed while required
+tickets are still missing; that must never count as completed planning.
+Truncated sub-issue lists also block closure.
+
+`assign-copilot.yml` checks native `blocked_by` dependencies before assignment.
+Blocked tickets retain `ready-for-agent`; issue closure and the explicit
+post-merge dispatch sweep them again. Tickets also wait for their linked spec to
+lose `to-ticket`: creation labels can arrive before dependency edges are written.
+That label removal triggers a release sweep. A schedule is only a recovery backstop.
+Manual dispatch accepts an optional issue number, otherwise sweeps ready tickets.
+Assignment requires `COPILOT_ASSIGN_TOKEN`, with no silent default-token fallback.
 
 ## Why the triggers look the way they do
 
@@ -301,3 +339,19 @@ where the coding agent's PRs spend their review cycles.
 `reviewed`, `ready-to-merge` and `needs-fixes` are removed by
 `pr-copilot-review` when a new commit invalidates them. `needs-human` is not —
 it is deliberately sticky, and has to be taken off by hand.
+
+## Merge conflicts
+
+`pr-resolve-conflicts` reads PR metadata and posts a PAT-authenticated
+`@copilot` request to merge the latest base into the existing branch. It never
+checks out or executes PR code, force-pushes, or overrides the merge gates.
+Conflicting and unknown-mergeability PRs cannot pass `pr-auto-merge`.
+Head and base SHAs in the comment marker deduplicate requests; all event and
+sweep runs share a concurrency group to prevent races. After three repair
+rounds, or while `needs-human` is present, automatic delegation stops.
+
+Base-branch pushes catch conflicts introduced by other merges. Post-merge CI
+completion and the merge gate's explicit dispatch cover `GITHUB_TOKEN` merges
+whose push event is suppressed. The schedule is only a backstop.
+`COPILOT_ASSIGN_TOKEN` is mandatory: no silent `GITHUB_TOKEN` fallback that
+posts a comment but fails to wake Copilot.
