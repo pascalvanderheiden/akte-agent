@@ -116,9 +116,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
-    lease_failure_kwargs = (
-        {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
-    )
+    lease_failure_kwargs = {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
     try:
         if conversation:
             try:
@@ -185,9 +183,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(
-                    user_message, lock_token=run_lock.lease_token, **lease_failure_kwargs
-                )
+                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist user message to Cosmos (non-fatal)",
@@ -393,9 +389,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(
-                    assistant_message, lock_token=run_lock.lease_token, **lease_failure_kwargs
-                )
+                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist assistant message to Cosmos (non-fatal)",
