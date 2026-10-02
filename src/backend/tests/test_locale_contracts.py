@@ -233,8 +233,10 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     assert "unreachable" not in logged
 
 
-def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(transport, monkeypatch):
+@pytest.mark.parametrize("strip_fields", [False, True])
+def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(transport, monkeypatch, strip_fields):
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
+    transport.strip_fields[0] = strip_fields
 
     class HealthyConversations:
         reads = 0
@@ -274,7 +276,9 @@ def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(tra
     assert "event: done" in response.text
     assert conversations.reads == 1
     assert transport.captured[0][1]["persistenceAllowed"] is False
+    assert "<persistence_allowed>false</persistence_allowed>" in transport.captured[0][1]["input"]
     assert transport.messages == []
+    assert all("persistence_allowed" not in message for message in transport.sent)
 
 
 def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transport):
@@ -294,7 +298,7 @@ def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transpor
     assert response.json()["detail"] == "Conversation not found"
 
 
-def test_chat_streams_requested_model_when_persisting_selection_times_out(transport):
+def test_chat_streams_requested_model_without_updating_unvalidated_snapshot(transport):
     existing = SimpleNamespace(useCase="akte-agent", modelSelection="auto", updatedAt=None)
     lock = SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
     cosmos = SimpleNamespace(
@@ -320,8 +324,9 @@ def test_chat_streams_requested_model_when_persisting_selection_times_out(transp
 
     assert response.status_code == 200
     assert "Synthetic English reply" in response.text
-    assert existing.modelSelection == "gpt-6-luna"
-    cosmos.upsert_conversation.assert_awaited_once()
+    assert existing.modelSelection == "auto"
+    assert transport.captured[0][1]["selectedModelId"] == "gpt-6-luna"
+    cosmos.upsert_conversation.assert_not_awaited()
 
 
 @pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))

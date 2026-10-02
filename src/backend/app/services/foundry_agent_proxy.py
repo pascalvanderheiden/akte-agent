@@ -296,6 +296,8 @@ class FoundryAgentProxy:
         preamble_parts.append(f"<conversation_id>{escape(conversation_id)}</conversation_id>")
         if locale:
             preamble_parts.append(f"<locale>{locale}</locale>")
+        if not persistence_allowed:
+            preamble_parts.append("<persistence_allowed>false</persistence_allowed>")
         # SECURITY: per-MCP-server user OBO tokens are NEVER embedded in the
         # prompt/input text. A bearer in input_text would enter the model's
         # context and be captured by GenAI message-content traces / gateway logs.

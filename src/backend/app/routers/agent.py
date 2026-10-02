@@ -117,6 +117,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
     lease_failure_kwargs = {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
+    conversation_revalidated = False
     try:
         if conversation:
             try:
@@ -130,12 +131,14 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 )
             else:
                 conversation = revalidated_conversation
+                conversation_revalidated = True
             if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation not found")
             if not request_selection:
                 model_selection = conversation.modelSelection
         if (
             conversation
+            and conversation_revalidated
             and request_selection
             and conversation.modelSelection != model_selection
             and not run_lock.lease_acquisition_failed

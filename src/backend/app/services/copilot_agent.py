@@ -1731,7 +1731,7 @@ class CopilotAgent:
                 # clears the context token estimates, which would otherwise attribute
                 # the failed session's history to the replacement session.
                 await self._discard_session(conversation_id)
-                if self._cosmos_service:
+                if persist_session_mapping and self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
                 self._queues.pop(conversation_id, None)

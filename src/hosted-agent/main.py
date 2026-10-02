@@ -703,6 +703,17 @@ async def handle_invoke(request: Request) -> Response:
                 flags=re.DOTALL,
             )
 
+            persistence_match = re.search(
+                r"<persistence_allowed>\s*(true|false)\s*</persistence_allowed>",
+                message,
+                flags=re.IGNORECASE,
+            )
+            if persistence_match:
+                persistence_allowed = (
+                    persistence_allowed and persistence_match.group(1).lower() == "true"
+                )
+                message = message[: persistence_match.start()] + message[persistence_match.end() :]
+
             # STRIP and IGNORE any <mcp_access_tokens> tag. OBO bearers are
             # delivered ONLY via the mcpAccessTokens JSON body field; a token in
             # the prompt would reach the model and GenAI message-content traces,
