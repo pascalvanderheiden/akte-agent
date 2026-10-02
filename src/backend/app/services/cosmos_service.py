@@ -64,6 +64,11 @@ class ConversationLock:
     local_lock: asyncio.Lock
     lease_token: str | None = None
     renewal_task: asyncio.Task | None = None
+    lease_acquisition_failed: bool = False
+
+
+class ConversationLeaseContentionError(RuntimeError):
+    """The request budget expired while another replica owned the lease."""
 
 
 # Fallback bound on a single item read or write outside a chat request. The SDK
@@ -422,8 +427,9 @@ class CosmosService:
                         self._renew_cosmos_lease(conversation_id, acquired.lease_token)
                     )
                 except Exception as exc:
-                    if not allow_degraded:
+                    if not allow_degraded or isinstance(exc, ConversationLeaseContentionError):
                         raise
+                    acquired.lease_acquisition_failed = True
                     logger.warning(
                         "Cosmos conversation lease unavailable; continuing with process-local lock (%s)",
                         type(exc).__name__,
@@ -471,10 +477,29 @@ class CosmosService:
         """Create or take over an expired lease using Cosmos ETag concurrency."""
         assert self._messages_container is not None
         token = str(uuid.uuid4())
+        observed_contention = False
+
+        async def lease_operation(operation: str, call: Awaitable[T]) -> T:
+            try:
+                return await self._bounded(operation, call)
+            except (CosmosResourceExistsError, CosmosResourceNotFoundError):
+                raise
+            except Exception as exc:
+                if observed_contention:
+                    raise ConversationLeaseContentionError(
+                        f"Lease contention ended without acquisition: conversation_id={conversation_id}"
+                    ) from exc
+                raise
+
         while True:
+            budget = _persistence_budget.get()
+            if observed_contention and budget is not None and budget.remaining_s <= 0:
+                raise ConversationLeaseContentionError(
+                    f"Timed out waiting for conversation lease: conversation_id={conversation_id}"
+                )
             document = self._lease_document(conversation_id, token)
             try:
-                await self._bounded(
+                await lease_operation(
                     "create_conversation_lease",
                     self._messages_container.create_item(document),
                 )
@@ -483,7 +508,7 @@ class CosmosService:
                 pass
 
             try:
-                existing = await self._bounded(
+                existing = await lease_operation(
                     "read_conversation_lease",
                     self._messages_container.read_item(item=_CONVERSATION_LEASE_ID, partition_key=conversation_id),
                 )
@@ -496,10 +521,11 @@ class CosmosService:
                 await asyncio.sleep(delay)
                 if budget is not None:
                     budget.remaining_s = max(0.0, budget.remaining_s - (time.monotonic() - started))
+                observed_contention = True
                 continue
 
             try:
-                await self._bounded(
+                await lease_operation(
                     "replace_conversation_lease",
                     self._messages_container.replace_item(
                         item=_CONVERSATION_LEASE_ID,
@@ -570,8 +596,12 @@ class CosmosService:
         except TimeoutError:
             logger.warning("Cosmos conversation lease release exceeded the operation timeout")
 
-    async def _require_conversation_lease(self, conversation_id: str, token: str | None) -> None:
+    async def _require_conversation_lease(
+        self, conversation_id: str, token: str | None, *, lease_acquisition_failed: bool = False
+    ) -> None:
         """Reject persistence when another replica owns the conversation lease."""
+        if lease_acquisition_failed:
+            raise RuntimeError(f"Conversation lease acquisition failed: conversation_id={conversation_id}")
         if self._using_sqlite() or not self._messages_container:
             return
         try:
@@ -588,8 +618,16 @@ class CosmosService:
 
     # ─── Conversations ────────────────────────────────────────────────────────
 
-    async def upsert_conversation(self, conversation: Conversation, lock_token: str | None = None) -> None:
-        await self._require_conversation_lease(conversation.id, lock_token)
+    async def upsert_conversation(
+        self,
+        conversation: Conversation,
+        lock_token: str | None = None,
+        *,
+        lease_acquisition_failed: bool = False,
+    ) -> None:
+        await self._require_conversation_lease(
+            conversation.id, lock_token, lease_acquisition_failed=lease_acquisition_failed
+        )
         if self._using_sqlite():
             doc = conversation.model_dump(mode="json")
             await self._sqlite_upsert("conversations", conversation.id, conversation.userId, doc)
@@ -622,7 +660,9 @@ class CosmosService:
                     ),
                 )
             try:
-                await self._require_conversation_lease(conversation.id, lock_token)
+                await self._require_conversation_lease(
+                    conversation.id, lock_token, lease_acquisition_failed=lease_acquisition_failed
+                )
             except RuntimeError:
                 with contextlib.suppress(CosmosResourceNotFoundError):
                     if previous is None:
@@ -654,7 +694,9 @@ class CosmosService:
             if elapsed_ms > _SLOW_OPERATION_THRESHOLD_MS:
                 logger.warning("Slow Cosmos operation: upsert_conversation took %.0f ms", elapsed_ms)
 
-    async def get_conversation(self, conversation_id: str, user_id: str) -> Conversation | None:
+    async def get_conversation(
+        self, conversation_id: str, user_id: str, *, raise_on_error: bool = False
+    ) -> Conversation | None:
         if self._using_sqlite():
             row = await self._sqlite_read("conversations", conversation_id, user_id)
             return Conversation(**row) if row else None
@@ -666,7 +708,11 @@ class CosmosService:
                 self._conversations_container.read_item(item=conversation_id, partition_key=user_id),
             )
             return Conversation(**item)
+        except CosmosResourceNotFoundError:
+            return None
         except Exception:
+            if raise_on_error:
+                raise
             return None
 
     async def list_conversations(self, user_id: str) -> list[Conversation]:
@@ -703,8 +749,16 @@ class CosmosService:
 
     # ─── Messages ─────────────────────────────────────────────────────────────
 
-    async def upsert_message(self, message: Message, lock_token: str | None = None) -> None:
-        await self._require_conversation_lease(message.conversationId, lock_token)
+    async def upsert_message(
+        self,
+        message: Message,
+        lock_token: str | None = None,
+        *,
+        lease_acquisition_failed: bool = False,
+    ) -> None:
+        await self._require_conversation_lease(
+            message.conversationId, lock_token, lease_acquisition_failed=lease_acquisition_failed
+        )
         if self._using_sqlite():
             doc = message.model_dump(mode="json")
             await self._sqlite_upsert("messages", message.id, message.conversationId, doc)
@@ -718,7 +772,9 @@ class CosmosService:
                 self._messages_container.upsert_item(message.model_dump(mode="json")),
             )
             try:
-                await self._require_conversation_lease(message.conversationId, lock_token)
+                await self._require_conversation_lease(
+                    message.conversationId, lock_token, lease_acquisition_failed=lease_acquisition_failed
+                )
             except RuntimeError:
                 with contextlib.suppress(CosmosResourceNotFoundError):
                     await self._messages_container.delete_item(item=message.id, partition_key=message.conversationId)
@@ -807,10 +863,17 @@ class CosmosService:
     # ─── Sessions (SDK session ID mapping) ────────────────────────────────────
 
     async def upsert_session_mapping(
-        self, conversation_id: str, agent_session_id: str, lock_token: str | None = None
+        self,
+        conversation_id: str,
+        agent_session_id: str,
+        lock_token: str | None = None,
+        *,
+        lease_acquisition_failed: bool = False,
     ) -> None:
         """Store the gateway agent session ID for a conversation."""
-        await self._require_conversation_lease(conversation_id, lock_token)
+        await self._require_conversation_lease(
+            conversation_id, lock_token, lease_acquisition_failed=lease_acquisition_failed
+        )
         doc = {
             "id": conversation_id,
             "conversationId": conversation_id,
@@ -829,7 +892,9 @@ class CosmosService:
             )
         persisted = await self._bounded("upsert_session_mapping", self._sessions_container.upsert_item(doc))
         try:
-            await self._require_conversation_lease(conversation_id, lock_token)
+            await self._require_conversation_lease(
+                conversation_id, lock_token, lease_acquisition_failed=lease_acquisition_failed
+            )
         except RuntimeError:
             with contextlib.suppress(CosmosResourceNotFoundError):
                 if previous is None:

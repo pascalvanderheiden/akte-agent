@@ -124,14 +124,23 @@ is confirmed.
    healthy private-path round trip must fail if either message is missing.
    API-only mode remains available with `SKIP_BROWSER=1`. This check exercises
    the backend path; it does not prove that Foundry-hosted-agent compute can
-   reach Cosmos.
-4. Hosted-agent unit coverage exercises both outcomes at the invocation seam:
+   reach Cosmos. Count the smoke as Cosmos evidence only after confirming the
+   backend startup log contains `Cosmos DB initialized` and does not contain
+   the SQLite-fallback warning, and confirming from the running backend
+   container that the hostname in `COSMOS_DB_ENDPOINT` resolves to the Cosmos
+   private endpoint. Without both checks, report the result as an application
+   smoke only; startup can fall back to SQLite after a failed reachability probe.
+4. Live hosted-agent Cosmos persistence remains unverified. Hosted-agent unit
+   coverage exercises both outcomes at the invocation seam:
    `test_network_denied_invocation_succeeds_within_one_persistence_budget`
-   proves the denial stays bounded and non-fatal, while
+   proves a simulated denial stays bounded and non-fatal, while
    `test_healthy_cosmos_persists_both_messages_within_the_budget` verifies both
-   writes and no denial signature. A live hosted-agent denial or local SQLite
-   fallback is a known platform limitation, not a successful Cosmos-persistence
-   smoke result.
+   writes against a fake container. These are not live persistence evidence.
+   Foundry-hosted-agent networking to the private endpoint is a known platform
+   limitation: report an unreachable endpoint as unverified/blocked, not as a
+   successful persistence check. If Cosmos is reachable from hosted-agent
+   compute, its verification must fail when either the user or assistant write
+   is missing.
 5. Confirm the App Insights scheduled-query alert is enabled and its query is
    available. The compiled-template test validates the 15-minute window,
    three-distinct-invocation threshold, both telemetry tables, and the
@@ -145,7 +154,8 @@ is confirmed.
 | Deployed runtime includes the current persistence budget and network classification | Hosted-agent `source_revision` warmup check against merged `main`; shared-budget and classification tests |
 | A controlled network denial stays within the shared budget | `uv run pytest tests/test_hosted_agent_persistence_budget.py` |
 | Classified denials are queryable and repeated failures alert | Exact-signature KQL above; `ApplicationInsightsAlertTests` checks the enabled rule's query, window, and threshold |
-| Normal persistence works when the private path is available | Post-deploy `03-chat` round trip verifies user and assistant messages; the hosted-agent healthy fake verifies both runtime writes |
+| Normal backend persistence works when the private path is available | Post-deploy `03-chat` verifies user and assistant messages only when backend Cosmos initialization and private-endpoint DNS resolution are confirmed |
+| Hosted-agent persistence works when its private path is available | Live hosted-agent persistence remains unverified; the healthy fake verifies code-path writes only, and a reachable live path must fail if either write is missing |
 
 ### Separate platform limitation
 

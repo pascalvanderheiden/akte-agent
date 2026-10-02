@@ -116,14 +116,32 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
+    lease_failure_kwargs = (
+        {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
+    )
     try:
         if conversation:
-            conversation = await cosmos.get_conversation(body.conversationId, "default-user")
-            if not conversation:
+            try:
+                revalidated_conversation = await cosmos.get_conversation(
+                    body.conversationId, "default-user", raise_on_error=True
+                )
+            except Exception:
+                logger.warning(
+                    "Conversation revalidation unavailable; continuing with the successful preflight result",
+                    exc_info=True,
+                )
+            else:
+                conversation = revalidated_conversation
+            if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation not found")
             if not request_selection:
                 model_selection = conversation.modelSelection
-        if conversation and request_selection and conversation.modelSelection != model_selection:
+        if (
+            conversation
+            and request_selection
+            and conversation.modelSelection != model_selection
+            and not run_lock.lease_acquisition_failed
+        ):
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
             await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
@@ -167,7 +185,9 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(
+                    user_message, lock_token=run_lock.lease_token, **lease_failure_kwargs
+                )
             except Exception:
                 logger.warning(
                     "Failed to persist user message to Cosmos (non-fatal)",
@@ -337,7 +357,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 logger.info("Gateway session for conversation=%s: %s", body.conversationId, gateway_session_id)
                 try:
                     await cosmos.upsert_session_mapping(
-                        body.conversationId, gateway_session_id, lock_token=run_lock.lease_token
+                        body.conversationId,
+                        gateway_session_id,
+                        lock_token=run_lock.lease_token,
+                        **lease_failure_kwargs,
                     )
                 except Exception:
                     logger.warning("Failed to persist gateway session mapping (non-fatal)", exc_info=True)
@@ -370,7 +393,9 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(
+                    assistant_message, lock_token=run_lock.lease_token, **lease_failure_kwargs
+                )
             except Exception:
                 logger.warning(
                     "Failed to persist assistant message to Cosmos (non-fatal)",

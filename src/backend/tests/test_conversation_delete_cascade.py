@@ -12,7 +12,7 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExist
 
 from app.config import Settings
 from app.models import Conversation, Message
-from app.services.cosmos_service import CosmosService
+from app.services.cosmos_service import ConversationLeaseContentionError, CosmosService, cosmos_persistence_budget
 
 
 async def test_sqlite_delete_conversation_removes_its_messages_only(tmp_path):
@@ -194,6 +194,57 @@ async def test_cosmos_delete_waits_for_chat_lease_from_another_service_instance(
             lock_token=run_lock.lease_token,
         )
     assert ("active", "after-delete") not in messages.items
+
+
+async def test_degraded_chat_cannot_write_after_another_replica_deletes_conversation():
+    messages = _SharedMessages()
+    chat_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    delete_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    chat_service._messages_container = messages
+    delete_service._messages_container = messages
+    delete_service._conversations_container = SimpleNamespace(delete_item=AsyncMock())
+    delete_service._sessions_container = SimpleNamespace(delete_item=AsyncMock())
+    create_item = messages.create_item
+    messages.create_item = AsyncMock(side_effect=CosmosHttpResponseError(status_code=429))
+
+    chat_lock = await chat_service.acquire_conversation_lock("degraded", allow_degraded=True)
+    messages.create_item = create_item
+    assert chat_lock.lease_acquisition_failed
+
+    await delete_service.delete_conversation("degraded", "default-user")
+
+    with pytest.raises(RuntimeError, match="Conversation lease acquisition failed"):
+        await chat_service.upsert_message(
+            Message(
+                id="late-assistant",
+                conversationId="degraded",
+                role="assistant",
+                content="late response",
+                createdAt=datetime.now(UTC),
+            ),
+            lock_token=chat_lock.lease_token,
+            lease_acquisition_failed=chat_lock.lease_acquisition_failed,
+        )
+    assert ("degraded", "late-assistant") not in messages.items
+
+    await chat_service.release_conversation_lock("degraded", chat_lock)
+
+
+async def test_degraded_lock_fails_closed_after_observing_another_replica_lease(monkeypatch):
+    monkeypatch.setattr("app.services.cosmos_service._COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.02)
+    messages = _SharedMessages()
+    owner = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    contender = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    owner._messages_container = messages
+    contender._messages_container = messages
+    owner_lock = await owner.acquire_conversation_lock("contended")
+
+    with cosmos_persistence_budget() as budget:
+        budget.remaining_s = 0.01
+        with pytest.raises(ConversationLeaseContentionError):
+            await contender.acquire_conversation_lock("contended", allow_degraded=True)
+
+    await owner.release_conversation_lock("contended", owner_lock)
 
 
 async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):

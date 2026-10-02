@@ -58,7 +58,7 @@ def transport(monkeypatch, tmp_path):
     async def save_mapping(conversation, session, lock_token=None):
         mappings[conversation] = session
 
-    conversation_lock = SimpleNamespace(lease_token=None)
+    conversation_lock = SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
     cosmos = SimpleNamespace(
         get_conversation=AsyncMock(return_value=None),
         upsert_message=persist,
@@ -231,6 +231,65 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     assert "Failed to persist user message to Cosmos (non-fatal)" in logged
     assert "Failed to persist assistant message to Cosmos (non-fatal)" in logged
     assert "unreachable" not in logged
+
+
+def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(transport, monkeypatch):
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
+
+    class HealthyConversations:
+        reads = 0
+
+        async def read_item(self, *_args, **_kwargs):
+            self.reads += 1
+            return {
+                "id": "synthetic-conversation",
+                "userId": "default-user",
+                "title": "Synthetic",
+                "useCase": "akte-agent",
+                "createdAt": "2026-09-29T00:00:00Z",
+                "updatedAt": "2026-09-29T00:00:00Z",
+            }
+
+    class BlackholedLease:
+        async def create_item(self, *_args, **_kwargs):
+            await asyncio.sleep(3600)
+
+    conversations = HealthyConversations()
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    cosmos._conversations_container = conversations
+    cosmos._messages_container = BlackholedLease()
+    transport.client.app.state.cosmos_service = cosmos
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Synthetic English reply" in response.text
+    assert "event: done" in response.text
+    assert conversations.reads == 1
+
+
+def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transport):
+    existing = SimpleNamespace(useCase="akte-agent", modelSelection="auto")
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(side_effect=[existing, None])
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "deleted-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found"
 
 
 @pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))
