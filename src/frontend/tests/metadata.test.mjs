@@ -12,7 +12,11 @@ before(async () => {
 
 async function pngSize(path) {
   const buf = await readFile(resolve("public", path));
-  assert.equal(buf.toString("ascii", 1, 4), "PNG", `${path} is not a PNG`);
+  assert.ok(
+    buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+    `${path} is not a PNG`,
+  );
+  assert.equal(buf.toString("ascii", 12, 16), "IHDR", `${path} has no IHDR chunk`);
   return `${buf.readUInt32BE(16)}x${buf.readUInt32BE(20)}`;
 }
 
@@ -74,7 +78,9 @@ test("manifest theme colour matches the layout viewport theme colour", async () 
 test("static web app navigation fallback does not intercept the icon files", async () => {
   const config = JSON.parse(await readFile(resolve("staticwebapp.config.json"), "utf8"));
   const excludes = config.navigationFallback.exclude.map(globToRegExp);
-  for (const path of referenced) {
+  const manifest = JSON.parse(await readFile(resolve("public/manifest.webmanifest"), "utf8"));
+  const manifestIcons = manifest.icons.map((icon) => `/${icon.src}`);
+  for (const path of [...referenced, ...manifestIcons]) {
     assert.ok(
       excludes.some((re) => re.test(path)),
       `${path} would be rewritten to ${config.navigationFallback.rewrite}`,
