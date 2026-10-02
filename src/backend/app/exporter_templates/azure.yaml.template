@@ -25,30 +25,30 @@ services:
             # Docker build context is the repo root so we can COPY src/,
             # and use-cases/ in the bundled Dockerfile (verbatim from Kratos).
             context: ../..
-        config:
-            container:
-                resources:
-                    cpu: "1"
-                    memory: 2Gi
-            env:
-                PERSONA_ASSETS_ROOT: /app/use-cases
-                # Without this, the agentserver framework falls back to a console
-                # OTLP exporter and floods stdout with metric JSON every 60s.
-                APPLICATIONINSIGHTS_CONNECTION_STRING: $${AZURE_APP_INSIGHTS_CONNECTION_STRING}
-                AI_SERVICES_ENDPOINT: $${AZURE_AI_PROJECT_ENDPOINT}
-                BLOB_SKILLS_CONTAINER: skills
-                BLOB_STORAGE_ENDPOINT: $${AZURE_BLOB_STORAGE_ENDPOINT}
-                COSMOS_DB_DATABASE: kratos-agent-${slug}
-                COSMOS_DB_ENDPOINT: $${AZURE_COSMOS_DB_ENDPOINT}
-                # NOTE: FOUNDRY_* and AGENT_* env var names are reserved by the
-                # hosted-agent platform — cannot be set here. The hosted-agent
-                # main.py derives FOUNDRY_ENDPOINT from the platform-injected
-                # FOUNDRY_PROJECT_ENDPOINT (strips /api/projects/... suffix).
-                KEY_VAULT_URI: $${AZURE_KEY_VAULT_URI}
-                MODEL_DEPLOYMENT_ORCHESTRATOR: $${MODEL_DEPLOYMENT_ORCHESTRATOR}
-                MODEL_DEPLOYMENT_DEEP_REASONING: $${MODEL_DEPLOYMENT_DEEP_REASONING}
-                MODEL_DEPLOYMENT_FAST: $${MODEL_DEPLOYMENT_FAST}
-                MODEL_DEPLOYMENT_NAME: $${FOUNDRY_MODEL_DEPLOYMENT}
+            remoteBuild: true
+        container:
+            resources:
+                cpu: "1"
+                memory: 2Gi
+        env:
+            PERSONA_ASSETS_ROOT: /app/use-cases
+            # Without this, the agentserver framework falls back to a console
+            # OTLP exporter and floods stdout with metric JSON every 60s.
+            APPLICATIONINSIGHTS_CONNECTION_STRING: $${AZURE_APP_INSIGHTS_CONNECTION_STRING}
+            AI_SERVICES_ENDPOINT: $${AZURE_AI_PROJECT_ENDPOINT}
+            BLOB_SKILLS_CONTAINER: skills
+            BLOB_STORAGE_ENDPOINT: $${AZURE_BLOB_STORAGE_ENDPOINT}
+            COSMOS_DB_DATABASE: kratos-agent-${slug}
+            COSMOS_DB_ENDPOINT: $${AZURE_COSMOS_DB_ENDPOINT}
+            # NOTE: FOUNDRY_* and AGENT_* env var names are reserved by the
+            # hosted-agent platform — cannot be set here. The hosted-agent
+            # main.py derives FOUNDRY_ENDPOINT from the platform-injected
+            # FOUNDRY_PROJECT_ENDPOINT (strips /api/projects/... suffix).
+            KEY_VAULT_URI: $${AZURE_KEY_VAULT_URI}
+            MODEL_DEPLOYMENT_ORCHESTRATOR: $${MODEL_DEPLOYMENT_ORCHESTRATOR}
+            MODEL_DEPLOYMENT_DEEP_REASONING: $${MODEL_DEPLOYMENT_DEEP_REASONING}
+            MODEL_DEPLOYMENT_FAST: $${MODEL_DEPLOYMENT_FAST}
+            MODEL_DEPLOYMENT_NAME: $${FOUNDRY_MODEL_DEPLOYMENT}
 
 hooks:
     predeploy:

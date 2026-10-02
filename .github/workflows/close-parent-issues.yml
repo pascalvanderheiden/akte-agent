@@ -82,7 +82,8 @@ jobs:
                   number
                   title
                   state
-                  subIssues(first: 100) { nodes { number state } }
+                  labels(first:100) { nodes { name } }
+                  subIssues(first: 100) { totalCount nodes { number state } }
                 }
               }
             }
@@ -119,6 +120,20 @@ jobs:
 
               parent_number=$(echo "$parent" | jq -r .number)
               parent_state=$(echo "$parent" | jq -r .state)
+
+              if echo "$parent" | jq -e '
+                any(.labels.nodes[];
+                  .name == "to-spec" or .name == "to-ticket" or
+                  .name == "needs-review" or .name == "needs-human")
+              ' >/dev/null; then
+                echo "Parent #$parent_number has unfinished planning or review; stopping."
+                break
+              fi
+
+              if echo "$parent" | jq -e '.subIssues.totalCount > (.subIssues.nodes | length)' >/dev/null; then
+                echo "::warning::Parent #$parent_number has more sub-issues than this query returned; not closing."
+                break
+              fi
 
               if [ "$parent_state" = "CLOSED" ]; then
                 echo "Parent #$parent_number is already closed; continuing upwards."

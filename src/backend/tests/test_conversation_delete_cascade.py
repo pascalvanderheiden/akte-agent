@@ -226,7 +226,7 @@ async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
 
 async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease_loss():
     old = {"id": "c1", "userId": "default-user", "title": "old", "_etag": "1"}
-    lock_token = str(uuid.uuid4())
+    token = str(uuid.uuid4())
     conversations = SimpleNamespace(
         read_item=AsyncMock(return_value=old),
         replace_item=AsyncMock(
@@ -241,7 +241,7 @@ async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease
     cosmos._messages_container = SimpleNamespace(
         read_item=AsyncMock(
             side_effect=[
-                {"lockToken": lock_token, "expiresAt": time.time() + 60},
+                {"lockToken": token, "expiresAt": time.time() + 60},
                 CosmosResourceNotFoundError(status_code=404),
             ]
         )
@@ -256,7 +256,7 @@ async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease
                 createdAt=datetime.now(UTC),
                 updatedAt=datetime.now(UTC),
             ),
-            lock_token=lock_token,
+            lock_token=token,
         )
 
     assert conversations.replace_item.await_args_list[1].kwargs["body"] == {
@@ -264,3 +264,4 @@ async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease
         "userId": "default-user",
         "title": "old",
     }
+    assert conversations.replace_item.await_args_list[1].kwargs["etag"] == "2"

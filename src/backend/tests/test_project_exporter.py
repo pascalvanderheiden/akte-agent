@@ -167,6 +167,7 @@ def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_pa
     assert "project: ./src/hosted-agent" in azure_yaml
     assert "language: docker" in azure_yaml
     assert "context: ../.." in azure_yaml
+    assert "remoteBuild: true" in azure_yaml
     assert "azure.ai.agents:" in azure_yaml  # required extension
     for role in ("ORCHESTRATOR", "DEEP_REASONING", "FAST"):
         assert f"MODEL_DEPLOYMENT_{role}:" in azure_yaml
@@ -738,7 +739,10 @@ def test_assemble_azure_yaml_wires_app_insights(exporter: ProjectExporter, tmp_p
     exporter.assemble("synthetic-review", out)
 
     doc = yaml.safe_load((out / "azure.yaml").read_text())
-    env = doc["services"]["synthetic-review"]["config"]["env"]
+    service = doc["services"]["synthetic-review"]
+    assert "config" not in service
+    assert service["container"]["resources"] == {"cpu": "1", "memory": "2Gi"}
+    env = service["env"]
     assert env.get("APPLICATIONINSIGHTS_CONNECTION_STRING") == "${AZURE_APP_INSIGHTS_CONNECTION_STRING}"
 
 
