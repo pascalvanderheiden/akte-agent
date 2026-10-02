@@ -186,12 +186,18 @@ class ApplicationInsightsAlertTests(unittest.TestCase):
 
     def test_cosmos_persistence_alert_is_narrow_and_requires_repeated_failures(self):
         properties = self.alert["properties"]
+        self.assertTrue(properties["enabled"])
+        self.assertEqual("PT5M", properties["evaluationFrequency"])
         criterion = properties["criteria"]["allOf"][0]
 
         self.assertEqual("PT15M", properties["windowSize"])
         self.assertEqual("GreaterThan", criterion["operator"])
         self.assertEqual(2, criterion["threshold"])
         self.assertIn("traces", criterion["query"])
+        self.assertIn("exceptions", criterion["query"])
+        self.assertIn("operation_Id", criterion["query"])
+        self.assertIn("| summarize timestamp = min(timestamp) by operation_Id", criterion["query"])
+        self.assertNotIn("| summarize count() by bin(timestamp, 15m)", criterion["query"])
         hosted_agent = (Path(__file__).resolve().parents[2] / "src" / "hosted-agent" / "main.py").read_text()
         for signature in (
             "Failed to persist user message to Cosmos (non-fatal)",

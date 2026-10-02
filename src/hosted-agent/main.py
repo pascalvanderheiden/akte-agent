@@ -28,15 +28,13 @@ from azure.core.exceptions import (
     ServiceRequestError,
     ServiceResponseError,
 )
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 # Foundry reserves all FOUNDRY_* env vars; remap our non-reserved names.
 # The platform auto-injects FOUNDRY_PROJECT_ENDPOINT but our Settings class reads FOUNDRY_ENDPOINT.
-if (
-    "MODEL_DEPLOYMENT_NAME" in os.environ
-    and "FOUNDRY_MODEL_DEPLOYMENT" not in os.environ
-):
+if "MODEL_DEPLOYMENT_NAME" in os.environ and "FOUNDRY_MODEL_DEPLOYMENT" not in os.environ:
     os.environ["FOUNDRY_MODEL_DEPLOYMENT"] = os.environ["MODEL_DEPLOYMENT_NAME"]
 if "FOUNDRY_ENDPOINT" not in os.environ:
     # Platform injects FOUNDRY_PROJECT_ENDPOINT (e.g. https://host/api/projects/proj).
@@ -81,7 +79,12 @@ from app.personas import (
 )
 from app.services.blob_skill_service import BlobSkillService
 from app.services.copilot_agent import CopilotAgent, InvocationTelemetry
-from app.services.cosmos_service import CosmosService, cosmos_persistence_budget
+from app.services.cosmos_service import (
+    NETWORK_DENIAL_SIGNATURE,
+    CosmosService,
+    _denial_signature,
+    cosmos_persistence_budget,
+)
 from app.services.skill_registry import SkillRegistry
 
 logging.basicConfig(
@@ -89,9 +92,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
-logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(
-    logging.WARNING
-)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 logging.getLogger("azure.identity").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
@@ -140,10 +141,7 @@ def _is_blob_unreachable(exc: BaseException) -> bool:
     """
     if isinstance(
         exc,
-        TimeoutError
-        | ServiceRequestError
-        | ServiceResponseError
-        | ClientAuthenticationError,
+        TimeoutError | ServiceRequestError | ServiceResponseError | ClientAuthenticationError,
     ):
         return True
     return isinstance(exc, HttpResponseError) and exc.status_code in (401, 403)
@@ -192,9 +190,7 @@ async def _seed_or_disable_blob(blob_service: BlobSkillService) -> None:
         logger.exception("Failed to seed use-cases into blob storage")
 
 
-def _emit_blob_local_only_telemetry(
-    blob_service: BlobSkillService, settings: Settings
-) -> None:
+def _emit_blob_local_only_telemetry(blob_service: BlobSkillService, settings: Settings) -> None:
     failure_reason = blob_service.unavailability_reason or "not_configured"
     timestamp = datetime.now(UTC).isoformat()
     model_deployment = settings.foundry_model_deployment or "(empty)"
@@ -343,9 +339,7 @@ async def _ensure_registry(use_case: str) -> None:
                 await candidate.load(use_case, local_root=local_root)
                 registry = candidate
             except Exception:
-                logger.exception(
-                    "Failed to lazy-load use-case '%s' from local disk", use_case
-                )
+                logger.exception("Failed to lazy-load use-case '%s' from local disk", use_case)
                 raise
 
         if not registry.system_prompt:
@@ -395,13 +389,9 @@ def _collect_generated_files(response_text: str) -> list[tuple[str, bytes]]:
             with open(local_path, "rb") as f:
                 data = f.read()
             files.append((rel_path, data))
-            logger.info(
-                "Collected generated file: %s (%d bytes)", local_path, len(data)
-            )
+            logger.info("Collected generated file: %s (%d bytes)", local_path, len(data))
         except OSError:
-            logger.warning(
-                "Failed to read generated file %s", local_path, exc_info=True
-            )
+            logger.warning("Failed to read generated file %s", local_path, exc_info=True)
             raise
     return files
 
@@ -415,6 +405,8 @@ async def _stream_response_impl(
     token_source: dict | None = None,
     locale: Locale | None = None,
     model_selection: str = "auto",
+    persistence_allowed: bool = True,
+    persistence_observation: dict | None = None,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     invocation_telemetry = InvocationTelemetry(
@@ -448,12 +440,15 @@ async def _stream_response_impl(
             content=message,
             createdAt=datetime.now(UTC),
         )
-        try:
-            await _cosmos_service.upsert_message(user_message)
-        except Exception:
-            logger.warning(
-                "Failed to persist user message to Cosmos (non-fatal)", exc_info=True
-            )
+        if persistence_allowed:
+            try:
+                await _cosmos_service.upsert_message(user_message)
+                if persistence_observation is not None:
+                    persistence_observation["user_message_persisted"] = True
+            except Exception as exc:
+                if persistence_observation is not None and _persistence_failure_is_blocked(exc):
+                    persistence_observation["blocked"] = True
+                logger.warning("Failed to persist user message to Cosmos (non-fatal)", exc_info=True)
 
         # Stream events from CopilotAgent
         assistant_content_parts: list[str] = []
@@ -469,6 +464,7 @@ async def _stream_response_impl(
             use_case=use_case,
             model_selection=model_selection,
             invocation_telemetry=invocation_telemetry,
+            persist_session_mapping=persistence_allowed,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -545,13 +541,18 @@ async def _stream_response_impl(
             },
             createdAt=datetime.now(UTC),
         )
-        try:
-            await _cosmos_service.upsert_message(assistant_message)
-        except Exception:
-            logger.warning(
-                "Failed to persist assistant message to Cosmos (non-fatal)",
-                exc_info=True,
-            )
+        if persistence_allowed:
+            try:
+                await _cosmos_service.upsert_message(assistant_message)
+                if persistence_observation is not None:
+                    persistence_observation["assistant_message_persisted"] = True
+            except Exception as exc:
+                if persistence_observation is not None and _persistence_failure_is_blocked(exc):
+                    persistence_observation["blocked"] = True
+                logger.warning(
+                    "Failed to persist assistant message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
         # Done event
         done = DoneEvent(
@@ -579,6 +580,16 @@ async def _stream_response_impl(
     yield f"event: done\ndata: {json.dumps({'invocation_id': invocation_id, 'conversation_id': conversation_id})}\n\n".encode()
 
 
+def _persistence_failure_is_blocked(exc: Exception) -> bool:
+    if isinstance(exc, (TimeoutError, ServiceRequestError, ServiceResponseError)):
+        return True
+    return (
+        isinstance(exc, CosmosHttpResponseError)
+        and exc.status_code == 403
+        and _denial_signature(exc) == NETWORK_DENIAL_SIGNATURE
+    )
+
+
 async def _stream_response(
     invocation_id: str,
     conversation_id: str,
@@ -589,8 +600,26 @@ async def _stream_response(
     locale: Locale | None = None,
     model_selection: str = "auto",
     persistence_budget=None,
+    persistence_allowed: bool = True,
 ):
     """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
+    if persistence_budget is None:
+        with cosmos_persistence_budget() as default_budget:
+            persistence_budget = default_budget
+    persistence_observation = {
+        "persistence_mode": (
+            "disabled"
+            if not persistence_allowed
+            else "unavailable"
+            if _cosmos_service is None
+            else "local"
+            if getattr(_cosmos_service, "_messages_container", None) is None
+            else "cosmos"
+        ),
+        "blocked": False,
+        "user_message_persisted": False,
+        "assistant_message_persisted": False,
+    }
     stream = _stream_response_impl(
         invocation_id,
         conversation_id,
@@ -600,7 +629,26 @@ async def _stream_response(
         token_source,
         locale,
         model_selection,
+        persistence_allowed,
+        persistence_observation,
     )
+    diagnostic_emitted = False
+
+    def _diagnostic_event() -> bytes:
+        return (
+            "data: "
+            + json.dumps(
+                {
+                    "event": "kratos_diag",
+                    "data": {
+                        **persistence_observation,
+                        "persistence_budget_remaining_ms": max(0, int(persistence_budget.remaining_s * 1000)),
+                    },
+                }
+            )
+            + "\n\n"
+        ).encode()
+
     try:
         while True:
             with cosmos_persistence_budget(persistence_budget):
@@ -608,10 +656,15 @@ async def _stream_response(
                     event = await anext(stream)
                 except StopAsyncIteration:
                     break
+            if event.startswith(b"event: done"):
+                yield _diagnostic_event()
+                diagnostic_emitted = True
             yield event
     finally:
         with cosmos_persistence_budget(persistence_budget):
             await stream.aclose()
+    if not diagnostic_emitted:
+        yield _diagnostic_event()
 
 
 @app.invoke_handler
@@ -656,11 +709,15 @@ async def handle_invoke(request: Request) -> Response:
 
         conversation_id = data.get("conversationId", str(uuid.uuid4()))
         use_case = data.get("useCase")
-        model_selection = data.get("selectedModelId") or data.get(
-            "modelSelection", "auto"
-        )
+        model_selection = data.get("selectedModelId") or data.get("modelSelection", "auto")
         runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
         runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
+        persistence_allowed = data.get("persistenceAllowed") is not False
+        raw_persistence_budget_ms = data.get("persistenceBudgetMs")
+        persistence_budget_ms = max(0, raw_persistence_budget_ms) if type(raw_persistence_budget_ms) is int else None
+        raw_preflight_use_case = data.get("preflightConversationUseCase")
+        preflight_conversation_use_case = raw_preflight_use_case if isinstance(raw_preflight_use_case, str) else None
+        preflight_conversation_checked = data.get("preflightConversationChecked") is True
 
         # Per-MCP-server user tokens for On-Behalf-Of (kept out of the message
         # text so they are never visible to the model). Coerce to a clean
@@ -698,6 +755,43 @@ async def handle_invoke(request: Request) -> Response:
                 flags=re.DOTALL,
             )
 
+            persistence_match = re.search(
+                r"<persistence_allowed>\s*(true|false)\s*</persistence_allowed>",
+                message,
+                flags=re.IGNORECASE,
+            )
+            if persistence_match:
+                persistence_allowed = persistence_allowed and persistence_match.group(1).lower() == "true"
+                message = message[: persistence_match.start()] + message[persistence_match.end() :]
+
+            budget_match = re.search(
+                r"<persistence_budget_ms>\s*(\d+)\s*</persistence_budget_ms>",
+                message,
+                flags=re.IGNORECASE,
+            )
+            if budget_match:
+                if persistence_budget_ms is None:
+                    persistence_budget_ms = int(budget_match.group(1))
+                message = message[: budget_match.start()] + message[budget_match.end() :]
+
+            preflight_match = re.search(
+                r"<preflight_conversation_use_case>\s*(\S+?)\s*</preflight_conversation_use_case>",
+                message,
+            )
+            if preflight_match:
+                if preflight_conversation_use_case is None:
+                    preflight_conversation_use_case = preflight_match.group(1)
+                message = message[: preflight_match.start()] + message[preflight_match.end() :]
+
+            checked_match = re.search(
+                r"<preflight_conversation_checked>\s*true\s*</preflight_conversation_checked>",
+                message,
+                flags=re.IGNORECASE,
+            )
+            if checked_match:
+                preflight_conversation_checked = True
+                message = message[: checked_match.start()] + message[checked_match.end() :]
+
             # STRIP and IGNORE any <mcp_access_tokens> tag. OBO bearers are
             # delivered ONLY via the mcpAccessTokens JSON body field; a token in
             # the prompt would reach the model and GenAI message-content traces,
@@ -728,9 +822,7 @@ async def handle_invoke(request: Request) -> Response:
             # Clean up leading/trailing whitespace from tag removal
             message = message.strip()
 
-        conversation_match = re.match(
-            r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL
-        )
+        conversation_match = re.match(r"^\s*<conversation_id>(.*?)</conversation_id>", message, re.DOTALL)
         if conversation_match:
             from html import unescape
 
@@ -762,21 +854,49 @@ async def handle_invoke(request: Request) -> Response:
     # pre-warmed sandbox warms only the shared core, so the first real request
     # for a given use-case pays a small one-time load instead of every sandbox
     # loading all use-cases up front.
-    with cosmos_persistence_budget() as persistence_budget:
+    with cosmos_persistence_budget(
+        persistence_budget_ms / 1000 if persistence_budget_ms is not None else None
+    ) as persistence_budget:
         try:
             if runtime_foundry_endpoint and (
                 runtime_foundry_endpoint != _copilot_agent.settings.foundry_endpoint
-                or runtime_foundry_deployment
-                != _copilot_agent.settings.foundry_model_deployment
+                or runtime_foundry_deployment != _copilot_agent.settings.foundry_model_deployment
             ):
-                await _copilot_agent.update_config(
-                    runtime_foundry_endpoint, runtime_foundry_deployment
-                )
+                await _copilot_agent.update_config(runtime_foundry_endpoint, runtime_foundry_deployment)
             stored_use_case = None
-            if _cosmos_service is not None:
-                existing = await _cosmos_service.get_conversation(
-                    conversation_id, "default-user"
-                )
+            # A persistence-disabled backend run carries the identity result of
+            # its successful preflight, avoiding an unbudgeted second lookup.
+            if not persistence_allowed and preflight_conversation_checked:
+                stored_use_case = preflight_conversation_use_case
+                if stored_use_case:
+                    require_identified_history(stored_use_case)
+                    require_not_retired(stored_use_case)
+                    require_persona_match(use_case, stored_use_case)
+            elif _cosmos_service is not None:
+                try:
+                    existing = await _cosmos_service.get_conversation(
+                        conversation_id, "default-user", raise_on_error=True
+                    )
+                except Exception as exc:
+                    blocked = _persistence_failure_is_blocked(exc)
+                    headers = {
+                        "x-kratos-persistence-budget-remaining-ms": str(
+                            max(0, int(persistence_budget.remaining_s * 1000))
+                        )
+                    }
+                    if blocked:
+                        headers["x-kratos-cosmos-path"] = "blocked"
+                    return JSONResponse(
+                        status_code=503,
+                        headers=headers,
+                        content={
+                            "error": (
+                                "Hosted-agent Cosmos private path is unavailable"
+                                if blocked
+                                else "Hosted-agent conversation identity could not be verified"
+                            )
+                        },
+                    )
                 if existing:
                     require_identified_history(existing.useCase)
                     require_not_retired(existing.useCase)
@@ -798,6 +918,7 @@ async def handle_invoke(request: Request) -> Response:
             locale=locale,
             model_selection=model_selection,
             persistence_budget=persistence_budget,
+            persistence_allowed=persistence_allowed,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,
@@ -810,11 +931,7 @@ async def handle_invoke(request: Request) -> Response:
                 # Confirms the agent's LLM calls are routed through the APIM AI
                 # gateway (so prompts/completions are captured). Empty => the
                 # sandbox calls Foundry directly.
-                "llm_gateway_host": (
-                    os.environ.get("LLM_GATEWAY_BASE_URL", "")
-                    .split("//")[-1]
-                    .split("/")[0]
-                ),
+                "llm_gateway_host": (os.environ.get("LLM_GATEWAY_BASE_URL", "").split("//")[-1].split("/")[0]),
             },
         ),
         media_type="text/event-stream",

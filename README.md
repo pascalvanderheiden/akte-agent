@@ -73,8 +73,12 @@ or endpoints). From **inside the running Container App**, resolve the hostname
 in `COSMOS_DB_ENDPOINT` (for example with `az containerapp exec` and Python's
 `socket.getaddrinfo`); confirm it returns a private endpoint IP, not a public
 address. Check the private endpoint connection, DNS zone link to the app VNet,
-and Cosmos public-network setting. The current smoke suite does not verify
-persisted message contents, so perform this manual round-trip with synthetic data:
+and Cosmos public-network setting. The post-deploy `03-chat` smoke checks the
+Container App backend's persisted user and assistant messages and rejects
+firewall-denial telemetry. It does not verify writes made directly by
+Foundry-hosted-agent compute; see the separate limitation in
+[the Cosmos persistence runbook](docs/cosmos-persistence.md). For a manual
+round-trip, use only synthetic data:
 
 1. In the deployed UI, create a new conversation and send a unique synthetic
    prompt. Wait for a non-empty assistant response, and note the conversation ID.
@@ -148,10 +152,10 @@ attribute the regression; if the gap remains without denials, open a separate
 issue with sanitized, isolated traces and the before/after sample counts.
 Track Blob registry-loading authorization failures separately: the local-disk
 fallback can mask them, and they are not evidence of healthy Blob access.
-This section is a runbook, not evidence that the live checks passed. Keep issue
-#126 open until the post-deployment result is recorded, latency is attributed
-(or a residual-latency issue is opened), and a separate Blob follow-up issue is
-created.
+This section is a runbook, not evidence that the live checks passed. Keep #138
+and #139 open until the post-deployment result is recorded. Track hosted-agent
+private networking separately under the platform limitation in ADR 0002; do
+not change Cosmos public-network access to work around it.
 
 ## Run locally
 

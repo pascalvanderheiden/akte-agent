@@ -37,6 +37,12 @@ if [[ -z "${KRATOS_FRONTEND_URL:-}" || -z "${KRATOS_BACKEND_URL:-}" ]]; then
   exit 1
 fi
 
+if [[ -z "${FOUNDRY_PROJECT_ENDPOINT:-}" ]] && command -v azd >/dev/null 2>&1; then
+  AZD_VALUES="$(cd "$REPO_ROOT" && azd env get-values 2>/dev/null || true)"
+  FOUNDRY_PROJECT_ENDPOINT="$(sed -n 's/^FOUNDRY_PROJECT_ENDPOINT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' <<<"$AZD_VALUES" | head -1)"
+  export FOUNDRY_PROJECT_ENDPOINT
+fi
+
 if [[ ! -d node_modules/@playwright/test ]]; then
   echo "[e2e-smoke] installing npm dependencies …"
   npm install --no-audit --no-fund --silent
