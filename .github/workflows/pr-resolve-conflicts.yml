@@ -96,14 +96,15 @@ jobs:
             base=$(echo "$data" | jq -r .baseRefOid)
             base_branch=$(echo "$data" | jq -r .baseRefName)
             marker="<!-- pr-resolve-conflicts: $head $base -->"
+            trusted_author=$(gh api user --jq .login)
             comments=$(gh api "repos/$REPO/issues/$pr/comments" --paginate --slurp | jq 'add')
-            if echo "$comments" | jq -e --arg marker "$marker" \
-                '.[] | select(.body | contains($marker))' >/dev/null; then
+            if echo "$comments" | jq -e --arg marker "$marker" --arg author "$trusted_author" \
+                '.[] | select(.user.login == $author and ((.body // "") | contains($marker)))' >/dev/null; then
               echo "Already delegated conflicts for #$pr at $head against $base."
               continue
             fi
-            rounds=$(echo "$comments" | jq \
-              '[.[] | select(.body | contains("<!-- pr-resolve-conflicts:"))] | length')
+            rounds=$(echo "$comments" | jq --arg author "$trusted_author" \
+              '[.[] | select(.user.login == $author and ((.body // "") | contains("<!-- pr-resolve-conflicts:")))] | length')
             if [ "$rounds" -ge "$MAX_ROUNDS" ]; then
               gh api "repos/$REPO/issues/$pr/labels" -f "labels[]=needs-human" >/dev/null
               echo "::warning::PR #$pr exhausted $MAX_ROUNDS conflict-resolution rounds; needs-human."

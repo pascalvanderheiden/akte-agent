@@ -25,6 +25,8 @@ safe-outputs:
   github-token: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
   threat-detection:
     continue-on-error: false
+  missing-data:
+    max: 1
   create-issue:
     max: 12
     labels: [ticket, ready-for-agent]
@@ -65,7 +67,7 @@ safe-outputs:
 
    Record the parent's number from the `parent` field — that is the origin issue, needed in step 8. If `parent` is `null` the spec has no origin issue; note that and skip step 8 only.
 
-   **Recover before creating.** Read all existing sub-issues with `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/sub_issues --paginate`, and their bodies and dependencies. Also inspect linked issues from previous run comments in case linking failed. Reuse existing tickets, including closed tickets; never recreate completed work. If the existing set fully covers the spec and its dependency edges are correct, emit only the missing label transitions in steps 7-8. If previous output is partial or conflicting and cannot be safely completed with the configured outputs, call `report_incomplete` with the affected issue numbers and stop rather than duplicating tickets.
+   **Recover before creating.** Read all existing sub-issues with `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/sub_issues --paginate`, and their bodies and dependencies. Also inspect linked issues from previous run comments in case linking failed. Reuse existing tickets, including closed tickets; never recreate completed work. If the existing set fully covers the spec and its dependency edges are correct, emit only the missing label transitions in steps 7-8. If previous output is partial or conflicting and cannot be safely completed with the configured outputs, call `missing_data` with the affected issue numbers and why the existing state cannot be safely completed, then stop rather than duplicating tickets.
 
 2. **Decide whether there is enough to break down.** If the body is empty, a placeholder, or not actually a spec, call `noop` with a one-line reason and stop. Do not create issues, do not relabel. A short-but-concrete spec is ticketable; a contentless one is not.
 
@@ -107,6 +109,7 @@ For new tickets, steps 5-8 are a set: emit all of them or none. Recovery reuses 
 - `link_sub_issue` — attaches each ticket to the triggering spec issue.
 - `remove_labels` — drops `to-ticket` from the triggering spec issue.
 - `replace_label` — swaps `specced` for `planned` on the origin issue.
+- `missing_data` — reports conflicting or incomplete prior output for human review.
 - `noop` — use with a short reason when the spec carries too little signal to break down. A successful no-op run is a valid outcome.
 
 Do not mutate GitHub directly with `gh` write commands; all writes go through the safe outputs above.
