@@ -273,6 +273,8 @@ def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(tra
     assert "Synthetic English reply" in response.text
     assert "event: done" in response.text
     assert conversations.reads == 1
+    assert transport.captured[0][1]["persistenceAllowed"] is False
+    assert transport.messages == []
 
 
 def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transport):

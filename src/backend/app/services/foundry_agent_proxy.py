@@ -264,6 +264,7 @@ class FoundryAgentProxy:
         mcp_access_tokens: dict[str, str] | None = None,
         locale: Locale | None = None,
         model_selection: str = "auto",
+        persistence_allowed: bool = True,
     ) -> AsyncGenerator[dict, None]:
         """Invoke the hosted agent and yield event dicts.
 
@@ -321,6 +322,7 @@ class FoundryAgentProxy:
             "selectedModelId": model_selection,
             "foundryEndpoint": self._settings.foundry_endpoint,
             "foundryModelDeployment": self._settings.foundry_model_deployment,
+            "persistenceAllowed": persistence_allowed,
         }
         if locale:
             payload["locale"] = locale

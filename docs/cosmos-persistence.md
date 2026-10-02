@@ -51,6 +51,11 @@ unclassified. `tests/test_hosted_agent_persistence_budget.py` proves this at the
 hosted-agent invocation entry point against a faked network denial and a
 healthy fake.
 
+If `/chat` continues after Cosmos lease acquisition fails, it marks the hosted
+invocation as persistence-disabled. The backend and hosted agent then skip
+message and session-mapping writes for that run instead of writing without a
+cross-replica lease.
+
 A timeout logs `Cosmos persistence operation timed out` and raises, preserving
 the existing behaviour at each call site. A timeout says only that the
 operation exceeded its time budget; it does not distinguish an unreachable

@@ -89,6 +89,9 @@ def hosted(monkeypatch):
 
 
 class _FakeAgent:
+    def __init__(self) -> None:
+        self.run_kwargs: dict = {}
+
     def set_conversation_use_case(self, *_args):
         return None
 
@@ -96,6 +99,7 @@ class _FakeAgent:
         return None
 
     async def run(self, **_kwargs):
+        self.run_kwargs = _kwargs
         yield ContentEvent(content="Synthetic reply")
 
     def get_run_stats(self, _conversation_id):
@@ -254,6 +258,27 @@ async def test_healthy_cosmos_persists_both_messages_within_the_budget(
     assert "Failed to persist" not in logged
     assert OPERATION_TIMEOUT_SIGNATURE not in logged
     assert NETWORK_DENIAL_SIGNATURE not in logged
+
+
+async def test_degraded_backend_invocation_skips_hosted_agent_persistence(hosted):
+    clock = _CosmosClock()
+    messages = _HealthyContainer(clock)
+    hosted._cosmos_service = _cosmos(_HealthyContainer(clock), messages)
+
+    status, events = await _invoke(
+        hosted,
+        {
+            "message": "Hello",
+            "conversationId": "synthetic-conversation",
+            "useCase": "akte-agent",
+            "persistenceAllowed": False,
+        },
+    )
+
+    assert status == 200
+    assert any(event.get("event") == "done" for event in events)
+    assert messages.items == {}
+    assert hosted._copilot_agent.run_kwargs["persist_session_mapping"] is False
 
 
 def test_backend_and_hosted_agent_share_one_persistence_budget_policy(hosted) -> None:

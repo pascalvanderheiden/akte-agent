@@ -237,6 +237,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
                 model_selection=model_selection,
+                persistence_allowed=not run_lock.lease_acquisition_failed,
             ):
                 event_name = event_dict.get("event")
                 event_data = event_dict.get("data", {})

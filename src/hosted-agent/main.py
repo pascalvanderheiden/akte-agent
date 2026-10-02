@@ -415,6 +415,7 @@ async def _stream_response_impl(
     token_source: dict | None = None,
     locale: Locale | None = None,
     model_selection: str = "auto",
+    persistence_allowed: bool = True,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     invocation_telemetry = InvocationTelemetry(
@@ -448,12 +449,11 @@ async def _stream_response_impl(
             content=message,
             createdAt=datetime.now(UTC),
         )
-        try:
-            await _cosmos_service.upsert_message(user_message)
-        except Exception:
-            logger.warning(
-                "Failed to persist user message to Cosmos (non-fatal)", exc_info=True
-            )
+        if persistence_allowed:
+            try:
+                await _cosmos_service.upsert_message(user_message)
+            except Exception:
+                logger.warning("Failed to persist user message to Cosmos (non-fatal)", exc_info=True)
 
         # Stream events from CopilotAgent
         assistant_content_parts: list[str] = []
@@ -469,6 +469,7 @@ async def _stream_response_impl(
             use_case=use_case,
             model_selection=model_selection,
             invocation_telemetry=invocation_telemetry,
+            persist_session_mapping=persistence_allowed,
         ):
             if isinstance(event, ThoughtEvent):
                 collected_thoughts.append(event.content)
@@ -545,13 +546,14 @@ async def _stream_response_impl(
             },
             createdAt=datetime.now(UTC),
         )
-        try:
-            await _cosmos_service.upsert_message(assistant_message)
-        except Exception:
-            logger.warning(
-                "Failed to persist assistant message to Cosmos (non-fatal)",
-                exc_info=True,
-            )
+        if persistence_allowed:
+            try:
+                await _cosmos_service.upsert_message(assistant_message)
+            except Exception:
+                logger.warning(
+                    "Failed to persist assistant message to Cosmos (non-fatal)",
+                    exc_info=True,
+                )
 
         # Done event
         done = DoneEvent(
@@ -589,6 +591,7 @@ async def _stream_response(
     locale: Locale | None = None,
     model_selection: str = "auto",
     persistence_budget=None,
+    persistence_allowed: bool = True,
 ):
     """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
     stream = _stream_response_impl(
@@ -600,6 +603,7 @@ async def _stream_response(
         token_source,
         locale,
         model_selection,
+        persistence_allowed,
     )
     try:
         while True:
@@ -661,6 +665,7 @@ async def handle_invoke(request: Request) -> Response:
         )
         runtime_foundry_endpoint = str(data.get("foundryEndpoint") or "")
         runtime_foundry_deployment = str(data.get("foundryModelDeployment") or "")
+        persistence_allowed = data.get("persistenceAllowed") is not False
 
         # Per-MCP-server user tokens for On-Behalf-Of (kept out of the message
         # text so they are never visible to the model). Coerce to a clean
@@ -798,6 +803,7 @@ async def handle_invoke(request: Request) -> Response:
             locale=locale,
             model_selection=model_selection,
             persistence_budget=persistence_budget,
+            persistence_allowed=persistence_allowed,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,
