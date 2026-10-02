@@ -1,0 +1,120 @@
+name: Resolve PR merge conflicts
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [CI, CI Pipeline]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "7,17,27,37,47,57 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Conflicting PR to repair. Leave empty to sweep all open PRs.
+        required: false
+        type: number
+
+# Serialize sweeps and per-PR events so duplicate triggers cannot post twice.
+concurrency:
+  group: pr-resolve-conflicts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask Copilot to resolve merge conflicts
+        env:
+          # GITHUB_TOKEN comments do not wake the coding agent.
+          GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+          DISPATCH_PR: ${{ inputs.pr_number }}
+          MAX_ROUNDS: "3"
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::COPILOT_ASSIGN_TOKEN is required to wake Copilot for conflict resolution."
+            exit 1
+          fi
+          prs="${EVENT_PR:-${DISPATCH_PR:-}}"
+          if [ -z "$prs" ] || [ "$prs" = "0" ]; then
+            prs=$(gh pr list --repo "$REPO" --state open --limit 1000 \
+              --json number --jq 'sort_by(.number) | .[].number')
+          fi
+
+          # shellcheck disable=SC2016
+          query='query($owner:String!, $name:String!, $number:Int!) {
+            repository(owner:$owner, name:$name) {
+              pullRequest(number:$number) {
+                state mergeable headRefOid baseRefOid baseRefName
+                labels(first:100) { nodes { name } }
+              }
+            }
+          }'
+          for pr in $prs; do
+            [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::Invalid PR number: $pr"; exit 1; }
+            for attempt in 1 2 3; do
+              data=$(gh api graphql \
+                -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$pr" \
+                -f query="$query" --jq '.data.repository.pullRequest')
+              if [ "$data" = "null" ]; then
+                echo "::error::PR #$pr was not found."
+                exit 1
+              fi
+              state=$(echo "$data" | jq -r .state)
+              mergeable=$(echo "$data" | jq -r .mergeable)
+              [ "$state" != "OPEN" ] && break
+              [ "$mergeable" != "UNKNOWN" ] && break
+              [ "$attempt" = 3 ] || sleep 5
+            done
+            if [ "$state" != "OPEN" ] || [ "$mergeable" = "MERGEABLE" ]; then
+              echo "PR #$pr has no open merge conflict."
+              continue
+            fi
+            if [ "$mergeable" = "UNKNOWN" ]; then
+              echo "::notice::PR #$pr mergeability is still pending; a later sweep will retry."
+              continue
+            fi
+            if [ "$mergeable" != "CONFLICTING" ]; then
+              echo "::error::Unexpected mergeability for #$pr: $mergeable"
+              exit 1
+            fi
+            if echo "$data" | jq -e '.labels.nodes[] | select(.name == "needs-human")' >/dev/null; then
+              echo "PR #$pr is marked needs-human; not delegating."
+              continue
+            fi
+            head=$(echo "$data" | jq -r .headRefOid)
+            base=$(echo "$data" | jq -r .baseRefOid)
+            base_branch=$(echo "$data" | jq -r .baseRefName)
+            marker="<!-- pr-resolve-conflicts: $head $base -->"
+            trusted_author=$(gh api user --jq .login)
+            comments=$(gh api "repos/$REPO/issues/$pr/comments" --paginate --slurp | jq 'add')
+            if echo "$comments" | jq -e --arg marker "$marker" --arg author "$trusted_author" \
+                '.[] | select(.user.login == $author and ((.body // "") | contains($marker)))' >/dev/null; then
+              echo "Already delegated conflicts for #$pr at $head against $base."
+              continue
+            fi
+            rounds=$(echo "$comments" | jq --arg author "$trusted_author" \
+              '[.[] | select(.user.login == $author and ((.body // "") | contains("<!-- pr-resolve-conflicts:")))] | length')
+            if [ "$rounds" -ge "$MAX_ROUNDS" ]; then
+              gh api "repos/$REPO/issues/$pr/labels" -f "labels[]=needs-human" >/dev/null
+              echo "::warning::PR #$pr exhausted $MAX_ROUNDS conflict-resolution rounds; needs-human."
+              continue
+            fi
+            body=$(printf '%s\n' \
+              "@copilot resolve this pull request's merge conflicts with its current base branch ($base_branch)." \
+              "" \
+              "Merge the latest base into this PR branch, preserve both intended changes, and push the resolution to this same branch. Do not force-push or bypass review/CI. Run the relevant tests. If the conflict requires a product decision or cannot be safely resolved, explain the blocker rather than guessing." \
+              "" "$marker")
+            gh api "repos/$REPO/issues/$pr/comments" -f body="$body" >/dev/null
+            echo "Delegated conflicts on #$pr (round $((rounds + 1)) of $MAX_ROUNDS)."
+          done

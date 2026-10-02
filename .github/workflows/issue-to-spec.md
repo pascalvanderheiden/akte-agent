@@ -23,12 +23,20 @@ safe-outputs:
   # A PAT, not GITHUB_TOKEN: labels written by GITHUB_TOKEN raise no `labeled`
   # event, so the next stage of the chain would never fire.
   github-token: ${{ secrets.COPILOT_ASSIGN_TOKEN }}
+  threat-detection:
+    continue-on-error: false
+  missing-data:
+    max: 1
   create-issue:
     max: 1
     labels: [spec, to-ticket]
     allowed-labels: [spec, to-ticket, feature, bug]
     require-temporary-id: true
   link-sub-issue:
+    max: 1
+  remove-labels:
+    allowed: [to-spec]
+    target: triggering
     max: 1
   replace-label:
     allowed-remove: [to-spec]
@@ -48,6 +56,8 @@ safe-outputs:
 
 1. **Read the triggering issue.** Use `gh issue view ${{ github.event.issue.number }} --json number,title,body,labels,comments` to get its title, body, comments and current labels. Read the comments too: they often refine the request.
 
+   **Recover before creating.** Read every existing sub-issue with `gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/sub_issues --paginate`. If exactly one existing `spec` sub-issue already contains a complete spec for this request, reuse it: emit only the parent label transition in step 7, not another `create_issue` or `link_sub_issue`. If there are conflicting specs or an incomplete previous output, call `missing_data` with the affected issue numbers and why the existing state cannot be safely completed, then stop; never invent a second spec to repair a partial run.
+
 2. **Decide whether there is enough to spec.** If the body is empty, a placeholder, or so vague that the spec would be invented rather than derived, call `noop` with a one-line reason and stop. Do not create an issue, do not relabel. A thin-but-clear request is specable; a contentless one is not.
 
 3. **Understand the codebase before writing.** Read the root `CONTEXT.md`, any relevant records under `docs/adr/`, and the areas of `src/` the request touches. Use the project's own domain vocabulary throughout the spec and respect existing ADRs in the area you are changing.
@@ -66,17 +76,21 @@ safe-outputs:
    - the spec as the body, opening with a line linking back to the parent: `Spec for #${{ github.event.issue.number }}`,
    - labels: `spec` and `to-ticket`, plus `feature` or `bug` **only if** that label is present on the parent issue. Copy at most one of the two, and copy nothing if the parent carries neither.
 
+   Temporary IDs must be `aw_` followed by 3-8 alphanumeric characters (for example `aw_spec001`). Use the bare ID in structured fields; only Markdown issue references use a leading `#`.
+
 6. **Link it to the parent.** Emit `link_sub_issue` with `parent_issue_number` set to `${{ github.event.issue.number }}` and `sub_issue_number` set to the `temporary_id` from step 5.
 
-7. **Mark the parent specced.** Emit `replace_label` removing `to-spec` and adding `specced` on the triggering issue.
+7. **Mark the parent specced.** Emit `replace_label` removing `to-spec` and adding `specced` on the triggering issue. During recovery, if the origin already carries `planned`, emit only `remove_labels` for stale `to-spec` instead; never downgrade `planned` to `specced`.
 
-Steps 5-7 are a set: emit all three or none. If you reach step 5 you must complete 6 and 7 in the same run, otherwise the parent is left labelled `to-spec` and will be re-processed.
+For a new spec, steps 5-7 are a set: emit all three or none. Recovery reuses the existing spec and emits only the missing label transition.
 
 ## Safe Outputs
 
 - `create_issue` — the spec sub-issue (body must be a real spec, 20-65000 characters; never a placeholder).
 - `link_sub_issue` — attaches the spec to the triggering issue.
 - `replace_label` — swaps `to-spec` for `specced` on the triggering issue.
+- `remove_labels` — clears stale `to-spec` without downgrading an already planned origin.
+- `missing_data` — reports conflicting or incomplete prior output for human review.
 - `noop` — use with a short reason when the issue body carries too little signal to derive a spec. A successful no-op run is a valid outcome.
 
 Do not mutate GitHub directly with `gh` write commands; all writes go through the safe outputs above.

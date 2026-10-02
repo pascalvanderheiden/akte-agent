@@ -172,7 +172,7 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
 
     class SlowConversations:
         async def read_item(self, *_args, **_kwargs):
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             return {
                 "id": "synthetic-conversation",
                 "userId": "default-user",
@@ -183,6 +183,16 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
             }
 
     class BlackholedMessages:
+        async def create_item(self, document):
+            self.lease = {**document, "_etag": "synthetic-lease"}
+            return self.lease
+
+        async def read_item(self, *_args, **_kwargs):
+            return self.lease
+
+        async def delete_item(self, *_args, **_kwargs):
+            self.lease = None
+
         async def upsert_item(self, *_args, **_kwargs):
             await asyncio.sleep(3600)
 
