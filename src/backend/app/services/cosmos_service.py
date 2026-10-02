@@ -268,9 +268,9 @@ class CosmosService:
                 timeout,
             )
             raise
-        except CosmosResourceNotFoundError:
-            # A miss is an answer, not a persistence failure: callers that look
-            # up optional documents (conversation lease, prior version) expect it.
+        except (CosmosResourceExistsError, CosmosResourceNotFoundError):
+            # These are expected when optional documents are absent or a lease
+            # already exists.
             raise
         except CosmosHttpResponseError as exc:
             detail = next(iter((exc.message or "").splitlines()), "")
@@ -414,10 +414,16 @@ class CosmosService:
         acquired = ConversationLock(local_lock=lock)
         try:
             if not self._using_sqlite() and self._messages_container:
-                acquired.lease_token = await self._acquire_cosmos_lease(conversation_id)
-                acquired.renewal_task = asyncio.create_task(
-                    self._renew_cosmos_lease(conversation_id, acquired.lease_token)
-                )
+                try:
+                    acquired.lease_token = await self._acquire_cosmos_lease(conversation_id)
+                    acquired.renewal_task = asyncio.create_task(
+                        self._renew_cosmos_lease(conversation_id, acquired.lease_token)
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Cosmos conversation lease unavailable; continuing with process-local lock (%s)",
+                        type(exc).__name__,
+                    )
             return acquired
         except BaseException:
             await self._discard_conversation_lock(conversation_id, lock)
@@ -464,27 +470,41 @@ class CosmosService:
         while True:
             document = self._lease_document(conversation_id, token)
             try:
-                await self._messages_container.create_item(document)
+                await self._bounded(
+                    "create_conversation_lease",
+                    self._messages_container.create_item(document),
+                )
                 return token
             except CosmosResourceExistsError:
                 pass
 
             try:
-                existing = await self._messages_container.read_item(
-                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                existing = await self._bounded(
+                    "read_conversation_lease",
+                    self._messages_container.read_item(
+                        item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                    ),
                 )
             except CosmosResourceNotFoundError:
                 continue
             if existing.get("expiresAt", 0) > time.time():
-                await asyncio.sleep(0.1)
+                budget = _persistence_budget.get()
+                delay = min(0.1, budget.remaining_s) if budget is not None else 0.1
+                started = time.monotonic()
+                await asyncio.sleep(delay)
+                if budget is not None:
+                    budget.remaining_s = max(0.0, budget.remaining_s - (time.monotonic() - started))
                 continue
 
             try:
-                await self._messages_container.replace_item(
-                    item=_CONVERSATION_LEASE_ID,
-                    body=document,
-                    etag=existing["_etag"],
-                    match_condition=MatchConditions.IfNotModified,
+                await self._bounded(
+                    "replace_conversation_lease",
+                    self._messages_container.replace_item(
+                        item=_CONVERSATION_LEASE_ID,
+                        body=document,
+                        etag=existing["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    ),
                 )
                 return token
             except CosmosHttpResponseError as exc:
@@ -497,16 +517,22 @@ class CosmosService:
         while True:
             await asyncio.sleep(_CONVERSATION_LEASE_RENEW_SECONDS)
             try:
-                existing = await self._messages_container.read_item(
-                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                existing = await self._bounded(
+                    "read_conversation_lease",
+                    self._messages_container.read_item(
+                        item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                    ),
                 )
                 if existing.get("lockToken") != token or existing.get("expiresAt", 0) <= time.time():
                     return
-                await self._messages_container.replace_item(
-                    item=_CONVERSATION_LEASE_ID,
-                    body=self._lease_document(conversation_id, token),
-                    etag=existing["_etag"],
-                    match_condition=MatchConditions.IfNotModified,
+                await self._bounded(
+                    "replace_conversation_lease",
+                    self._messages_container.replace_item(
+                        item=_CONVERSATION_LEASE_ID,
+                        body=self._lease_document(conversation_id, token),
+                        etag=existing["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    ),
                 )
             except asyncio.CancelledError:
                 raise
@@ -518,21 +544,29 @@ class CosmosService:
         """Delete the lease only if it is still owned by this operation."""
         assert self._messages_container is not None
         try:
-            existing = await self._messages_container.read_item(
-                item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+            existing = await self._bounded(
+                "read_conversation_lease",
+                self._messages_container.read_item(
+                    item=_CONVERSATION_LEASE_ID, partition_key=conversation_id
+                ),
             )
             if existing.get("lockToken") == token:
-                await self._messages_container.delete_item(
-                    item=_CONVERSATION_LEASE_ID,
-                    partition_key=conversation_id,
-                    etag=existing["_etag"],
-                    match_condition=MatchConditions.IfNotModified,
+                await self._bounded(
+                    "delete_conversation_lease",
+                    self._messages_container.delete_item(
+                        item=_CONVERSATION_LEASE_ID,
+                        partition_key=conversation_id,
+                        etag=existing["_etag"],
+                        match_condition=MatchConditions.IfNotModified,
+                    ),
                 )
         except CosmosResourceNotFoundError:
             return
         except CosmosHttpResponseError as exc:
             if exc.status_code not in (404, 409, 412):
                 raise
+        except TimeoutError:
+            logger.warning("Cosmos conversation lease release exceeded the persistence budget")
 
     async def _require_conversation_lease(self, conversation_id: str, token: str | None) -> None:
         """Reject persistence when another replica owns the conversation lease."""

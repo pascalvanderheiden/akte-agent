@@ -47,9 +47,10 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
           // Both tables are searched on purpose. A warning logged with
           // `exc_info` lands in `exceptions`, not `traces`, which is how the
           // 2026-09-28 firewall denial (403, service-endpoint path) produced
-          // exception rows that a traces-only query never saw. The bare
-          // `CosmosHttpResponseError` clause is qualified with 403 so ordinary
-          // 404/409/429 conditions cannot raise this alert.
+          // exception rows that a traces-only query never saw. Dedupe by
+          // operation_Id so one failed invocation's trace and exception rows
+          // count once. The bare `CosmosHttpResponseError` clause is qualified
+          // with 403 so ordinary 404/409/429 conditions cannot raise this alert.
           query: '''
             union
               (traces | extend signal = message),
@@ -67,10 +68,12 @@ resource hostedAgentCosmosPersistenceAlert 'Microsoft.Insights/scheduledQueryRul
                 or signal contains "Cosmos persistence denied (unclassified 403)"
                 or signal contains "Cosmos persistence operation timed out"
                 or (signal contains "CosmosHttpResponseError" and signal contains "403")
+            | summarize timestamp = min(timestamp) by operation_Id
+            | summarize count() by bin(timestamp, 15m)
           '''
           timeAggregation: 'Count'
           operator: 'GreaterThan'
-          // GreaterThan 2 alerts on the third warning in the window.
+          // GreaterThan 2 alerts on the third distinct invocation in the window.
           threshold: 2
           failingPeriods: {
             numberOfEvaluationPeriods: 1

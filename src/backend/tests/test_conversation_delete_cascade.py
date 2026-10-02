@@ -1,6 +1,7 @@
 """Deleting a conversation must also delete its persisted messages."""
 
 import asyncio
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -207,6 +208,7 @@ async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
 
 async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease_loss():
     old = {"id": "c1", "userId": "default-user", "title": "old", "_etag": "1"}
+    lock_token = str(uuid.uuid4())
     conversations = SimpleNamespace(
         read_item=AsyncMock(return_value=old),
         replace_item=AsyncMock(
@@ -219,7 +221,12 @@ async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease
     cosmos = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
     cosmos._conversations_container = conversations
     cosmos._messages_container = SimpleNamespace(
-        read_item=AsyncMock(side_effect=CosmosResourceNotFoundError(status_code=404))
+        read_item=AsyncMock(
+            side_effect=[
+                {"lockToken": lock_token, "expiresAt": time.time() + 60},
+                CosmosResourceNotFoundError(status_code=404),
+            ]
+        )
     )
 
     with pytest.raises(RuntimeError, match="Conversation lease is not owned"):
@@ -231,7 +238,7 @@ async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease
                 createdAt=datetime.now(UTC),
                 updatedAt=datetime.now(UTC),
             ),
-            lock_token=str(uuid.uuid4()),
+            lock_token=lock_token,
         )
 
     assert conversations.replace_item.await_args_list[1].kwargs["body"] == {

@@ -253,6 +253,7 @@ async def test_healthy_cosmos_persists_both_messages_within_the_budget(
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "Failed to persist" not in logged
     assert OPERATION_TIMEOUT_SIGNATURE not in logged
+    assert NETWORK_DENIAL_SIGNATURE not in logged
 
 
 def test_backend_and_hosted_agent_share_one_persistence_budget_policy(hosted) -> None:

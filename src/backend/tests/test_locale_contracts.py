@@ -171,8 +171,12 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.15)
 
     class SlowConversations:
+        read_count = 0
+
         async def read_item(self, *_args, **_kwargs):
-            await asyncio.sleep(0.1)
+            self.read_count += 1
+            if self.read_count == 1:
+                await asyncio.sleep(0.1)
             return {
                 "id": "synthetic-conversation",
                 "userId": "default-user",
@@ -183,8 +187,21 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
             }
 
     class BlackholedMessages:
+        lease = None
+
+        async def create_item(self, body):
+            self.lease = {**body, "_etag": "synthetic-etag"}
+
+        async def read_item(self, *_args, **_kwargs):
+            if self.lease is None:
+                raise cosmos_module.CosmosResourceNotFoundError(status_code=404)
+            return self.lease
+
         async def upsert_item(self, *_args, **_kwargs):
             await asyncio.sleep(3600)
+
+        async def delete_item(self, *_args, **_kwargs):
+            self.lease = None
 
     cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
     cosmos._conversations_container = SlowConversations()

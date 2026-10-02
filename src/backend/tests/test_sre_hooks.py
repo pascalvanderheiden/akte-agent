@@ -719,13 +719,16 @@ def test_postdeploy_preserves_roles_and_noninteractive_upload(
     assert cli_calls(log) == []
 
 
-def test_workflow_is_manual_and_deploy_only_does_not_configure_or_provision_sre() -> None:
+def test_workflow_keeps_safe_auto_deploy_and_manual_options() -> None:
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
     # PyYAML's YAML 1.1 parser treats the Actions "on" key as boolean True.
     trigger = workflow[True]
-    assert set(trigger) == {"workflow_dispatch"}
+    assert set(trigger) == {"push", "workflow_dispatch"}
+    assert trigger["push"]["branches"] == ["main"]
     inputs = trigger["workflow_dispatch"]["inputs"]
+    assert inputs["environment"]["default"] == "turbo-akte-agent"
     assert inputs["deploy_sre_agent"]["default"] is False
+    assert workflow["jobs"]["deploy"]["environment"] == "${{ inputs.environment || 'turbo-akte-agent' }}"
     steps = {step["name"]: step for step in workflow["jobs"]["deploy"]["steps"] if "name" in step}
     assert steps["Configure SRE Agent options"]["if"] == "inputs.provision"
     assert steps["Provision infrastructure"]["if"] == "inputs.provision"
@@ -735,6 +738,11 @@ def test_workflow_is_manual_and_deploy_only_does_not_configure_or_provision_sre(
     assert set(services) == {"agent-service", "kratos-agent", "obo-mcp-server", "web"}
     assert services["obo-mcp-server"]["condition"] == "${DEPLOY_OBO=true}"
     assert all(services[name]["docker"]["remoteBuild"] for name in ("agent-service", "kratos-agent", "obo-mcp-server"))
+    hosted_agent = services["kratos-agent"]
+    assert "config" not in hosted_agent
+    assert hosted_agent["container"]["resources"] == {"cpu": "1", "memory": "2Gi"}
+    assert hosted_agent["env"]["COSMOS_DB_ENDPOINT"] == "${AZURE_COSMOS_DB_ENDPOINT}"
+    assert hosted_agent["env"]["PERSONA_ASSETS_ROOT"] == "/app/use-cases"
 
 
 @pytest.mark.parametrize("location, name", [("", ""), ("swedencentral", "sre-example")])
