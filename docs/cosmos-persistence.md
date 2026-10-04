@@ -51,6 +51,11 @@ unclassified. `tests/test_hosted_agent_persistence_budget.py` proves this at the
 hosted-agent invocation entry point against a faked network denial and a
 healthy fake.
 
+If `/chat` continues after Cosmos lease acquisition fails, it marks the hosted
+invocation as persistence-disabled. The backend and hosted agent then skip
+message and session-mapping writes for that run instead of writing without a
+cross-replica lease.
+
 A timeout logs `Cosmos persistence operation timed out` and raises, preserving
 the existing behaviour at each call site. A timeout says only that the
 operation exceeded its time budget; it does not distinguish an unreachable
@@ -64,9 +69,114 @@ whose legitimate duration scales with the conversation, not a per-turn write.
 
 `infra/modules/app-insights.bicep` defines the
 `*-hosted-agent-cosmos-persistence` scheduled query rule (severity 2, 15-minute
-window, fires above two occurrences). It searches **both** `traces` and
+window, fires above two distinct invocation IDs). It searches **both** `traces` and
 `exceptions`: a warning logged with `exc_info` lands in `exceptions`, which is
 why the original traces-only query missed the 403 rows in #120. Keep the
 signature list in that query synchronized with the constants in
 `cosmos_service.py` and the persistence warnings in `src/hosted-agent/main.py`;
 `infra/tests/test_foundry_dependencies.py` checks that they match.
+
+The query deduplicates by `operation_Id` before counting. A failed invocation
+can emit a classified denial plus user- and assistant-message warnings, and
+each warning can appear in both telemetry tables; counting raw rows could
+therefore alert on one invocation. `GreaterThan 2` means three distinct
+invocations in the 15-minute window, avoiding an alert for a single transient
+while retaining the existing 5-minute evaluation frequency. The alert covers
+all persistence failure signatures, so inspect the classified signature to
+distinguish network denial from RBAC, unclassified 403, or timeout.
+
+## Recognition and verification runbook
+
+### Recognize a network denial
+
+Use the exact signature rather than treating every 403 as a firewall fault.
+Search both telemetry tables and group by invocation so duplicate rows do not
+inflate the count:
+
+```kusto
+union
+  (traces | project timestamp, operation_Id, signal=message),
+  (exceptions | project timestamp, operation_Id,
+     signal=strcat(outerMessage, " ", innermostMessage, " ", tostring(customDimensions)))
+| where timestamp between (datetime(<start-UTC>) .. datetime(<end-UTC>))
+| where signal contains "Cosmos persistence denied by network rules (firewall)"
+| summarize firstSeen=min(timestamp), lastSeen=max(timestamp) by operation_Id
+| order by firstSeen desc
+```
+
+Compare with `Cosmos persistence denied by RBAC role assignment` and
+`Cosmos persistence denied (unclassified 403)` to separate network, identity,
+and unknown 403s. An empty result is evidence of no classified network denial
+only when the interval contains representative traffic and telemetry ingestion
+is confirmed.
+
+### Verify after deployment
+
+1. The existing deploy workflow is the only deployment path used for this
+   verification. Its automatic entry point deploys to `turbo-akte-agent`; do
+   not provision another environment or change Cosmos network access.
+2. Compare the deployed hosted-agent `source_revision` (from its warmup
+   response) with the merged `main` revision:
+
+   ```bash
+   git fetch origin main
+   DEPLOYED_SOURCE_REVISION="<source_revision from the warmup response>"
+   test "$DEPLOYED_SOURCE_REVISION" = "$(git rev-parse origin/main)"
+   ```
+
+3. The post-deploy e2e `03-chat` check asserts that the Container App backend
+   persists both messages and observes no firewall-denial telemetry. Its
+   healthy private-path round trip must fail if either message is missing.
+   API-only mode remains available with `SKIP_BROWSER=1`. This check exercises
+   the backend path; it does not prove that Foundry-hosted-agent compute can
+   reach Cosmos. Count the smoke as Cosmos evidence only after confirming the
+   backend startup log contains `Cosmos DB initialized` and does not contain
+   the SQLite-fallback warning, and confirming from the running backend
+   container that the hostname in `COSMOS_DB_ENDPOINT` resolves to the Cosmos
+   private endpoint. Without both checks, report the result as an application
+   smoke only; startup can fall back to SQLite after a failed reachability probe.
+4. Run the API-only
+   `14-hosted-agent-persistence.spec.ts` smoke to invoke Foundry directly and
+   verify the hosted agent's own user and assistant writes through conversation
+   history; `/api/agent/chat` is deliberately not used because its backend writes
+   would mask missing hosted-agent writes. The check reports the hosted Cosmos
+   private path as blocked/skipped for local fallback, a network denial, or a
+   blackholed preflight. When the hosted path reports Cosmos available, missing
+   either message fails the smoke. Live hosted-agent Cosmos persistence remains
+   unverified until this check completes with both messages present. Hosted-agent
+   unit coverage exercises both outcomes at the invocation seam:
+   `test_network_denied_invocation_is_blocked_within_one_persistence_budget`
+   proves a direct invocation reports a simulated private-path denial as blocked
+   within the shared budget, while
+   `test_healthy_cosmos_persists_both_messages_within_the_budget` verifies both
+   writes against a fake container. These are not live persistence evidence.
+   Foundry-hosted-agent networking to the private endpoint is a known platform
+   limitation: report an unreachable endpoint as unverified/blocked, not as a
+   successful persistence check. If Cosmos is reachable from hosted-agent
+   compute, its verification must fail when either the user or assistant write
+   is missing.
+5. Confirm the App Insights scheduled-query alert is enabled and its query is
+   available. The compiled-template test validates the 15-minute window,
+   three-distinct-invocation threshold, both telemetry tables, and the
+   network-denial signature. Keep the Cosmos account's public network access
+   disabled.
+
+### Acceptance evidence for #138
+
+| #138 acceptance criterion | Evidence |
+|---|---|
+| Deployed runtime includes the current persistence budget and network classification | Hosted-agent `source_revision` warmup check against merged `main`; shared-budget and classification tests |
+| A controlled network denial stays within the shared budget | `uv run pytest tests/test_hosted_agent_persistence_budget.py` |
+| Classified denials are queryable and repeated failures alert | Exact-signature KQL above; `ApplicationInsightsAlertTests` checks the enabled rule's query, window, and threshold |
+| Normal backend persistence works when the private path is available | Post-deploy `03-chat` verifies user and assistant messages only when backend Cosmos initialization and private-endpoint DNS resolution are confirmed |
+| Hosted-agent persistence works when its private path is available | Direct `14-hosted-agent-persistence.spec.ts` smoke; blocked path is reported as skipped, while a reachable path must expose both hosted-agent writes |
+
+### Separate platform limitation
+
+Foundry-hosted-agent compute still has no supported private-network path to the
+Cosmos private endpoint. Track that as a separate platform-capability follow-up;
+this verification does not change the local-only decision in
+[ADR 0002](adr/0002-hosted-agent-local-only-skills.md) or the shared persistence
+budget in [ADR 0003](adr/0003-interactive-request-latency-budget.md). An
+unreachable hosted-agent path may fall back to local SQLite or log a classified
+network denial, so it must never be recorded as a successful Cosmos round trip.

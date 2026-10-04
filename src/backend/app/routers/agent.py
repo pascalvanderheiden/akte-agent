@@ -34,7 +34,11 @@ from app.personas import (
     require_persona_match,
     resolve_use_case,
 )
-from app.services.cosmos_service import cosmos_persistence_budget
+from app.services.cosmos_service import (
+    ConversationLeaseContentionError,
+    cosmos_persistence_budget,
+    current_cosmos_persistence_budget_s,
+)
 from app.services.follow_up_service import generate_follow_ups
 from app.services.model_routing import ModelRouting
 
@@ -100,7 +104,7 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
 async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
-    conversation = await cosmos.get_conversation(body.conversationId, "default-user")
+    conversation = await cosmos.get_conversation(body.conversationId, "default-user", raise_on_error=True)
     if conversation:
         require_identified_history(conversation.useCase)
         require_not_retired(conversation.useCase)
@@ -115,18 +119,45 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    run_lock = await cosmos.acquire_conversation_lock(body.conversationId)
+    try:
+        run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
+    except ConversationLeaseContentionError as exc:
+        raise HTTPException(
+            status_code=409, detail="Conversation is busy; retry after the active turn completes"
+        ) from exc
+    lease_failure_kwargs = {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
+    conversation_revalidated = False
     try:
         if conversation:
-            conversation = await cosmos.get_conversation(body.conversationId, "default-user")
-            if not conversation:
+            try:
+                revalidated_conversation = await cosmos.get_conversation(
+                    body.conversationId, "default-user", raise_on_error=True
+                )
+            except Exception:
+                logger.warning(
+                    "Conversation revalidation unavailable; continuing with the successful preflight result",
+                    exc_info=True,
+                )
+            else:
+                conversation = revalidated_conversation
+                conversation_revalidated = True
+            if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation not found")
             if not request_selection:
                 model_selection = conversation.modelSelection
-        if conversation and request_selection and conversation.modelSelection != model_selection:
+        if (
+            conversation
+            and conversation_revalidated
+            and request_selection
+            and conversation.modelSelection != model_selection
+            and not run_lock.lease_acquisition_failed
+        ):
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
-            await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            try:
+                await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            except Exception:
+                logger.warning("Failed to persist model selection update (non-fatal)", exc_info=True)
     except BaseException:
         await cosmos.release_conversation_lock(body.conversationId, run_lock)
         raise
@@ -167,7 +198,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist user message to Cosmos (non-fatal)",
@@ -221,6 +252,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
                 model_selection=model_selection,
+                persistence_allowed=not run_lock.lease_acquisition_failed,
+                persistence_budget_remaining_s=current_cosmos_persistence_budget_s(),
+                preflight_conversation_use_case=conversation.useCase if conversation else None,
+                preflight_conversation_checked=True,
             ):
                 event_name = event_dict.get("event")
                 event_data = event_dict.get("data", {})
@@ -337,7 +372,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 logger.info("Gateway session for conversation=%s: %s", body.conversationId, gateway_session_id)
                 try:
                     await cosmos.upsert_session_mapping(
-                        body.conversationId, gateway_session_id, lock_token=run_lock.lease_token
+                        body.conversationId,
+                        gateway_session_id,
+                        lock_token=run_lock.lease_token,
+                        **lease_failure_kwargs,
                     )
                 except Exception:
                     logger.warning("Failed to persist gateway session mapping (non-fatal)", exc_info=True)
@@ -370,7 +408,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist assistant message to Cosmos (non-fatal)",

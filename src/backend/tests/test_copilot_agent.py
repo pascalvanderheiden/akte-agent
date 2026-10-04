@@ -117,6 +117,41 @@ async def test_copilot_agent_run_streams_content(copilot_agent):
 
 
 @pytest.mark.asyncio
+async def test_degraded_invocation_does_not_persist_new_session_mapping(copilot_agent, monkeypatch):
+    session = SimpleNamespace(session_id="synthetic-session")
+    copilot_agent._client = SimpleNamespace(create_session=AsyncMock(return_value=session))
+    copilot_agent._cosmos_service = SimpleNamespace(
+        get_session_mapping=AsyncMock(return_value=None),
+        upsert_session_mapping=AsyncMock(),
+    )
+    monkeypatch.setattr(copilot_agent, "_build_session_config", lambda *_args, **_kwargs: {})
+
+    await copilot_agent._get_or_create_session("synthetic-conversation", persist_session_mapping=False)
+
+    copilot_agent._cosmos_service.get_session_mapping.assert_awaited_once_with("synthetic-conversation")
+    copilot_agent._cosmos_service.upsert_session_mapping.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_degraded_invocation_does_not_delete_session_mapping_on_sdk_error(copilot_agent, monkeypatch):
+    session = SimpleNamespace(on=MagicMock(), send=AsyncMock(side_effect=RuntimeError("synthetic SDK failure")))
+    monkeypatch.setattr(copilot_agent, "_get_or_create_session", AsyncMock(return_value=session))
+    copilot_agent._cosmos_service = SimpleNamespace(delete_session_mapping=AsyncMock())
+
+    events = [
+        event
+        async for event in copilot_agent.run(
+            message="Hello",
+            conversation_id="synthetic-conversation",
+            persist_session_mapping=False,
+        )
+    ]
+
+    assert any(isinstance(event, ErrorEvent) for event in events)
+    copilot_agent._cosmos_service.delete_session_mapping.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     mock_session = AsyncMock()
     mock_client = AsyncMock()

@@ -922,7 +922,13 @@ class CopilotAgent:
         session = self._sessions.get(conversation_id)
         return getattr(session, "session_id", None) if session else None
 
-    async def _get_or_create_session(self, conversation_id: str, sdk_session_id: str | None = None) -> object:
+    async def _get_or_create_session(
+        self,
+        conversation_id: str,
+        sdk_session_id: str | None = None,
+        *,
+        persist_session_mapping: bool = True,
+    ) -> object:
         """Return an existing session or create/resume one for this conversation.
 
         Identity-bearing (OBO) sessions — those carrying a per-user ``Authorization``
@@ -1027,7 +1033,12 @@ class CopilotAgent:
                 # Persist the new SDK session ID to Cosmos DB — but ONLY for non-identity
                 # sessions. Identity (OBO) sessions are never resumed, so persisting one
                 # would risk a later token-less turn resuming a token-bearing session.
-                if not has_identity and self._cosmos_service and hasattr(session, "session_id"):
+                if (
+                    persist_session_mapping
+                    and not has_identity
+                    and self._cosmos_service
+                    and hasattr(session, "session_id")
+                ):
                     await self._cosmos_service.upsert_session_mapping(conversation_id, session.session_id)
 
                 logger.info(
@@ -1055,6 +1066,7 @@ class CopilotAgent:
         locale: Locale | None = None,
         model_selection: str | None = None,
         invocation_telemetry: InvocationTelemetry | None = None,
+        persist_session_mapping: bool = True,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events.
 
@@ -1130,7 +1142,11 @@ class CopilotAgent:
             localized_message = localize_turn(message, locale)
 
             try:
-                session = await self._get_or_create_session(conversation_id, sdk_session_id=sdk_session_id)
+                session = await self._get_or_create_session(
+                    conversation_id,
+                    sdk_session_id=sdk_session_id,
+                    persist_session_mapping=persist_session_mapping,
+                )
                 self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
@@ -1715,7 +1731,7 @@ class CopilotAgent:
                 # clears the context token estimates, which would otherwise attribute
                 # the failed session's history to the replacement session.
                 await self._discard_session(conversation_id)
-                if self._cosmos_service:
+                if persist_session_mapping and self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
                 self._queues.pop(conversation_id, None)
