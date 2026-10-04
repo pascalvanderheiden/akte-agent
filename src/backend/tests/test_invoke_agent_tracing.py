@@ -1,5 +1,6 @@
 """Tracing contracts for hosted-agent invocation phases and proxy propagation."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -47,13 +48,18 @@ async def test_proxy_propagates_w3c_trace_context_to_upstream():
     proxy.claim_warm_session = AsyncMock(return_value=None)
     tracer = TracerProvider().get_tracer(__name__)
 
-    with tracer.start_as_current_span("POST /api/agent/chat") as parent:
-        expected_trace_id = parent.get_span_context().trace_id
-        async for _event in proxy.invoke("hello", "synthetic-conversation"):
-            pass
+    with tracer.start_as_current_span("POST /api/agent/chat", kind=trace.SpanKind.SERVER) as request_span:
+        with tracer.start_as_current_span("request.admission") as admission_span:
+            with tracer.start_as_current_span("hosted_agent.invoke", kind=trace.SpanKind.CLIENT) as invoke_span:
+                async for _event in proxy.invoke("hello", "synthetic-conversation"):
+                    pass
 
     traceparent = captured["traceparent"]
-    assert int(traceparent.split("-")[1], 16) == expected_trace_id
+    _, trace_id, parent_span_id, _ = traceparent.split("-")
+    assert admission_span.parent.span_id == request_span.get_span_context().span_id
+    assert invoke_span.parent.span_id == admission_span.get_span_context().span_id
+    assert int(trace_id, 16) == request_span.get_span_context().trace_id
+    assert int(parent_span_id, 16) == invoke_span.get_span_context().span_id
 
 
 @pytest.mark.asyncio
@@ -111,6 +117,18 @@ async def test_invoke_agent_phase_spans_share_parent_and_reconcile_duration(monk
     assert invoke_span.parent.span_id == server_span.context.span_id
     assert all(span.context.trace_id == server_span.context.trace_id for span in spans)
 
+    expected_parents = {
+        "request.admission": server_span.context.span_id,
+        "session_skill.prepare": invoke_span.context.span_id,
+        "gen_ai.chat": invoke_span.context.span_id,
+        "execute_tool web_search": invoke_span.context.span_id,
+        "response.stream_finalize": invoke_span.context.span_id,
+    }
+    for phase_name, parent_span_id in expected_parents.items():
+        phase_spans = [span for span in spans if span.name == phase_name]
+        assert phase_spans
+        assert all(span.parent and span.parent.span_id == parent_span_id for span in phase_spans)
+
     invoke_children = [span for span in spans if span.parent and span.parent.span_id == invoke_span.context.span_id]
     parent_duration_ns = invoke_span.end_time - invoke_span.start_time
     child_duration_ns = sum(span.end_time - span.start_time for span in invoke_children)
@@ -118,4 +136,41 @@ async def test_invoke_agent_phase_spans_share_parent_and_reconcile_duration(monk
     assert unattributed_remainder_ns >= 0
     assert child_duration_ns + unattributed_remainder_ns == parent_duration_ns
 
+    provider.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_active_model_span_ends_with_error_when_run_is_cancelled(monkeypatch):
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer(__name__)
+    monkeypatch.setattr("app.services.copilot_agent.tracer", tracer)
+
+    callback = None
+    model_started = asyncio.Event()
+
+    def on(handler):
+        nonlocal callback
+        callback = handler
+
+    async def send(_message, **_kwargs):
+        callback(SimpleNamespace(type=SimpleNamespace(value="assistant.turn_start"), data=SimpleNamespace()))
+        model_started.set()
+
+    session = SimpleNamespace(on=on, send=send)
+    agent = CopilotAgent(Settings(foundry_endpoint="https://test.services.ai.azure.com"))
+    monkeypatch.setattr(agent, "_get_or_create_session", AsyncMock(return_value=session))
+
+    run = agent.run("hello", "cancelled-conversation", use_case="akte-agent")
+    task = asyncio.create_task(anext(run))
+    await model_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    spans = exporter.get_finished_spans()
+    model_span = next(span for span in spans if span.name == "gen_ai.chat")
+    assert model_span.status.status_code == trace.StatusCode.ERROR
+    assert model_span.attributes["error.type"] == "run_terminated"
     provider.shutdown()

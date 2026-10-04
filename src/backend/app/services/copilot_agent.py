@@ -293,6 +293,7 @@ class CopilotAgent:
         self._queues: dict[str, asyncio.Queue] = {}
         self._tool_counters: dict[str, int] = {}
         self._registered_handlers: set[str] = set()
+        self._active_model_spans: dict[str, trace.Span] = {}
         self._credential: ManagedIdentityCredential | None = None
         self._token_provider = None
         self._usage: dict[str, dict] = {}
@@ -1173,6 +1174,14 @@ class CopilotAgent:
                     self._span_contexts: dict[str, otel_context.Context] = {}
                 self._span_contexts[conversation_id] = trace.set_span_in_context(span)
 
+                def finish_model_span(error: str | None = None) -> None:
+                    model_span = self._active_model_spans.pop(conversation_id, None)
+                    if model_span is not None:
+                        if error:
+                            model_span.set_attribute("error.type", error)
+                            model_span.set_status(trace.StatusCode.ERROR, error)
+                        model_span.end()
+
                 # Register the event handler ONCE per session, not per run() call.
                 # The handler routes events to whatever queue is active for that conversation.
                 if conversation_id not in self._registered_handlers:
@@ -1184,20 +1193,9 @@ class CopilotAgent:
                     _subagent_spans: dict[str, trace.Span] = {}
                     _subagent_names: dict[str, str] = {}  # subagent tool_call_id -> agent name
                     _subagent_starts: dict[str, tuple[float, str]] = {}  # tool_call_id -> (start, model)
-                    _model_span: trace.Span | None = None
-
-                    def finish_model_span(error: str | None = None) -> None:
-                        nonlocal _model_span
-                        if _model_span is not None:
-                            if error:
-                                _model_span.set_attribute("error.type", error)
-                                _model_span.set_status(trace.StatusCode.ERROR, error)
-                            _model_span.end()
-                            _model_span = None
 
                     def on_event(event) -> None:
                         """Translate SDK events into our SSE event types."""
-                        nonlocal _model_span
                         q = self._queues.get(cid)
                         if q is None:
                             return  # no active run for this conversation
@@ -1230,7 +1228,7 @@ class CopilotAgent:
                                 self._model_response_start[cid] = time.monotonic()
                                 finish_model_span()
                                 model = self._conversation_plan_model(cid)
-                                _model_span = tracer.start_span(
+                                self._active_model_spans[cid] = tracer.start_span(
                                     "gen_ai.chat",
                                     context=self._span_contexts.get(cid),
                                     attributes={
@@ -1782,6 +1780,7 @@ class CopilotAgent:
                 if persist_session_mapping and self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
+                finish_model_span("run_terminated")
                 self._queues.pop(conversation_id, None)
 
     def get_run_stats(self, conversation_id: str) -> dict:
