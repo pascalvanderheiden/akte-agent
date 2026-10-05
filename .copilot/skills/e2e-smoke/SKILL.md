@@ -33,6 +33,7 @@ load per use-case, chat round-trips, evals API, and traces API.
 | `06-model-picker.spec.ts` | browser | Model catalogue loads, picker disables while streaming, selection persists, selected model shown on assistant messages |
 | `07-regression.spec.ts` | pre-existing core | `/api/use-cases` schema + all curated use-cases present, `/api/settings` Foundry config, conversation CRUD round-trip, `/api/admin/skills` catalogue + detail, `/api/admin/system-prompt` content. Guards against regressions in surfaces the evals/tracing branch did NOT touch |
 | `08-ux.spec.ts` | browser, interactive | **The UX itself.** Persona selector lists the curated use-cases & switches value; landing textarea + Send button starts a chat and the assistant responds; Skills admin opens; every admin tab (Skills / System Prompt / APM / Evals / Traces) renders its header; "Generate Scenarios" modal opens + closes; Traces "Refresh" renders ops/summary/empty-state |
+| `14-hosted-agent-persistence.spec.ts` | Foundry invocation API + conversation history | Directly invokes the hosted agent, then verifies its own user/assistant writes; an unavailable hosted Cosmos path is reported as blocked/skipped |
 
 ## Inputs (env vars)
 
@@ -44,6 +45,9 @@ load per use-case, chat round-trips, evals API, and traces API.
 | `CHAT_TIMEOUT_MS` | `60000` | Chat round-trip ceiling |
 | `TRACES_LOOKBACK_HOURS` | `6` | App Insights query window |
 | `KRATOS_APP_INSIGHTS_ID` | unset | App Insights resource ID for the Cosmos firewall-denial check; required in CI, otherwise telemetry check explicitly skipped |
+| `FOUNDRY_PROJECT_ENDPOINT` | from `azd env` | Foundry project endpoint used for direct hosted-agent persistence verification |
+| `FOUNDRY_AGENT_NAME` | `kratos-agent` | Hosted-agent name for direct invocation |
+| `KRATOS_HOSTED_AGENT_INVOCATIONS_ENDPOINT` | derived from project endpoint and agent name | Optional complete invocation URL override |
 | `SKIP_BROWSER` | unset | Set to `1` to skip browser tests (CI / no-chromium hosts) |
 
 **No deployment endpoints are hardcoded in this repo — it is public.** `run.sh`
@@ -56,6 +60,11 @@ The telemetry check uses `az monitor app-insights query` (Azure CLI
 The auto-deploy smoke job supplies both the login and resource ID. Without
 `KRATOS_APP_INSIGHTS_ID`, local runs still assert persisted history and report
 an explicit telemetry skip; CI fails instead of silently skipping the gate.
+The hosted-agent persistence spec obtains a Foundry access token from the Azure
+CLI session. It reports an unavailable Cosmos private path as blocked/skipped;
+when Cosmos is reachable, either missing message fails the check. It invokes
+Foundry directly rather than using `/api/agent/chat`, so backend message writes
+cannot satisfy the assertion.
 
 `KRATOS_USE_CASES` defaults to the deployment's **curated** personas (those with
 `curated: true`), because the frontend persona selector only exposes those —

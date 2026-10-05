@@ -39,12 +39,14 @@ from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, Us
 from app.observability import (
     input_token_source_histogram,
     operation_duration_histogram,
+    safe_use_case_id,
+    set_invocation_span_attributes,
     token_usage_histogram,
     tool_call_count_histogram,
     tool_duration_histogram,
 )
 from app.services.model_routing import ModelRole, ModelRouting
-from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
+from app.services.skill_tools import ALL_TOOLS, _ctx_eval_run_id, _ctx_use_case
 
 if TYPE_CHECKING:
     from app.services.cosmos_service import CosmosService
@@ -69,6 +71,8 @@ class InvocationTelemetry:
     pre_handler_remainder_ms: int | None = None
     in_handler_duration_ms: int | None = None
     post_handler_remainder_ms: int | None = None
+    cold_start: bool = False
+    pre_handler_ms: int | None = None
     _span: trace.Span | None = field(default=None, init=False, repr=False)
     _span_attached_at: float | None = field(default=None, init=False, repr=False)
 
@@ -293,6 +297,7 @@ class CopilotAgent:
         self._queues: dict[str, asyncio.Queue] = {}
         self._tool_counters: dict[str, int] = {}
         self._registered_handlers: set[str] = set()
+        self._active_model_spans: dict[str, trace.Span] = {}
         self._credential: ManagedIdentityCredential | None = None
         self._token_provider = None
         self._usage: dict[str, dict] = {}
@@ -721,11 +726,9 @@ class CopilotAgent:
         if not self._use_azure_provider:
             span_attrs["gen_ai.system"] = "github"
             span_attrs["gen_ai.provider.name"] = "github"
-            span_attrs["server.address"] = "api.githubcopilot.com"
         else:
             span_attrs["gen_ai.system"] = "openai"
             span_attrs["gen_ai.provider.name"] = "azure.ai.openai"
-            span_attrs["server.address"] = self.settings.llm_gateway_base_url or self.settings.foundry_endpoint
         with tracer.start_as_current_span(
             "create_agent kratos-agent",
             kind=trace.SpanKind.CLIENT,
@@ -922,7 +925,13 @@ class CopilotAgent:
         session = self._sessions.get(conversation_id)
         return getattr(session, "session_id", None) if session else None
 
-    async def _get_or_create_session(self, conversation_id: str, sdk_session_id: str | None = None) -> object:
+    async def _get_or_create_session(
+        self,
+        conversation_id: str,
+        sdk_session_id: str | None = None,
+        *,
+        persist_session_mapping: bool = True,
+    ) -> object:
         """Return an existing session or create/resume one for this conversation.
 
         Identity-bearing (OBO) sessions — those carrying a per-user ``Authorization``
@@ -1027,7 +1036,12 @@ class CopilotAgent:
                 # Persist the new SDK session ID to Cosmos DB — but ONLY for non-identity
                 # sessions. Identity (OBO) sessions are never resumed, so persisting one
                 # would risk a later token-less turn resuming a token-bearing session.
-                if not has_identity and self._cosmos_service and hasattr(session, "session_id"):
+                if (
+                    persist_session_mapping
+                    and not has_identity
+                    and self._cosmos_service
+                    and hasattr(session, "session_id")
+                ):
                     await self._cosmos_service.upsert_session_mapping(conversation_id, session.session_id)
 
                 logger.info(
@@ -1055,6 +1069,7 @@ class CopilotAgent:
         locale: Locale | None = None,
         model_selection: str | None = None,
         invocation_telemetry: InvocationTelemetry | None = None,
+        persist_session_mapping: bool = True,
     ) -> AsyncGenerator[ThoughtEvent | ToolCallEvent | ContentEvent | ErrorEvent | UserInputRequestEvent, None]:
         """Send a message and stream SDK events as typed SSE events.
 
@@ -1063,34 +1078,27 @@ class CopilotAgent:
         """
         from app.personas import RETIRED_PERSONAS
 
-        selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
-        if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
-            yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
-            return
-        try:
-            self._conversation_model_selections[conversation_id] = self._routing.validate_selection(model_selection)
-        except ValueError as exc:
-            yield ErrorEvent(message=str(exc), code="INVALID_MODEL_SELECTION")
-            return
+        with tracer.start_as_current_span(
+            "request.admission",
+            attributes={"kratos.phase": "request_admission"},
+        ):
+            selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
+            if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
+                yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
+                return
+            try:
+                self._conversation_model_selections[conversation_id] = self._routing.validate_selection(model_selection)
+            except ValueError as exc:
+                yield ErrorEvent(message=str(exc), code="INVALID_MODEL_SELECTION")
+                return
 
         # Propagate kratos context into tool spans via ContextVars
-        _ctx_conversation_id.set(conversation_id)
         if use_case:
             _ctx_use_case.set(use_case)
         if eval_run_id:
             _ctx_eval_run_id.set(eval_run_id)
 
-        _content_recording = (
-            os.environ.get("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", "").lower() == "true"
-            or os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "").lower() == "true"
-        )
-
         _github = not self._use_azure_provider
-        _server_addr = (
-            "api.githubcopilot.com"
-            if _github
-            else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
-        )
         _invoke_span_attrs: dict = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.system": "github" if _github else "openai",
@@ -1101,12 +1109,8 @@ class CopilotAgent:
             "gen_ai.agents.id": "kratos-agent",
             "gen_ai.agents.name": "kratos-agent",
             "gen_ai.agent.version": "0.1.0",
-            "gen_ai.conversation.id": conversation_id,
-            "kratos.conversation_id": conversation_id,
-            "server.address": _server_addr,
         }
         if invocation_telemetry:
-            _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
             _invoke_span_attrs["kratos.request_stage"] = "in-handler"
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
@@ -1115,8 +1119,12 @@ class CopilotAgent:
         ) as span:
             if invocation_telemetry:
                 invocation_telemetry.attach_span(span)
-            if use_case:
-                span.set_attribute("kratos.use_case", str(use_case))
+            set_invocation_span_attributes(
+                span,
+                use_case=use_case,
+                cold_start=invocation_telemetry.cold_start if invocation_telemetry else False,
+                pre_handler_ms=invocation_telemetry.pre_handler_ms if invocation_telemetry else None,
+            )
             if eval_run_id:
                 span.set_attribute("kratos.eval_run_id", str(eval_run_id))
             queue: asyncio.Queue = asyncio.Queue()
@@ -1129,9 +1137,27 @@ class CopilotAgent:
             self._response_parts[conversation_id] = []  # reset for this turn
             localized_message = localize_turn(message, locale)
 
+            def finish_model_span(error: str | None = None) -> None:
+                model_span = self._active_model_spans.pop(conversation_id, None)
+                if model_span is not None:
+                    if error:
+                        model_span.set_attribute("error.type", error)
+                        model_span.set_status(trace.StatusCode.ERROR, error)
+                    model_span.end()
+
             try:
-                session = await self._get_or_create_session(conversation_id, sdk_session_id=sdk_session_id)
-                self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
+                with tracer.start_as_current_span(
+                    "session_skill.prepare",
+                    attributes={
+                        "kratos.phase": "session_skill_preparation",
+                    },
+                ):
+                    session = await self._get_or_create_session(
+                        conversation_id,
+                        sdk_session_id=sdk_session_id,
+                        persist_session_mapping=persist_session_mapping,
+                    )
+                    self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
 
@@ -1187,6 +1213,16 @@ class CopilotAgent:
                             elif etype == "assistant.turn_start":
                                 # Model started processing — mark for latency calc
                                 self._model_response_start[cid] = time.monotonic()
+                                finish_model_span()
+                                model = self._conversation_plan_model(cid)
+                                self._active_model_spans[cid] = tracer.start_span(
+                                    "gen_ai.chat",
+                                    context=self._span_contexts.get(cid),
+                                    attributes={
+                                        "gen_ai.operation.name": "chat",
+                                        "gen_ai.request.model": model,
+                                    },
+                                )
 
                             elif etype == "assistant.message":
                                 # End-of-turn complete message — capture content as fallback
@@ -1194,6 +1230,7 @@ class CopilotAgent:
                                 msg_content = getattr(event.data, "content", None) or ""
                                 if msg_content and not self._response_parts.get(cid):
                                     self._response_parts.setdefault(cid, []).append(msg_content)
+                                finish_model_span()
 
                             elif etype in ("assistant.usage", "session.usage_info"):
                                 # Capture token usage from the model
@@ -1312,7 +1349,6 @@ class CopilotAgent:
                                             "gen_ai.operation.name": "invoke_agent",
                                             "gen_ai.agent.name": agent_name,
                                             "gen_ai.request.model": model,
-                                            "kratos.conversation_id": cid,
                                         },
                                     )
                                 else:
@@ -1361,6 +1397,7 @@ class CopilotAgent:
                                 )
 
                             elif etype == "tool.execution_start":
+                                finish_model_span()
                                 tool_name = (
                                     getattr(event.data, "tool_name", None)
                                     or getattr(event.data, "name", None)
@@ -1406,12 +1443,10 @@ class CopilotAgent:
                                         "gen_ai.tool.name": tool_name,
                                         "gen_ai.tool.call.id": str(tool_call_id),
                                         "gen_ai.tool.type": "function",
-                                        "gen_ai.tool.call.arguments": raw_input_str[:2000],
-                                        "kratos.conversation_id": cid,
                                     },
                                 )
-                                if use_case:
-                                    tool_span.set_attribute("kratos.use_case", str(use_case))
+                                if safe_id := safe_use_case_id(use_case):
+                                    tool_span.set_attribute("kratos.use_case", safe_id)
                                 if eval_run_id:
                                     tool_span.set_attribute("kratos.eval_run_id", str(eval_run_id))
                                 _tool_spans[tool_name] = tool_span
@@ -1496,16 +1531,12 @@ class CopilotAgent:
                                 if tool_span is not None:
                                     # Remove from stack by identity
                                     _tool_span_stack[:] = [(n, s) for n, s in _tool_span_stack if s is not tool_span]
-                                    output_str = str(
-                                        getattr(event.data, "output", "") or getattr(event.data, "result", "")
-                                    )[:2000]
-                                    tool_span.set_attribute("gen_ai.tool.call.result", output_str)
                                     if error:
                                         tool_span.set_attribute(
                                             "error.type",
                                             type(error).__name__ if not isinstance(error, str) else "tool_error",
                                         )
-                                        tool_span.set_status(trace.StatusCode.ERROR, str(error))
+                                        tool_span.set_status(trace.StatusCode.ERROR, "Tool execution failed")
                                     elif success is False:
                                         tool_span.set_attribute("error.type", "tool_execution_failed")
                                         tool_span.set_status(trace.StatusCode.ERROR, "Tool execution failed")
@@ -1535,6 +1566,7 @@ class CopilotAgent:
                                 )
 
                             elif etype == "session.idle":
+                                finish_model_span()
                                 # End any orphaned tool spans
                                 for _, orphan_span in _tool_span_stack:
                                     orphan_span.set_status(trace.StatusCode.OK)
@@ -1560,6 +1592,7 @@ class CopilotAgent:
                                 q.put_nowait(None)  # sentinel — stream is done
 
                             elif etype == "session.error":
+                                finish_model_span("session_error")
                                 # End any orphaned tool spans
                                 for _, orphan_span in _tool_span_stack:
                                     orphan_span.set_status(trace.StatusCode.ERROR, "Session error")
@@ -1608,11 +1641,18 @@ class CopilotAgent:
                 # eval_service._REQUEST_TIMEOUT — gives complex multi-tool scenarios
                 # (PDF generation, long triage chains) enough headroom under gateway
                 # throttle bursts where individual tool calls can stall 60-120s.
-                while True:
-                    item = await asyncio.wait_for(queue.get(), timeout=300.0)
-                    if item is None:
-                        break
-                    yield item
+                with tracer.start_as_current_span(
+                    "response.stream_finalize",
+                    context=self._span_contexts.get(conversation_id),
+                    attributes={
+                        "kratos.phase": "response_streaming_finalization",
+                    },
+                ):
+                    while True:
+                        item = await asyncio.wait_for(queue.get(), timeout=300.0)
+                        if item is None:
+                            break
+                        yield item
 
                 tool_call_count = self._tool_counters.get(conversation_id, 0)
                 # Enrich the span with usage and tool call counts
@@ -1631,30 +1671,6 @@ class CopilotAgent:
                 if ttft:
                     span.set_attribute("gen_ai.client.time_to_first_token_ms", int(ttft))
 
-                # Input/output/system content (opt-in, respects content recording env var)
-                if _content_recording:
-                    system_prompt = self._get_system_prompt(conversation_id)
-                    span.set_attribute(
-                        "gen_ai.system_instructions",
-                        json.dumps([{"type": "text", "content": system_prompt[:4000]}]),
-                    )
-                    span.set_attribute(
-                        "gen_ai.input.messages",
-                        json.dumps([{"role": "user", "parts": [{"type": "text", "content": message[:4000]}]}]),
-                    )
-                    full_response = "".join(self._response_parts.get(conversation_id, []))
-                    span.set_attribute(
-                        "gen_ai.output.messages",
-                        json.dumps(
-                            [
-                                {
-                                    "role": "assistant",
-                                    "parts": [{"type": "text", "content": full_response[:4000]}],
-                                    "finish_reason": "stop",
-                                }
-                            ]
-                        ),
-                    )
                 if tool_call_count == 0:
                     logger.warning(
                         "No tool events observed for conversation=%s prompt=%r",
@@ -1715,9 +1731,10 @@ class CopilotAgent:
                 # clears the context token estimates, which would otherwise attribute
                 # the failed session's history to the replacement session.
                 await self._discard_session(conversation_id)
-                if self._cosmos_service:
+                if persist_session_mapping and self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
+                finish_model_span("run_terminated")
                 self._queues.pop(conversation_id, None)
 
     def get_run_stats(self, conversation_id: str) -> dict:

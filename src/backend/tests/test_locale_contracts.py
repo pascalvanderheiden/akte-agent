@@ -58,7 +58,7 @@ def transport(monkeypatch, tmp_path):
     async def save_mapping(conversation, session, lock_token=None):
         mappings[conversation] = session
 
-    conversation_lock = SimpleNamespace(lease_token=None)
+    conversation_lock = SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
     cosmos = SimpleNamespace(
         get_conversation=AsyncMock(return_value=None),
         upsert_message=persist,
@@ -171,8 +171,12 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.15)
 
     class SlowConversations:
+        read_count = 0
+
         async def read_item(self, *_args, **_kwargs):
-            await asyncio.sleep(0.05)
+            self.read_count += 1
+            if self.read_count == 1:
+                await asyncio.sleep(0.1)
             return {
                 "id": "synthetic-conversation",
                 "userId": "default-user",
@@ -183,11 +187,15 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
             }
 
     class BlackholedMessages:
-        async def create_item(self, document):
-            self.lease = {**document, "_etag": "synthetic-lease"}
+        lease = None
+
+        async def create_item(self, body):
+            self.lease = {**body, "_etag": "synthetic-etag"}
             return self.lease
 
         async def read_item(self, *_args, **_kwargs):
+            if self.lease is None:
+                raise cosmos_module.CosmosResourceNotFoundError(status_code=404)
             return self.lease
 
         async def delete_item(self, *_args, **_kwargs):
@@ -223,6 +231,171 @@ def test_chat_shares_cosmos_budget_across_request_and_agent_task(transport, monk
     assert "Failed to persist user message to Cosmos (non-fatal)" in logged
     assert "Failed to persist assistant message to Cosmos (non-fatal)" in logged
     assert "unreachable" not in logged
+
+
+def test_hosted_preflight_consumes_the_backend_request_budget(transport):
+    class SlowMissingConversation:
+        async def read_item(self, *_args, **_kwargs):
+            await asyncio.sleep(0.01)
+            raise cosmos_module.CosmosResourceNotFoundError(status_code=404)
+
+    class NoLease:
+        async def read_item(self, *_args, **_kwargs):
+            raise cosmos_module.CosmosResourceNotFoundError(status_code=404)
+
+        async def upsert_item(self, _body):
+            return None
+
+    hosted_cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    hosted_cosmos._conversations_container = SlowMissingConversation()
+    hosted_cosmos._messages_container = NoLease()
+    transport.hosted._cosmos_service = hosted_cosmos
+    transport.strip_fields[0] = True
+    transport.client.app.state.cosmos_service.acquire_conversation_lock = AsyncMock(
+        return_value=SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
+    )
+    remaining_after_hosted_preflight = []
+
+    async def record_remaining_budget(*_args, **_kwargs):
+        remaining_after_hosted_preflight.append(cosmos_module.current_cosmos_persistence_budget_s())
+
+    transport.client.app.state.cosmos_service.upsert_message = record_remaining_budget
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-new-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Synthetic English reply" in response.text
+    assert transport.captured[0][1]["persistenceBudgetMs"] == 750
+    assert "<persistence_budget_ms>750</persistence_budget_ms>" in transport.captured[0][1]["input"]
+    assert len(remaining_after_hosted_preflight) == 2
+    assert remaining_after_hosted_preflight[0] == pytest.approx(0.75)
+    assert 0 <= remaining_after_hosted_preflight[1] < remaining_after_hosted_preflight[0]
+    assert all("persistence_budget_ms" not in message for message in transport.sent)
+
+
+@pytest.mark.parametrize("strip_fields", [False, True])
+def test_chat_uses_preflight_conversation_when_lease_exhausts_request_budget(transport, monkeypatch, strip_fields):
+    monkeypatch.setattr(cosmos_module, "_COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.05)
+    transport.strip_fields[0] = strip_fields
+
+    class HealthyConversations:
+        reads = 0
+
+        async def read_item(self, *_args, **_kwargs):
+            self.reads += 1
+            return {
+                "id": "synthetic-conversation",
+                "userId": "default-user",
+                "title": "Synthetic",
+                "useCase": "akte-agent",
+                "createdAt": "2026-09-29T00:00:00Z",
+                "updatedAt": "2026-09-29T00:00:00Z",
+            }
+
+    class BlackholedLease:
+        async def create_item(self, *_args, **_kwargs):
+            await asyncio.sleep(3600)
+
+    conversations = HealthyConversations()
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://example.documents.azure.com:443/"))
+    cosmos._conversations_container = conversations
+    cosmos._messages_container = BlackholedLease()
+    transport.client.app.state.cosmos_service = cosmos
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Synthetic English reply" in response.text
+    assert "event: done" in response.text
+    assert conversations.reads == 1
+    assert transport.captured[0][1]["persistenceAllowed"] is False
+    assert transport.captured[0][1]["preflightConversationChecked"] is True
+    assert transport.captured[0][1]["preflightConversationUseCase"] == "akte-agent"
+    assert "<persistence_allowed>false</persistence_allowed>" in transport.captured[0][1]["input"]
+    assert "<preflight_conversation_checked>true</preflight_conversation_checked>" in transport.captured[0][1]["input"]
+    assert transport.messages == []
+    assert all("persistence_allowed" not in message for message in transport.sent)
+    assert all("persistence_budget_ms" not in message for message in transport.sent)
+    assert all("preflight_conversation" not in message for message in transport.sent)
+
+
+def test_chat_returns_conflict_when_another_replica_owns_the_lease(transport):
+    transport.client.app.state.cosmos_service.acquire_conversation_lock = AsyncMock(
+        side_effect=cosmos_module.ConversationLeaseContentionError("lease busy")
+    )
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Conversation is busy; retry after the active turn completes"
+
+
+def test_chat_still_rejects_a_confirmed_deletion_after_lock_acquisition(transport):
+    existing = SimpleNamespace(useCase="akte-agent", modelSelection="auto")
+    transport.client.app.state.cosmos_service.get_conversation = AsyncMock(side_effect=[existing, None])
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "deleted-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Conversation not found"
+
+
+def test_chat_streams_requested_model_without_updating_unvalidated_snapshot(transport):
+    existing = SimpleNamespace(useCase="akte-agent", modelSelection="auto", updatedAt=None)
+    lock = SimpleNamespace(lease_token=None, lease_acquisition_failed=False)
+    cosmos = SimpleNamespace(
+        get_conversation=AsyncMock(side_effect=[existing, TimeoutError("budget exhausted")]),
+        acquire_conversation_lock=AsyncMock(return_value=lock),
+        release_conversation_lock=AsyncMock(),
+        upsert_conversation=AsyncMock(side_effect=TimeoutError("budget exhausted")),
+        upsert_message=AsyncMock(),
+        get_session_mapping=AsyncMock(return_value=None),
+        upsert_session_mapping=AsyncMock(),
+    )
+    transport.client.app.state.cosmos_service = cosmos
+
+    response = transport.client.post(
+        "/api/agent/chat",
+        json={
+            "conversationId": "synthetic-conversation",
+            "message": "Continue",
+            "useCase": "akte-agent",
+            "selectedModelId": "gpt-6-luna",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Synthetic English reply" in response.text
+    assert existing.modelSelection == "auto"
+    assert transport.captured[0][1]["selectedModelId"] == "gpt-6-luna"
+    cosmos.upsert_conversation.assert_not_awaited()
 
 
 @pytest.mark.parametrize("name", sorted(RETIRED_PERSONAS))

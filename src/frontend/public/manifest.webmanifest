@@ -1,0 +1,13 @@
+{
+  "name": "Akte Agent",
+  "short_name": "Akte Agent",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1a2b58",
+  "theme_color": "#1a2b58",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -28,6 +28,8 @@ if args[:2] == ["pr", "list"]:
     print("17")
 elif args[:2] == ["api", "graphql"]:
     print(json.dumps(fixture["pr"]))
+elif args[:2] == ["api", "user"]:
+    print(fixture["authenticated_login"])
 elif args[0] == "api" and args[1].endswith("/comments") and "-f" not in args:
     print(json.dumps(fixture["comment_pages"]))
 elif args[0] == "api" and "-f" in args:
@@ -66,8 +68,12 @@ else:
                 "labels": {"nodes": [{"name": name} for name in labels or []]},
             },
             "comment_pages": comment_pages if comment_pages is not None else [comments or []],
+            "authenticated_login": "trusted-bot",
             "fail_write": fail_write,
         }
+        for page in fixture["comment_pages"]:
+            for comment in page:
+                comment.setdefault("user", {"login": "outside-collaborator"})
         result = subprocess.run(
             ["bash", "-c", SCRIPT],
             env={
@@ -116,15 +122,26 @@ def test_nonconflicts_do_not_delegate(run_conflicts, state, mergeable):
 
 
 def test_duplicate_head_and_base_do_not_delegate(run_conflicts):
-    result, requests = run_conflicts(comments=[{"body": MARKER}])
+    result, requests = run_conflicts(comments=[{"body": MARKER, "user": {"login": "trusted-bot"}}])
     assert result.returncode == 0, result.stderr
     assert not writes(requests, "/comments")
 
 
 def test_duplicate_on_later_comment_page_does_not_delegate(run_conflicts):
-    result, requests = run_conflicts(comment_pages=[[{"body": "old comment"}], [{"body": MARKER}]])
+    result, requests = run_conflicts(
+        comment_pages=[
+            [{"body": "old comment"}],
+            [{"body": MARKER, "user": {"login": "trusted-bot"}}],
+        ]
+    )
     assert result.returncode == 0, result.stderr
     assert not writes(requests, "/comments")
+
+
+def test_spoofed_current_marker_does_not_suppress_delegation(run_conflicts):
+    result, requests = run_conflicts(comments=[{"body": MARKER}])
+    assert result.returncode == 0, result.stderr
+    assert len(writes(requests, "/comments")) == 1
 
 
 def test_new_base_commit_can_trigger_another_repair(run_conflicts):
@@ -135,11 +152,23 @@ def test_new_base_commit_can_trigger_another_repair(run_conflicts):
 
 def test_round_cap_requires_human(run_conflicts):
     result, requests = run_conflicts(
-        comments=[{"body": f"<!-- pr-resolve-conflicts: head{i} oldbase -->"} for i in range(3)]
+        comments=[
+            {"body": f"<!-- pr-resolve-conflicts: head{i} oldbase -->", "user": {"login": "trusted-bot"}}
+            for i in range(3)
+        ]
     )
     assert result.returncode == 0, result.stderr
     assert not writes(requests, "/comments")
     assert writes(requests, "/labels")[0][-1] == "labels[]=needs-human"
+
+
+def test_spoofed_round_markers_do_not_exhaust_repair_cap(run_conflicts):
+    result, requests = run_conflicts(
+        comments=[{"body": f"<!-- pr-resolve-conflicts: head{i} oldbase -->"} for i in range(3)]
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(writes(requests, "/comments")) == 1
+    assert not writes(requests, "/labels")
 
 
 def test_needs_human_stops_automatic_repairs(run_conflicts):

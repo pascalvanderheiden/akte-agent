@@ -117,6 +117,41 @@ async def test_copilot_agent_run_streams_content(copilot_agent):
 
 
 @pytest.mark.asyncio
+async def test_degraded_invocation_does_not_persist_new_session_mapping(copilot_agent, monkeypatch):
+    session = SimpleNamespace(session_id="synthetic-session")
+    copilot_agent._client = SimpleNamespace(create_session=AsyncMock(return_value=session))
+    copilot_agent._cosmos_service = SimpleNamespace(
+        get_session_mapping=AsyncMock(return_value=None),
+        upsert_session_mapping=AsyncMock(),
+    )
+    monkeypatch.setattr(copilot_agent, "_build_session_config", lambda *_args, **_kwargs: {})
+
+    await copilot_agent._get_or_create_session("synthetic-conversation", persist_session_mapping=False)
+
+    copilot_agent._cosmos_service.get_session_mapping.assert_awaited_once_with("synthetic-conversation")
+    copilot_agent._cosmos_service.upsert_session_mapping.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_degraded_invocation_does_not_delete_session_mapping_on_sdk_error(copilot_agent, monkeypatch):
+    session = SimpleNamespace(on=MagicMock(), send=AsyncMock(side_effect=RuntimeError("synthetic SDK failure")))
+    monkeypatch.setattr(copilot_agent, "_get_or_create_session", AsyncMock(return_value=session))
+    copilot_agent._cosmos_service = SimpleNamespace(delete_session_mapping=AsyncMock())
+
+    events = [
+        event
+        async for event in copilot_agent.run(
+            message="Hello",
+            conversation_id="synthetic-conversation",
+            persist_session_mapping=False,
+        )
+    ]
+
+    assert any(isinstance(event, ErrorEvent) for event in events)
+    copilot_agent._cosmos_service.delete_session_mapping.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     mock_session = AsyncMock()
     mock_client = AsyncMock()
@@ -153,14 +188,15 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
         ):
             pass
 
-    attributes = start_span.call_args.kwargs["attributes"]
+    invoke_span_call = next(call for call in start_span.call_args_list if call.args[0] == "invoke_agent kratos-agent")
+    attributes = invoke_span_call.kwargs["attributes"]
     assert attributes["gen_ai.operation.name"] == "invoke_agent"
-    assert attributes["gen_ai.conversation.id"] == "synthetic-conversation"
-    assert attributes["kratos.invocation_id"] == "synthetic-invocation"
+    assert "gen_ai.conversation.id" not in attributes
+    assert "kratos.invocation_id" not in attributes
     assert attributes["kratos.request_stage"] == "in-handler"
     span.set_attribute.assert_any_call("kratos.use_case", "synthetic-use-case")
     span.set_attribute.assert_any_call("kratos.eval_run_id", "synthetic-eval")
-    assert start_span.call_args.kwargs["end_on_exit"] is False
+    assert invoke_span_call.kwargs["end_on_exit"] is False
     assert telemetry.handler_duration_ms is None
 
     with patch("app.services.copilot_agent.time.monotonic", return_value=0.042):
@@ -462,10 +498,8 @@ async def test_subagent_events_include_name_and_actual_model(copilot_agent):
 
 
 @pytest.mark.asyncio
-async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent, monkeypatch):
-    """Input token source estimates are recorded without enabling content capture."""
-    monkeypatch.delenv("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", raising=False)
-    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent):
+    """Input token source estimates are recorded without capturing prompt content."""
     copilot_agent.system_prompt = "persona instructions"
     mock_session = AsyncMock()
     mock_client = AsyncMock()

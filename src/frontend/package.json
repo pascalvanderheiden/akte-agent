@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm run typecheck && npm run test:styles && next build",
+    "build": "npm run typecheck && npm run test:styles && npm run test:brand && npm run test:metadata && next build",
     "start": "next start",
     "lint": "eslint .",
     "test:styles": "node --test tests/styles.test.mjs",
+    "test:brand": "node --test tests/brand.test.mjs",
+    "test:metadata": "node --test tests/metadata.test.mjs",
     "typecheck": "node node_modules/typescript-native/bin/tsc --noEmit",
     "export": "npm run build"
   },

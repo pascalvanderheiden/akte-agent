@@ -27,6 +27,12 @@ from app.models import (
     Message,
     MessageRole,
 )
+from app.observability import (
+    pre_handler_delay_ms,
+    replica_invocation_state,
+    safe_use_case_id,
+    set_invocation_span_attributes,
+)
 from app.personas import (
     require_available,
     require_identified_history,
@@ -34,7 +40,11 @@ from app.personas import (
     require_persona_match,
     resolve_use_case,
 )
-from app.services.cosmos_service import cosmos_persistence_budget
+from app.services.cosmos_service import (
+    ConversationLeaseContentionError,
+    cosmos_persistence_budget,
+    current_cosmos_persistence_budget_s,
+)
 from app.services.follow_up_service import generate_follow_ups
 from app.services.model_routing import ModelRouting
 
@@ -82,6 +92,35 @@ def _save_streamed_file(event_data: dict) -> bool:
         return False
 
 
+async def _traced_proxy_events(
+    foundry_proxy,
+    *,
+    cold_start: bool = False,
+    pre_handler_ms: int | None = None,
+    **kwargs,
+):
+    """Yield hosted-agent events while the outbound invocation span is active."""
+    attributes = {
+        "gen_ai.operation.name": "invoke_agent",
+        "kratos.phase": "hosted_agent_proxy",
+    }
+    if kwargs.get("eval_run_id"):
+        attributes["kratos.eval_run_id"] = str(kwargs["eval_run_id"])
+    with _tracer.start_as_current_span(
+        "hosted_agent.invoke",
+        kind=trace.SpanKind.CLIENT,
+        attributes=attributes,
+    ) as span:
+        set_invocation_span_attributes(
+            span,
+            use_case=kwargs.get("use_case"),
+            cold_start=cold_start,
+            pre_handler_ms=pre_handler_ms,
+        )
+        async for event in foundry_proxy.invoke(**kwargs):
+            yield event
+
+
 @router.post("/chat")
 async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     """Forward the request to the Foundry hosted agent and stream results as SSE.
@@ -93,14 +132,22 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     - done: Completion signal with metrics
     - error: Error details
     """
-    with cosmos_persistence_budget():
+    request.state.cold_start = replica_invocation_state.begin()
+    request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
+    with (
+        cosmos_persistence_budget(),
+        _tracer.start_as_current_span(
+            "request.admission",
+            attributes={"kratos.phase": "request_admission"},
+        ),
+    ):
         return await _chat(body, request)
 
 
 async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     cosmos = request.app.state.cosmos_service
     foundry_proxy = request.app.state.foundry_proxy
-    conversation = await cosmos.get_conversation(body.conversationId, "default-user")
+    conversation = await cosmos.get_conversation(body.conversationId, "default-user", raise_on_error=True)
     if conversation:
         require_identified_history(conversation.useCase)
         require_not_retired(conversation.useCase)
@@ -115,31 +162,59 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    run_lock = await cosmos.acquire_conversation_lock(body.conversationId)
+    try:
+        run_lock = await cosmos.acquire_conversation_lock(body.conversationId, allow_degraded=True)
+    except ConversationLeaseContentionError as exc:
+        raise HTTPException(
+            status_code=409, detail="Conversation is busy; retry after the active turn completes"
+        ) from exc
+    lease_failure_kwargs = {"lease_acquisition_failed": True} if run_lock.lease_acquisition_failed else {}
+    conversation_revalidated = False
     try:
         if conversation:
-            conversation = await cosmos.get_conversation(body.conversationId, "default-user")
-            if not conversation:
+            try:
+                revalidated_conversation = await cosmos.get_conversation(
+                    body.conversationId, "default-user", raise_on_error=True
+                )
+            except Exception:
+                logger.warning(
+                    "Conversation revalidation unavailable; continuing with the successful preflight result",
+                    exc_info=True,
+                )
+            else:
+                conversation = revalidated_conversation
+                conversation_revalidated = True
+            if conversation is None:
                 raise HTTPException(status_code=404, detail="Conversation not found")
             if not request_selection:
                 model_selection = conversation.modelSelection
-        if conversation and request_selection and conversation.modelSelection != model_selection:
+        if (
+            conversation
+            and conversation_revalidated
+            and request_selection
+            and conversation.modelSelection != model_selection
+            and not run_lock.lease_acquisition_failed
+        ):
             conversation.modelSelection = model_selection
             conversation.updatedAt = datetime.now(UTC)
-            await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            try:
+                await cosmos.upsert_conversation(conversation, lock_token=run_lock.lease_token)
+            except Exception:
+                logger.warning("Failed to persist model selection update (non-fatal)", exc_info=True)
     except BaseException:
         await cosmos.release_conversation_lock(body.conversationId, run_lock)
         raise
 
-    # Stamp kratos attributes on the current (HTTP) span so every request is
-    # filterable by use-case, conversation, and optional eval run.
+    # Stamp safe correlation attributes on the current request span.
     eval_run_id = request.headers.get("x-kratos-eval-run-id") or ""
     request.state.eval_run_id = eval_run_id
     _span = trace.get_current_span()
-    if use_case:
-        _span.set_attribute("kratos.use_case", str(use_case))
-    if body.conversationId:
-        _span.set_attribute("kratos.conversation_id", str(body.conversationId))
+    set_invocation_span_attributes(
+        _span,
+        use_case=use_case,
+        cold_start=request.state.cold_start,
+        pre_handler_ms=request.state.pre_handler_ms,
+    )
     if eval_run_id:
         _span.set_attribute("kratos.eval_run_id", eval_run_id)
 
@@ -167,7 +242,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(user_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist user message to Cosmos (non-fatal)",
@@ -199,10 +274,9 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             # can render meaningful waterfalls. The hosted Foundry agent emits
             # its own gen_ai spans to its private AppInsights — these manual
             # spans surface the same signal in the kratos-side trace tree.
-            common_attrs = {
-                "kratos.use_case": str(use_case) if use_case else "",
-                "kratos.conversation_id": str(body.conversationId),
-            }
+            common_attrs = {}
+            if safe_id := safe_use_case_id(use_case):
+                common_attrs["kratos.use_case"] = safe_id
             if eval_run_id:
                 common_attrs["kratos.eval_run_id"] = eval_run_id
             open_tool_spans: dict[str, Any] = {}
@@ -211,7 +285,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             started_queue: dict[str, list[str]] = {}
             synthetic_seq = 0
 
-            async for event_dict in foundry_proxy.invoke(
+            async for event_dict in _traced_proxy_events(
+                foundry_proxy,
+                cold_start=request.state.cold_start,
+                pre_handler_ms=request.state.pre_handler_ms,
                 message=body.message,
                 conversation_id=body.conversationId,
                 use_case=use_case,
@@ -221,6 +298,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 eval_run_id=eval_run_id or None,
                 mcp_access_tokens=body.mcpAccessTokens,
                 model_selection=model_selection,
+                persistence_allowed=not run_lock.lease_acquisition_failed,
+                persistence_budget_remaining_s=current_cosmos_persistence_budget_s(),
+                preflight_conversation_use_case=conversation.useCase if conversation else None,
+                preflight_conversation_checked=True,
             ):
                 event_name = event_dict.get("event")
                 event_data = event_dict.get("data", {})
@@ -337,7 +418,10 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 logger.info("Gateway session for conversation=%s: %s", body.conversationId, gateway_session_id)
                 try:
                     await cosmos.upsert_session_mapping(
-                        body.conversationId, gateway_session_id, lock_token=run_lock.lease_token
+                        body.conversationId,
+                        gateway_session_id,
+                        lock_token=run_lock.lease_token,
+                        **lease_failure_kwargs,
                     )
                 except Exception:
                     logger.warning("Failed to persist gateway session mapping (non-fatal)", exc_info=True)
@@ -370,7 +454,7 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
                 createdAt=datetime.now(UTC),
             )
             try:
-                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token)
+                await cosmos.upsert_message(assistant_message, lock_token=run_lock.lease_token, **lease_failure_kwargs)
             except Exception:
                 logger.warning(
                     "Failed to persist assistant message to Cosmos (non-fatal)",

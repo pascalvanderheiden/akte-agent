@@ -1,5 +1,6 @@
 """Contracts for the issue pipeline and hosted-agent deployment."""
 
+import json
 import re
 from pathlib import Path
 
@@ -30,6 +31,18 @@ def test_detection_failure_blocks_all_safe_outputs(name):
         if "GH_AW_DETECTION_CONTINUE_ON_ERROR" in step.get("env", {})
     ]
     assert configured and all(value == "false" for value in configured)
+
+
+@pytest.mark.parametrize("name", ["issue-to-spec", "spec-to-tickets"])
+def test_recovery_report_output_is_exposed(name):
+    source = (REPO_ROOT / f".github/workflows/{name}.md").read_text()
+    frontmatter = yaml.safe_load(source.split("---", 2)[1])
+    assert frontmatter["safe-outputs"]["missing-data"]["max"] == 1
+
+    workflow = (REPO_ROOT / f".github/workflows/{name}.lock.yml").read_text()
+    manifest = json.loads(re.search(r"^# gh-aw-manifest: (.+)$", workflow, re.MULTILINE).group(1))
+    tools = next(server["tools"] for server in manifest["mcp_servers"] if server["name"] == "safeoutputs")
+    assert "missing_data" in tools
 
 
 def test_hosted_agent_uses_service_level_configuration():

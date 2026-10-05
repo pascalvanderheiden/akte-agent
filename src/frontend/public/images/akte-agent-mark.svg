@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Placeholder reproduced from the textual brief in issue #145; replace with the official artwork. -->
+  <circle cx="32" cy="21" r="11" fill="#1b2a4e"/>
+  <circle cx="28" cy="21" r="1.8" fill="#ffffff"/>
+  <circle cx="36" cy="21" r="1.8" fill="#ffffff"/>
+  <path d="M10 60c0-14.4 9.8-23 22-23s22 8.6 22 23z" fill="#1b2a4e"/>
+  <path d="M25.5 37h13L32 47z" fill="#ffffff"/>
+  <path d="M30 41h4l1.5 11L32 56l-3.5-4z" fill="#c9a227"/>
+  <path d="M41 47h9v11h-9z" fill="#ffffff" stroke="#c9a227" stroke-width="1.5"/>
+  <path d="M43 51h5M43 54h5" stroke="#1b2a4e" stroke-width="1.2"/>
+</svg>

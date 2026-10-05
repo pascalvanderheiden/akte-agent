@@ -7,6 +7,7 @@ import { useLocale } from "./LocaleProvider";
 import { localizeUseCase, type TranslationKey } from "@/lib/i18n";
 import { ThemePicker } from "./ThemePicker";
 import { OboSignIn } from "./OboSignIn";
+import { BrandLogo } from "./BrandLogo";
 
 function getDateGroup(dateStr: string): TranslationKey {
   const now = new Date();
@@ -124,14 +125,18 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
 
       <div className="px-5 py-4">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-accent rounded-xl flex items-center justify-center shadow-card shrink-0">
-            <svg className="w-5 h-5 text-accent-fg" viewBox="0 0 24 24" fill="currentColor">
-              <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
-            </svg>
-          </div>
           <div className="flex-1 min-w-0">
-            <span className="font-semibold text-text-strong text-sm tracking-tight">Akte Agent</span>
-            <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
+            <div className="hidden lg:block">
+              <BrandLogo variant="full" height={52} />
+              <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
+            </div>
+            <div className="flex lg:hidden items-center gap-3 min-w-0">
+              <BrandLogo variant="mark" height={36} decorative />
+              <div className="min-w-0">
+                <span className="font-semibold text-text-strong text-sm tracking-tight">{t("app.name")}</span>
+                <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
+              </div>
+            </div>
           </div>
           {onCloseMobile && (
             <button

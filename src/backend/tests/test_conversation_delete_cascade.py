@@ -12,7 +12,7 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExist
 
 from app.config import Settings
 from app.models import Conversation, Message
-from app.services.cosmos_service import CosmosService
+from app.services.cosmos_service import ConversationLeaseContentionError, CosmosService, cosmos_persistence_budget
 
 
 async def test_sqlite_delete_conversation_removes_its_messages_only(tmp_path):
@@ -144,6 +144,24 @@ async def test_cosmos_delete_conversation_deletes_message_partition_first():
     ]
 
 
+async def test_cosmos_delete_fails_closed_when_lease_acquisition_is_throttled():
+    messages = _SharedMessages()
+    messages.create_item = AsyncMock(side_effect=CosmosHttpResponseError(status_code=429))
+    conversations = SimpleNamespace(delete_item=AsyncMock())
+    sessions = SimpleNamespace(delete_item=AsyncMock())
+    cosmos = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    cosmos._messages_container = messages
+    cosmos._conversations_container = conversations
+    cosmos._sessions_container = sessions
+
+    with pytest.raises(CosmosHttpResponseError):
+        await cosmos.delete_conversation("c1", "default-user")
+
+    assert conversations.delete_item.await_count == 0
+    assert sessions.delete_item.await_count == 0
+    assert messages.calls == []
+
+
 async def test_cosmos_delete_waits_for_chat_lease_from_another_service_instance():
     messages = _SharedMessages()
     chat_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
@@ -178,6 +196,109 @@ async def test_cosmos_delete_waits_for_chat_lease_from_another_service_instance(
     assert ("active", "after-delete") not in messages.items
 
 
+async def test_degraded_chat_cannot_write_after_another_replica_deletes_conversation():
+    messages = _SharedMessages()
+    chat_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    delete_service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    chat_service._messages_container = messages
+    delete_service._messages_container = messages
+    delete_service._conversations_container = SimpleNamespace(delete_item=AsyncMock())
+    delete_service._sessions_container = SimpleNamespace(delete_item=AsyncMock())
+    create_item = messages.create_item
+    messages.create_item = AsyncMock(side_effect=CosmosHttpResponseError(status_code=429))
+
+    chat_lock = await chat_service.acquire_conversation_lock("degraded", allow_degraded=True)
+    messages.create_item = create_item
+    assert chat_lock.lease_acquisition_failed
+
+    await delete_service.delete_conversation("degraded", "default-user")
+
+    with pytest.raises(RuntimeError, match="Conversation lease acquisition failed"):
+        await chat_service.upsert_message(
+            Message(
+                id="late-assistant",
+                conversationId="degraded",
+                role="assistant",
+                content="late response",
+                createdAt=datetime.now(UTC),
+            ),
+            lock_token=chat_lock.lease_token,
+            lease_acquisition_failed=chat_lock.lease_acquisition_failed,
+        )
+    assert ("degraded", "late-assistant") not in messages.items
+
+    await chat_service.release_conversation_lock("degraded", chat_lock)
+
+
+async def test_degraded_lock_fails_closed_after_observing_another_replica_lease(monkeypatch):
+    monkeypatch.setattr("app.services.cosmos_service._COSMOS_REQUEST_PERSISTENCE_BUDGET_S", 0.02)
+    messages = _SharedMessages()
+    owner = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    contender = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    owner._messages_container = messages
+    contender._messages_container = messages
+    owner_lock = await owner.acquire_conversation_lock("contended")
+
+    with cosmos_persistence_budget() as budget:
+        budget.remaining_s = 0.01
+        with pytest.raises(ConversationLeaseContentionError):
+            await contender.acquire_conversation_lock("contended", allow_degraded=True)
+
+    await owner.release_conversation_lock("contended", owner_lock)
+
+
+@pytest.mark.parametrize(
+    "create_conflict",
+    [CosmosResourceExistsError(status_code=409), CosmosHttpResponseError(status_code=409)],
+)
+async def test_lease_create_conflict_then_failed_read_fails_closed(create_conflict):
+    class ConflictThenFailedRead:
+        async def create_item(self, _document):
+            raise create_conflict
+
+        async def read_item(self, *_args, **_kwargs):
+            raise CosmosHttpResponseError(status_code=429)
+
+    service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    service._messages_container = ConflictThenFailedRead()
+
+    with pytest.raises(ConversationLeaseContentionError):
+        await service.acquire_conversation_lock("contended", allow_degraded=True)
+
+
+async def test_lease_takeover_retries_etag_conflict_after_observed_contention():
+    messages = _SharedMessages(
+        [
+            {
+                "id": "__conversation_lease__",
+                "conversationId": "racing",
+                "lockToken": "previous-owner",
+                "expiresAt": time.time() + 0.02,
+            }
+        ]
+    )
+    replace_item = messages.replace_item
+    replacements = 0
+
+    async def replace_with_one_race(*args, **kwargs):
+        nonlocal replacements
+        replacements += 1
+        if replacements == 1:
+            raise CosmosHttpResponseError(status_code=412)
+        await replace_item(*args, **kwargs)
+
+    messages.replace_item = replace_with_one_race
+    service = CosmosService(Settings(cosmos_db_endpoint="https://cosmos.invalid"))
+    service._messages_container = messages
+
+    with cosmos_persistence_budget() as budget:
+        budget.remaining_s = 1
+        token = await service._acquire_cosmos_lease("racing")
+
+    assert token
+    assert replacements == 2
+
+
 async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
     cosmos = CosmosService(Settings(cosmos_db_endpoint="", local_data_dir=str(tmp_path)))
     await cosmos.initialize()
@@ -209,6 +330,7 @@ async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
 async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease_loss():
     token = str(uuid.uuid4())
     old = {"id": "c1", "userId": "default-user", "title": "old", "_etag": "1"}
+    token = str(uuid.uuid4())
     conversations = SimpleNamespace(
         read_item=AsyncMock(return_value=old),
         replace_item=AsyncMock(

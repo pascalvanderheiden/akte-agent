@@ -29,9 +29,6 @@ template:
       value: ${MODEL_DEPLOYMENT_FAST}
     - name: MODEL_DEPLOYMENT_NAME
       value: ${FOUNDRY_MODEL_DEPLOYMENT}
-    # Capture prompts + completions on the invoke_agent span for Foundry Traces.
-    - name: AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED
-      value: "true"
     - name: COSMOS_DB_ENDPOINT
       value: ${AZURE_COSMOS_DB_ENDPOINT}
     - name: KEY_VAULT_URI

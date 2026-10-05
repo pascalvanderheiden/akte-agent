@@ -14,9 +14,11 @@ from typing import Any
 
 import aiohttp
 from azure.identity.aio import DefaultAzureCredential
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from app.config import Settings
 from app.locale import Locale
+from app.services.cosmos_service import update_cosmos_persistence_budget_s
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +266,10 @@ class FoundryAgentProxy:
         mcp_access_tokens: dict[str, str] | None = None,
         locale: Locale | None = None,
         model_selection: str = "auto",
+        persistence_allowed: bool = True,
+        persistence_budget_remaining_s: float | None = None,
+        preflight_conversation_use_case: str | None = None,
+        preflight_conversation_checked: bool = False,
     ) -> AsyncGenerator[dict, None]:
         """Invoke the hosted agent and yield event dicts.
 
@@ -293,8 +299,21 @@ class FoundryAgentProxy:
         from html import escape
 
         preamble_parts.append(f"<conversation_id>{escape(conversation_id)}</conversation_id>")
+        if preflight_conversation_use_case:
+            preamble_parts.append(
+                f"<preflight_conversation_use_case>{escape(preflight_conversation_use_case)}</preflight_conversation_use_case>"
+            )
+        if preflight_conversation_checked:
+            preamble_parts.append("<preflight_conversation_checked>true</preflight_conversation_checked>")
         if locale:
             preamble_parts.append(f"<locale>{locale}</locale>")
+        if not persistence_allowed:
+            preamble_parts.append("<persistence_allowed>false</persistence_allowed>")
+        persistence_budget_ms = (
+            max(0, int(persistence_budget_remaining_s * 1000)) if persistence_budget_remaining_s is not None else None
+        )
+        if persistence_budget_ms is not None:
+            preamble_parts.append(f"<persistence_budget_ms>{persistence_budget_ms}</persistence_budget_ms>")
         # SECURITY: per-MCP-server user OBO tokens are NEVER embedded in the
         # prompt/input text. A bearer in input_text would enter the model's
         # context and be captured by GenAI message-content traces / gateway logs.
@@ -314,6 +333,7 @@ class FoundryAgentProxy:
             headers["x-kratos-eval-run-id"] = str(eval_run_id)
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        TraceContextTextMapPropagator().inject(headers)
         payload: dict[str, Any] = {
             "input": input_text,
             "conversationId": conversation_id,
@@ -321,7 +341,14 @@ class FoundryAgentProxy:
             "selectedModelId": model_selection,
             "foundryEndpoint": self._settings.foundry_endpoint,
             "foundryModelDeployment": self._settings.foundry_model_deployment,
+            "persistenceAllowed": persistence_allowed,
         }
+        if preflight_conversation_use_case:
+            payload["preflightConversationUseCase"] = preflight_conversation_use_case
+        if preflight_conversation_checked:
+            payload["preflightConversationChecked"] = True
+        if persistence_budget_ms is not None:
+            payload["persistenceBudgetMs"] = persistence_budget_ms
         if locale:
             payload["locale"] = locale
         # Forward per-MCP-server user tokens in the JSON body — the ONLY channel
@@ -358,6 +385,9 @@ class FoundryAgentProxy:
                     timeout=aiohttp.ClientTimeout(total=300),
                 ) as resp:
                     if resp.status != 200:
+                        remaining_ms = resp.headers.get("x-kratos-persistence-budget-remaining-ms")
+                        if remaining_ms and remaining_ms.isdigit():
+                            update_cosmos_persistence_budget_s(int(remaining_ms) / 1000)
                         body = await resp.text()
                         logger.error("Hosted agent returned %d: %s", resp.status, body[:500])
                         # Cold-start / transient overload — the container is
@@ -405,7 +435,14 @@ class FoundryAgentProxy:
                                 # values) — log to backend telemetry and drop it
                                 # so it never reaches the user/model.
                                 if parsed.get("event") == "kratos_diag":
-                                    logger.info("hosted-agent diag: %s", parsed.get("data"))
+                                    diagnostic = parsed.get("data")
+                                    if isinstance(diagnostic, dict):
+                                        remaining_ms = diagnostic.get("persistence_budget_remaining_ms")
+                                        if isinstance(remaining_ms, (int, float)) and not isinstance(
+                                            remaining_ms, bool
+                                        ):
+                                            update_cosmos_persistence_budget_s(max(0.0, remaining_ms / 1000))
+                                    logger.info("hosted-agent diag: %s", diagnostic)
                                     continue
                                 yield parsed
 

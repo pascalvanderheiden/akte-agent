@@ -85,6 +85,36 @@ Slowness attributable to the Blob-fallback (#65) or Cosmos-persistence (#63)
 signatures is excluded or flagged separately there, so this budget's alert stays
 about model and tool work.
 
+### Diagnostic outliers
+
+A separate 1 s rolling-p95 signal is an **informational early warning**, not a
+second latency budget. It exists to prompt attribution while there is still
+headroom below the 30 s p95 budget; a result below 30 s does not breach ADR 0003
+and does not page on its own. Use the [latency-outlier runbook](../runbooks/latency-outliers.md)
+to investigate and escalate only when its recurrence criteria are met. The
+2 s p50, 30 s p95 over 15 minutes, and 120 s per-request ceiling above are
+unchanged; the single-request ceiling remains independently actionable.
+
+## Ingress and invocation correlation
+
+Invocation spans record `kratos.pre_handler_delay_ms` only when the request
+contains a recognized platform request-entry timestamp (`x-request-start` or
+`x-envoy-request-start-time`). The value measures elapsed wall time from that
+timestamp to handler entry, including ingress and queueing; it is not the
+existing in-process `pre_handler_remainder_ms`. When no valid timestamp is
+available, spans set `kratos.pre_handler_delay_available=false` and
+`kratos.pre_handler_delay_source=platform_logs` rather than reporting a guessed
+zero. In that case, query the platform ingress/system logs for request arrival
+times, filtering by application, revision and replica over the relevant time
+window, then compare those with the invocation span start times.
+Foundry-hosted invocation timing must use its platform ingress logs when its
+runtime does not forward a request-entry timestamp.
+
+Invocation spans carry the trace ID, span ID, operation ID, revision name,
+replica name, first-invocation-on-replica boolean, and validated synthetic
+use-case ID. Prompt/message content, conversation identifiers, access tokens,
+tool arguments/results and service endpoints are not span attributes.
+
 ## Subagent routing decision rule
 
 Delegation buys context isolation and a better-suited role, and costs an extra

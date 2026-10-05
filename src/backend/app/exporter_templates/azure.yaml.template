@@ -25,6 +25,7 @@ services:
             # Docker build context is the repo root so we can COPY src/,
             # and use-cases/ in the bundled Dockerfile (verbatim from Kratos).
             context: ../..
+            remoteBuild: true
         container:
             resources:
                 cpu: "1"
