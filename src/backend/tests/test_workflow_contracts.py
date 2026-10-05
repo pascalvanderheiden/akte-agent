@@ -79,7 +79,16 @@ def test_deploy_pins_tenant_into_the_azd_environment():
     # hook, deploy-only runs would otherwise never have it.
     workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
     steps = workflow["jobs"]["deploy"]["steps"]
-    select = next(s for s in steps if s.get("name") == "Select azd environment")
+    credential_check = next(
+        (step for step in steps if step.get("name") == "Check required credentials are configured"),
+        None,
+    )
+    assert credential_check is not None, "workflow must validate required credentials before setup"
+    assert '[ -n "$AZURE_TENANT_ID" ]' in credential_check["run"]
+
+    select = next((s for s in steps if s.get("name") == "Select azd environment"), None)
+    assert select is not None, "workflow must select an azd environment"
+    assert steps.index(credential_check) < steps.index(select)
     assert "azd env set AZURE_TENANT_ID" in select["run"]
     for step in steps:
         run = step.get("run", "")
