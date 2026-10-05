@@ -12,9 +12,10 @@ kind: hosted
 protocols:
   - protocol: invocations
     version: 1.0.0
-resources:
-  cpu: "1"
-  memory: 2Gi
+# cpu/memory live on the azure.yaml service entry under `container.resources`.
+# Declaring them here too makes the $ref merge fail to unmarshal, because the
+# service schema's `resources` is a list of connected resources, not a sizing
+# object.
 environment_variables:
   # Routing-role deployments. MODEL_DEPLOYMENT_NAME is the legacy
   # orchestrator alias.

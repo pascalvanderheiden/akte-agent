@@ -150,6 +150,7 @@ jobs:
           AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
           # The runner starts with no .azure/ directory, so create the env on
           # first use and select it on subsequent runs.
@@ -158,6 +159,13 @@ jobs:
               --location "$AZURE_LOCATION" \
               --subscription "$AZURE_SUBSCRIPTION_ID" \
               --no-prompt
+          # azd resolves the subscription's tenant over the ARM endpoint when
+          # AZURE_TENANT_ID is absent, which a federated service principal
+          # cannot do: it fails with "ClientAssertionCredential: unable to
+          # resolve an endpoint". On provision runs the postprovision hook
+          # records this, but a deploy-only run never provisions, so pin it
+          # here where every later step picks it up from the azd environment.
+          azd env set AZURE_TENANT_ID "$AZURE_TENANT_ID"
 
       # Nonsecret SRE options, recorded with the supported azd command rather
       # than by editing .azure/. Deploy-only runs must not change opt-in state.
@@ -197,6 +205,7 @@ jobs:
           AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: azd provision --no-prompt
 
       - name: Refresh environment outputs
@@ -204,6 +213,7 @@ jobs:
         env:
           AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
         run: |
           # Hydrate endpoints/resource names from the already-provisioned infra;
           # `azd deploy` needs these and a fresh runner has none.
@@ -223,6 +233,7 @@ jobs:
           AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'eastus2' }}
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           KRATOS_AUTO_UPLOAD_USE_CASES: ${{ inputs.upload_use_cases && '1' || '0' }}
         run: azd deploy --no-prompt
 
