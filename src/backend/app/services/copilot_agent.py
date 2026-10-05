@@ -293,6 +293,7 @@ class CopilotAgent:
         self._queues: dict[str, asyncio.Queue] = {}
         self._tool_counters: dict[str, int] = {}
         self._registered_handlers: set[str] = set()
+        self._active_model_spans: dict[str, trace.Span] = {}
         self._credential: ManagedIdentityCredential | None = None
         self._token_provider = None
         self._usage: dict[str, dict] = {}
@@ -1075,15 +1076,22 @@ class CopilotAgent:
         """
         from app.personas import RETIRED_PERSONAS
 
-        selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
-        if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
-            yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
-            return
-        try:
-            self._conversation_model_selections[conversation_id] = self._routing.validate_selection(model_selection)
-        except ValueError as exc:
-            yield ErrorEvent(message=str(exc), code="INVALID_MODEL_SELECTION")
-            return
+        with tracer.start_as_current_span(
+            "request.admission",
+            attributes={
+                "kratos.phase": "request_admission",
+                "kratos.conversation_id": conversation_id,
+            },
+        ):
+            selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
+            if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
+                yield ErrorEvent(message="This persona is unavailable", code="PERSONA_UNAVAILABLE")
+                return
+            try:
+                self._conversation_model_selections[conversation_id] = self._routing.validate_selection(model_selection)
+            except ValueError as exc:
+                yield ErrorEvent(message=str(exc), code="INVALID_MODEL_SELECTION")
+                return
 
         # Propagate kratos context into tool spans via ContextVars
         _ctx_conversation_id.set(conversation_id)
@@ -1141,13 +1149,28 @@ class CopilotAgent:
             self._response_parts[conversation_id] = []  # reset for this turn
             localized_message = localize_turn(message, locale)
 
+            def finish_model_span(error: str | None = None) -> None:
+                model_span = self._active_model_spans.pop(conversation_id, None)
+                if model_span is not None:
+                    if error:
+                        model_span.set_attribute("error.type", error)
+                        model_span.set_status(trace.StatusCode.ERROR, error)
+                    model_span.end()
+
             try:
-                session = await self._get_or_create_session(
-                    conversation_id,
-                    sdk_session_id=sdk_session_id,
-                    persist_session_mapping=persist_session_mapping,
-                )
-                self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
+                with tracer.start_as_current_span(
+                    "session_skill.prepare",
+                    attributes={
+                        "kratos.phase": "session_skill_preparation",
+                        "kratos.conversation_id": conversation_id,
+                    },
+                ):
+                    session = await self._get_or_create_session(
+                        conversation_id,
+                        sdk_session_id=sdk_session_id,
+                        persist_session_mapping=persist_session_mapping,
+                    )
+                    self._add_context_token_estimate(conversation_id, "conversation_history", localized_message)
                 logger.info("Sending prompt for conversation=%s message=%r", conversation_id, message)
                 self._send_time = time.monotonic()
 
@@ -1203,6 +1226,17 @@ class CopilotAgent:
                             elif etype == "assistant.turn_start":
                                 # Model started processing — mark for latency calc
                                 self._model_response_start[cid] = time.monotonic()
+                                finish_model_span()
+                                model = self._conversation_plan_model(cid)
+                                self._active_model_spans[cid] = tracer.start_span(
+                                    "gen_ai.chat",
+                                    context=self._span_contexts.get(cid),
+                                    attributes={
+                                        "gen_ai.operation.name": "chat",
+                                        "gen_ai.request.model": model,
+                                        "kratos.conversation_id": cid,
+                                    },
+                                )
 
                             elif etype == "assistant.message":
                                 # End-of-turn complete message — capture content as fallback
@@ -1210,6 +1244,7 @@ class CopilotAgent:
                                 msg_content = getattr(event.data, "content", None) or ""
                                 if msg_content and not self._response_parts.get(cid):
                                     self._response_parts.setdefault(cid, []).append(msg_content)
+                                finish_model_span()
 
                             elif etype in ("assistant.usage", "session.usage_info"):
                                 # Capture token usage from the model
@@ -1377,6 +1412,7 @@ class CopilotAgent:
                                 )
 
                             elif etype == "tool.execution_start":
+                                finish_model_span()
                                 tool_name = (
                                     getattr(event.data, "tool_name", None)
                                     or getattr(event.data, "name", None)
@@ -1551,6 +1587,7 @@ class CopilotAgent:
                                 )
 
                             elif etype == "session.idle":
+                                finish_model_span()
                                 # End any orphaned tool spans
                                 for _, orphan_span in _tool_span_stack:
                                     orphan_span.set_status(trace.StatusCode.OK)
@@ -1576,6 +1613,7 @@ class CopilotAgent:
                                 q.put_nowait(None)  # sentinel — stream is done
 
                             elif etype == "session.error":
+                                finish_model_span("session_error")
                                 # End any orphaned tool spans
                                 for _, orphan_span in _tool_span_stack:
                                     orphan_span.set_status(trace.StatusCode.ERROR, "Session error")
@@ -1624,11 +1662,19 @@ class CopilotAgent:
                 # eval_service._REQUEST_TIMEOUT — gives complex multi-tool scenarios
                 # (PDF generation, long triage chains) enough headroom under gateway
                 # throttle bursts where individual tool calls can stall 60-120s.
-                while True:
-                    item = await asyncio.wait_for(queue.get(), timeout=300.0)
-                    if item is None:
-                        break
-                    yield item
+                with tracer.start_as_current_span(
+                    "response.stream_finalize",
+                    context=self._span_contexts.get(conversation_id),
+                    attributes={
+                        "kratos.phase": "response_streaming_finalization",
+                        "kratos.conversation_id": conversation_id,
+                    },
+                ):
+                    while True:
+                        item = await asyncio.wait_for(queue.get(), timeout=300.0)
+                        if item is None:
+                            break
+                        yield item
 
                 tool_call_count = self._tool_counters.get(conversation_id, 0)
                 # Enrich the span with usage and tool call counts
@@ -1734,6 +1780,7 @@ class CopilotAgent:
                 if persist_session_mapping and self._cosmos_service:
                     await self._cosmos_service.delete_session_mapping(conversation_id)
             finally:
+                finish_model_span("run_terminated")
                 self._queues.pop(conversation_id, None)
 
     def get_run_stats(self, conversation_id: str) -> dict:

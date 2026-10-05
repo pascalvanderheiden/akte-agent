@@ -188,14 +188,15 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
         ):
             pass
 
-    attributes = start_span.call_args.kwargs["attributes"]
+    invoke_span_call = next(call for call in start_span.call_args_list if call.args[0] == "invoke_agent kratos-agent")
+    attributes = invoke_span_call.kwargs["attributes"]
     assert attributes["gen_ai.operation.name"] == "invoke_agent"
     assert attributes["gen_ai.conversation.id"] == "synthetic-conversation"
     assert attributes["kratos.invocation_id"] == "synthetic-invocation"
     assert attributes["kratos.request_stage"] == "in-handler"
     span.set_attribute.assert_any_call("kratos.use_case", "synthetic-use-case")
     span.set_attribute.assert_any_call("kratos.eval_run_id", "synthetic-eval")
-    assert start_span.call_args.kwargs["end_on_exit"] is False
+    assert invoke_span_call.kwargs["end_on_exit"] is False
     assert telemetry.handler_duration_ms is None
 
     with patch("app.services.copilot_agent.time.monotonic", return_value=0.042):

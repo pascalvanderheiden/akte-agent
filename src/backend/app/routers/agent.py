@@ -86,6 +86,26 @@ def _save_streamed_file(event_data: dict) -> bool:
         return False
 
 
+async def _traced_proxy_events(foundry_proxy, **kwargs):
+    """Yield hosted-agent events while the outbound invocation span is active."""
+    attributes = {
+        "gen_ai.operation.name": "invoke_agent",
+        "kratos.phase": "hosted_agent_proxy",
+        "kratos.conversation_id": str(kwargs.get("conversation_id", "")),
+    }
+    if kwargs.get("use_case"):
+        attributes["kratos.use_case"] = str(kwargs["use_case"])
+    if kwargs.get("eval_run_id"):
+        attributes["kratos.eval_run_id"] = str(kwargs["eval_run_id"])
+    with _tracer.start_as_current_span(
+        "hosted_agent.invoke",
+        kind=trace.SpanKind.CLIENT,
+        attributes=attributes,
+    ):
+        async for event in foundry_proxy.invoke(**kwargs):
+            yield event
+
+
 @router.post("/chat")
 async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     """Forward the request to the Foundry hosted agent and stream results as SSE.
@@ -97,7 +117,13 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     - done: Completion signal with metrics
     - error: Error details
     """
-    with cosmos_persistence_budget():
+    with (
+        cosmos_persistence_budget(),
+        _tracer.start_as_current_span(
+            "request.admission",
+            attributes={"kratos.phase": "request_admission"},
+        ),
+    ):
         return await _chat(body, request)
 
 
@@ -242,7 +268,8 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             started_queue: dict[str, list[str]] = {}
             synthetic_seq = 0
 
-            async for event_dict in foundry_proxy.invoke(
+            async for event_dict in _traced_proxy_events(
+                foundry_proxy,
                 message=body.message,
                 conversation_id=body.conversationId,
                 use_case=use_case,
