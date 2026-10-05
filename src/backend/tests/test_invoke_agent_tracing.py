@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from opentelemetry import propagate, trace
+from opentelemetry import baggage, propagate, trace
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
-from opentelemetry.context import Context
+from opentelemetry.context import Context, attach, detach
 from opentelemetry.propagators.composite import CompositePropagator
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -65,15 +65,18 @@ async def test_proxy_propagates_w3c_trace_context_to_upstream_without_baggage(mo
     provider = TracerProvider()
     tracer = provider.get_tracer(__name__)
 
-    with (
-        tracer.start_as_current_span(
-            "POST /api/agent/chat", kind=trace.SpanKind.SERVER, context=inbound_context
-        ) as request_span,
-        tracer.start_as_current_span("request.admission") as admission_span,
-        tracer.start_as_current_span("hosted_agent.invoke", kind=trace.SpanKind.CLIENT) as invoke_span,
-    ):
-        async for _event in proxy.invoke("hello", "synthetic-conversation"):
-            pass
+    context_token = attach(inbound_context)
+    try:
+        with (
+            tracer.start_as_current_span("POST /api/agent/chat", kind=trace.SpanKind.SERVER) as request_span,
+            tracer.start_as_current_span("request.admission") as admission_span,
+            tracer.start_as_current_span("hosted_agent.invoke", kind=trace.SpanKind.CLIENT) as invoke_span,
+        ):
+            assert baggage.get_baggage("synthetic_user_data") == "must-not-cross-boundary"
+            async for _event in proxy.invoke("hello", "synthetic-conversation"):
+                pass
+    finally:
+        detach(context_token)
 
     traceparent = captured["traceparent"]
     assert captured["tracestate"] == "synthetic=correlation"
