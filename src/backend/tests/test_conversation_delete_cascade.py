@@ -328,6 +328,7 @@ async def test_sqlite_delete_waits_for_active_chat_persistence(tmp_path):
 
 
 async def test_cosmos_upsert_rollback_restores_previous_conversation_after_lease_loss():
+    token = str(uuid.uuid4())
     old = {"id": "c1", "userId": "default-user", "title": "old", "_etag": "1"}
     token = str(uuid.uuid4())
     conversations = SimpleNamespace(
