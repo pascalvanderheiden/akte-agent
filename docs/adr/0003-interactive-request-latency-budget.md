@@ -85,6 +85,16 @@ Slowness attributable to the Blob-fallback (#65) or Cosmos-persistence (#63)
 signatures is excluded or flagged separately there, so this budget's alert stays
 about model and tool work.
 
+### Diagnostic outliers
+
+A separate 1 s rolling-p95 signal is an **informational early warning**, not a
+second latency budget. It exists to prompt attribution while there is still
+headroom below the 30 s p95 budget; a result below 30 s does not breach ADR 0003
+and does not page on its own. Use the [latency-outlier runbook](../runbooks/latency-outliers.md)
+to investigate and escalate only when its recurrence criteria are met. The
+2 s p50, 30 s p95 over 15 minutes, and 120 s per-request ceiling above are
+unchanged; the single-request ceiling remains independently actionable.
+
 ## Subagent routing decision rule
 
 Delegation buys context isolation and a better-suited role, and costs an extra
