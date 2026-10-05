@@ -29,6 +29,7 @@ from azure.core.exceptions import (
     ServiceResponseError,
 )
 from azure.cosmos.exceptions import CosmosHttpResponseError
+from opentelemetry import trace
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
@@ -66,7 +67,12 @@ from app.models import (
     UsageEvent,
     UserInputRequestEvent,
 )
-from app.observability import setup_telemetry
+from app.observability import (
+    pre_handler_delay_ms,
+    replica_invocation_state,
+    set_invocation_span_attributes,
+    setup_telemetry,
+)
 from app.personas import (
     DEFAULT_USE_CASE,
     RETIRED_PERSONAS,
@@ -407,11 +413,15 @@ async def _stream_response_impl(
     model_selection: str = "auto",
     persistence_allowed: bool = True,
     persistence_observation: dict | None = None,
+    cold_start: bool = False,
+    pre_handler_ms: int | None = None,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
     invocation_telemetry = InvocationTelemetry(
         invocation_id=invocation_id,
         handler_started_at=time.monotonic(),
+        cold_start=cold_start,
+        pre_handler_ms=pre_handler_ms,
     )
     total_tool_calls = 0
 
@@ -601,6 +611,8 @@ async def _stream_response(
     model_selection: str = "auto",
     persistence_budget=None,
     persistence_allowed: bool = True,
+    cold_start: bool = False,
+    pre_handler_ms: int | None = None,
 ):
     """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
     if persistence_budget is None:
@@ -631,6 +643,8 @@ async def _stream_response(
         model_selection,
         persistence_allowed,
         persistence_observation,
+        cold_start,
+        pre_handler_ms,
     )
     diagnostic_emitted = False
 
@@ -670,6 +684,7 @@ async def _stream_response(
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
+    request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
     # Ensure services are initialised (first request triggers startup)
     if _copilot_agent is None:
         await _startup()
@@ -702,6 +717,7 @@ async def handle_invoke(request: Request) -> Response:
             },
         )
 
+    request.state.cold_start = replica_invocation_state.begin()
     try:
         message = data.get("message") or data.get("input")
         if not isinstance(message, str) or not message.strip():
@@ -905,6 +921,12 @@ async def handle_invoke(request: Request) -> Response:
             use_case = resolve_use_case(use_case, stored_use_case)
             require_not_retired(use_case)
             await _ensure_registry(use_case)
+            set_invocation_span_attributes(
+                trace.get_current_span(),
+                use_case=use_case,
+                cold_start=request.state.cold_start,
+                pre_handler_ms=request.state.pre_handler_ms,
+            )
         except (PersonaUnavailable, PersonaMismatch) as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
@@ -919,6 +941,8 @@ async def handle_invoke(request: Request) -> Response:
             model_selection=model_selection,
             persistence_budget=persistence_budget,
             persistence_allowed=persistence_allowed,
+            cold_start=request.state.cold_start,
+            pre_handler_ms=request.state.pre_handler_ms,
             token_source={
                 "mcp_token_body_keys": body_token_keys,
                 "mcp_token_tag_keys": tag_token_keys,

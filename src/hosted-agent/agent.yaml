@@ -26,11 +26,6 @@ environment_variables:
   # AI Services base URL (fallback if platform doesn't inject FOUNDRY_ENDPOINT)
   - name: AI_SERVICES_ENDPOINT
     value: ${AZURE_AI_PROJECT_ENDPOINT}
-  # Capture prompts + completions (gen_ai.input/output.messages) on the
-  # invoke_agent span so the Foundry Traces tab shows the LLM interaction
-  # details. Off by default in OTel; we opt in here.
-  - name: AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED
-    value: "true"
   # Azure service endpoints (injected by Bicep / azd env)
   - name: COSMOS_DB_ENDPOINT
     value: ${AZURE_COSMOS_DB_ENDPOINT}

@@ -39,12 +39,14 @@ from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, Us
 from app.observability import (
     input_token_source_histogram,
     operation_duration_histogram,
+    safe_use_case_id,
+    set_invocation_span_attributes,
     token_usage_histogram,
     tool_call_count_histogram,
     tool_duration_histogram,
 )
 from app.services.model_routing import ModelRole, ModelRouting
-from app.services.skill_tools import ALL_TOOLS, _ctx_conversation_id, _ctx_eval_run_id, _ctx_use_case
+from app.services.skill_tools import ALL_TOOLS, _ctx_eval_run_id, _ctx_use_case
 
 if TYPE_CHECKING:
     from app.services.cosmos_service import CosmosService
@@ -69,6 +71,8 @@ class InvocationTelemetry:
     pre_handler_remainder_ms: int | None = None
     in_handler_duration_ms: int | None = None
     post_handler_remainder_ms: int | None = None
+    cold_start: bool = False
+    pre_handler_ms: int | None = None
     _span: trace.Span | None = field(default=None, init=False, repr=False)
     _span_attached_at: float | None = field(default=None, init=False, repr=False)
 
@@ -722,11 +726,9 @@ class CopilotAgent:
         if not self._use_azure_provider:
             span_attrs["gen_ai.system"] = "github"
             span_attrs["gen_ai.provider.name"] = "github"
-            span_attrs["server.address"] = "api.githubcopilot.com"
         else:
             span_attrs["gen_ai.system"] = "openai"
             span_attrs["gen_ai.provider.name"] = "azure.ai.openai"
-            span_attrs["server.address"] = self.settings.llm_gateway_base_url or self.settings.foundry_endpoint
         with tracer.start_as_current_span(
             "create_agent kratos-agent",
             kind=trace.SpanKind.CLIENT,
@@ -1078,10 +1080,7 @@ class CopilotAgent:
 
         with tracer.start_as_current_span(
             "request.admission",
-            attributes={
-                "kratos.phase": "request_admission",
-                "kratos.conversation_id": conversation_id,
-            },
+            attributes={"kratos.phase": "request_admission"},
         ):
             selected = self._conversation_use_cases.get(conversation_id, DEFAULT_USE_CASE)
             if use_case in RETIRED_PERSONAS or selected in RETIRED_PERSONAS:
@@ -1094,23 +1093,12 @@ class CopilotAgent:
                 return
 
         # Propagate kratos context into tool spans via ContextVars
-        _ctx_conversation_id.set(conversation_id)
         if use_case:
             _ctx_use_case.set(use_case)
         if eval_run_id:
             _ctx_eval_run_id.set(eval_run_id)
 
-        _content_recording = (
-            os.environ.get("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", "").lower() == "true"
-            or os.environ.get("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "").lower() == "true"
-        )
-
         _github = not self._use_azure_provider
-        _server_addr = (
-            "api.githubcopilot.com"
-            if _github
-            else (self.settings.llm_gateway_base_url or self.settings.foundry_endpoint)
-        )
         _invoke_span_attrs: dict = {
             "gen_ai.operation.name": "invoke_agent",
             "gen_ai.system": "github" if _github else "openai",
@@ -1121,12 +1109,8 @@ class CopilotAgent:
             "gen_ai.agents.id": "kratos-agent",
             "gen_ai.agents.name": "kratos-agent",
             "gen_ai.agent.version": "0.1.0",
-            "gen_ai.conversation.id": conversation_id,
-            "kratos.conversation_id": conversation_id,
-            "server.address": _server_addr,
         }
         if invocation_telemetry:
-            _invoke_span_attrs["kratos.invocation_id"] = invocation_telemetry.invocation_id
             _invoke_span_attrs["kratos.request_stage"] = "in-handler"
         with tracer.start_as_current_span(
             "invoke_agent kratos-agent",
@@ -1135,8 +1119,12 @@ class CopilotAgent:
         ) as span:
             if invocation_telemetry:
                 invocation_telemetry.attach_span(span)
-            if use_case:
-                span.set_attribute("kratos.use_case", str(use_case))
+            set_invocation_span_attributes(
+                span,
+                use_case=use_case,
+                cold_start=invocation_telemetry.cold_start if invocation_telemetry else False,
+                pre_handler_ms=invocation_telemetry.pre_handler_ms if invocation_telemetry else None,
+            )
             if eval_run_id:
                 span.set_attribute("kratos.eval_run_id", str(eval_run_id))
             queue: asyncio.Queue = asyncio.Queue()
@@ -1162,7 +1150,6 @@ class CopilotAgent:
                     "session_skill.prepare",
                     attributes={
                         "kratos.phase": "session_skill_preparation",
-                        "kratos.conversation_id": conversation_id,
                     },
                 ):
                     session = await self._get_or_create_session(
@@ -1234,7 +1221,6 @@ class CopilotAgent:
                                     attributes={
                                         "gen_ai.operation.name": "chat",
                                         "gen_ai.request.model": model,
-                                        "kratos.conversation_id": cid,
                                     },
                                 )
 
@@ -1363,7 +1349,6 @@ class CopilotAgent:
                                             "gen_ai.operation.name": "invoke_agent",
                                             "gen_ai.agent.name": agent_name,
                                             "gen_ai.request.model": model,
-                                            "kratos.conversation_id": cid,
                                         },
                                     )
                                 else:
@@ -1458,12 +1443,10 @@ class CopilotAgent:
                                         "gen_ai.tool.name": tool_name,
                                         "gen_ai.tool.call.id": str(tool_call_id),
                                         "gen_ai.tool.type": "function",
-                                        "gen_ai.tool.call.arguments": raw_input_str[:2000],
-                                        "kratos.conversation_id": cid,
                                     },
                                 )
-                                if use_case:
-                                    tool_span.set_attribute("kratos.use_case", str(use_case))
+                                if safe_id := safe_use_case_id(use_case):
+                                    tool_span.set_attribute("kratos.use_case", safe_id)
                                 if eval_run_id:
                                     tool_span.set_attribute("kratos.eval_run_id", str(eval_run_id))
                                 _tool_spans[tool_name] = tool_span
@@ -1548,16 +1531,12 @@ class CopilotAgent:
                                 if tool_span is not None:
                                     # Remove from stack by identity
                                     _tool_span_stack[:] = [(n, s) for n, s in _tool_span_stack if s is not tool_span]
-                                    output_str = str(
-                                        getattr(event.data, "output", "") or getattr(event.data, "result", "")
-                                    )[:2000]
-                                    tool_span.set_attribute("gen_ai.tool.call.result", output_str)
                                     if error:
                                         tool_span.set_attribute(
                                             "error.type",
                                             type(error).__name__ if not isinstance(error, str) else "tool_error",
                                         )
-                                        tool_span.set_status(trace.StatusCode.ERROR, str(error))
+                                        tool_span.set_status(trace.StatusCode.ERROR, "Tool execution failed")
                                     elif success is False:
                                         tool_span.set_attribute("error.type", "tool_execution_failed")
                                         tool_span.set_status(trace.StatusCode.ERROR, "Tool execution failed")
@@ -1667,7 +1646,6 @@ class CopilotAgent:
                     context=self._span_contexts.get(conversation_id),
                     attributes={
                         "kratos.phase": "response_streaming_finalization",
-                        "kratos.conversation_id": conversation_id,
                     },
                 ):
                     while True:
@@ -1693,30 +1671,6 @@ class CopilotAgent:
                 if ttft:
                     span.set_attribute("gen_ai.client.time_to_first_token_ms", int(ttft))
 
-                # Input/output/system content (opt-in, respects content recording env var)
-                if _content_recording:
-                    system_prompt = self._get_system_prompt(conversation_id)
-                    span.set_attribute(
-                        "gen_ai.system_instructions",
-                        json.dumps([{"type": "text", "content": system_prompt[:4000]}]),
-                    )
-                    span.set_attribute(
-                        "gen_ai.input.messages",
-                        json.dumps([{"role": "user", "parts": [{"type": "text", "content": message[:4000]}]}]),
-                    )
-                    full_response = "".join(self._response_parts.get(conversation_id, []))
-                    span.set_attribute(
-                        "gen_ai.output.messages",
-                        json.dumps(
-                            [
-                                {
-                                    "role": "assistant",
-                                    "parts": [{"type": "text", "content": full_response[:4000]}],
-                                    "finish_reason": "stop",
-                                }
-                            ]
-                        ),
-                    )
                 if tool_call_count == 0:
                     logger.warning(
                         "No tool events observed for conversation=%s prompt=%r",
