@@ -173,6 +173,25 @@ Runs the backend with SQLite and Azurite instead of Cosmos DB and Blob Storage, 
 
 Local data lives in `.local/`; edits under `use-cases/` apply immediately.
 
+## Backend CI
+
+Both `CI / backend-lint-test` and `CI Pipeline / Unit Tests` use Python 3.11
+and the committed `src/backend/uv.lock`, including the `dev` extra. Dependency
+downloads are cached; a stale lockfile fails the install rather than silently
+selecting new versions. Reproduce the checks from `src/backend`:
+
+```bash
+uv sync --locked --extra dev --python 3.11
+uv run --no-sync ruff check app/ tests/
+uv run --no-sync ruff format --check app/ tests/
+uv run --no-sync mypy app/ --ignore-missing-imports
+uv run --no-sync pytest tests/ -v --tb=short
+```
+
+Update test doubles when persistence contracts change, and keep workflow
+contract tests aligned with intentional trigger changes. CI does not retry or
+ignore failing tests.
+
 ## License
 
 MIT — inherited from [kratos-agent](https://github.com/aiappsgbb/kratos-agent).
