@@ -27,6 +27,12 @@ from app.models import (
     Message,
     MessageRole,
 )
+from app.observability import (
+    pre_handler_delay_ms,
+    replica_invocation_state,
+    safe_use_case_id,
+    set_invocation_span_attributes,
+)
 from app.personas import (
     require_available,
     require_identified_history,
@@ -86,22 +92,31 @@ def _save_streamed_file(event_data: dict) -> bool:
         return False
 
 
-async def _traced_proxy_events(foundry_proxy, **kwargs):
+async def _traced_proxy_events(
+    foundry_proxy,
+    *,
+    cold_start: bool = False,
+    pre_handler_ms: int | None = None,
+    **kwargs,
+):
     """Yield hosted-agent events while the outbound invocation span is active."""
     attributes = {
         "gen_ai.operation.name": "invoke_agent",
         "kratos.phase": "hosted_agent_proxy",
-        "kratos.conversation_id": str(kwargs.get("conversation_id", "")),
     }
-    if kwargs.get("use_case"):
-        attributes["kratos.use_case"] = str(kwargs["use_case"])
     if kwargs.get("eval_run_id"):
         attributes["kratos.eval_run_id"] = str(kwargs["eval_run_id"])
     with _tracer.start_as_current_span(
         "hosted_agent.invoke",
         kind=trace.SpanKind.CLIENT,
         attributes=attributes,
-    ):
+    ) as span:
+        set_invocation_span_attributes(
+            span,
+            use_case=kwargs.get("use_case"),
+            cold_start=cold_start,
+            pre_handler_ms=pre_handler_ms,
+        )
         async for event in foundry_proxy.invoke(**kwargs):
             yield event
 
@@ -117,6 +132,8 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     - done: Completion signal with metrics
     - error: Error details
     """
+    request.state.cold_start = replica_invocation_state.begin()
+    request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
     with (
         cosmos_persistence_budget(),
         _tracer.start_as_current_span(
@@ -188,15 +205,16 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
         await cosmos.release_conversation_lock(body.conversationId, run_lock)
         raise
 
-    # Stamp kratos attributes on the current (HTTP) span so every request is
-    # filterable by use-case, conversation, and optional eval run.
+    # Stamp safe correlation attributes on the current request span.
     eval_run_id = request.headers.get("x-kratos-eval-run-id") or ""
     request.state.eval_run_id = eval_run_id
     _span = trace.get_current_span()
-    if use_case:
-        _span.set_attribute("kratos.use_case", str(use_case))
-    if body.conversationId:
-        _span.set_attribute("kratos.conversation_id", str(body.conversationId))
+    set_invocation_span_attributes(
+        _span,
+        use_case=use_case,
+        cold_start=request.state.cold_start,
+        pre_handler_ms=request.state.pre_handler_ms,
+    )
     if eval_run_id:
         _span.set_attribute("kratos.eval_run_id", eval_run_id)
 
@@ -256,10 +274,9 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
             # can render meaningful waterfalls. The hosted Foundry agent emits
             # its own gen_ai spans to its private AppInsights — these manual
             # spans surface the same signal in the kratos-side trace tree.
-            common_attrs = {
-                "kratos.use_case": str(use_case) if use_case else "",
-                "kratos.conversation_id": str(body.conversationId),
-            }
+            common_attrs = {}
+            if safe_id := safe_use_case_id(use_case):
+                common_attrs["kratos.use_case"] = safe_id
             if eval_run_id:
                 common_attrs["kratos.eval_run_id"] = eval_run_id
             open_tool_spans: dict[str, Any] = {}
@@ -270,6 +287,8 @@ async def _chat(body: AgentRequest, request: Request) -> EventSourceResponse:
 
             async for event_dict in _traced_proxy_events(
                 foundry_proxy,
+                cold_start=request.state.cold_start,
+                pre_handler_ms=request.state.pre_handler_ms,
                 message=body.message,
                 conversation_id=body.conversationId,
                 use_case=use_case,

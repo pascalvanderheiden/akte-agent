@@ -191,8 +191,8 @@ async def test_copilot_agent_run_correlates_hosted_invocation(copilot_agent):
     invoke_span_call = next(call for call in start_span.call_args_list if call.args[0] == "invoke_agent kratos-agent")
     attributes = invoke_span_call.kwargs["attributes"]
     assert attributes["gen_ai.operation.name"] == "invoke_agent"
-    assert attributes["gen_ai.conversation.id"] == "synthetic-conversation"
-    assert attributes["kratos.invocation_id"] == "synthetic-invocation"
+    assert "gen_ai.conversation.id" not in attributes
+    assert "kratos.invocation_id" not in attributes
     assert attributes["kratos.request_stage"] == "in-handler"
     span.set_attribute.assert_any_call("kratos.use_case", "synthetic-use-case")
     span.set_attribute.assert_any_call("kratos.eval_run_id", "synthetic-eval")
@@ -498,10 +498,8 @@ async def test_subagent_events_include_name_and_actual_model(copilot_agent):
 
 
 @pytest.mark.asyncio
-async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent, monkeypatch):
-    """Input token source estimates are recorded without enabling content capture."""
-    monkeypatch.delenv("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", raising=False)
-    monkeypatch.delenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", raising=False)
+async def test_input_token_source_metrics_reconcile_recorded_input(copilot_agent):
+    """Input token source estimates are recorded without capturing prompt content."""
     copilot_agent.system_prompt = "persona instructions"
     mock_session = AsyncMock()
     mock_client = AsyncMock()

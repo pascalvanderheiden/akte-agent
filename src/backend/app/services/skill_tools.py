@@ -18,6 +18,7 @@ from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.observability import safe_use_case_id
 from app.services.model_routing import AuxiliaryTask, ModelRouting
 
 logger = logging.getLogger(__name__)
@@ -27,18 +28,14 @@ tracer = trace.get_tracer(__name__)
 # ─── same kratos attributes as the parent invoke_agent span.               ─────
 
 _ctx_use_case: ContextVar[str] = ContextVar("kratos_use_case", default="")
-_ctx_conversation_id: ContextVar[str] = ContextVar("kratos_conversation_id", default="")
 _ctx_eval_run_id: ContextVar[str] = ContextVar("kratos_eval_run_id", default="")
 
 
 def _set_kratos_attrs(span: trace.Span) -> None:
     """Stamp kratos.* attributes on *span* from the active context vars."""
     use_case = _ctx_use_case.get()
-    if use_case:
-        span.set_attribute("kratos.use_case", use_case)
-    conv_id = _ctx_conversation_id.get()
-    if conv_id:
-        span.set_attribute("kratos.conversation_id", conv_id)
+    if safe_id := safe_use_case_id(use_case):
+        span.set_attribute("kratos.use_case", safe_id)
     eval_run_id = _ctx_eval_run_id.get()
     if eval_run_id:
         span.set_attribute("kratos.eval_run_id", eval_run_id)

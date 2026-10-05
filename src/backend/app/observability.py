@@ -1,7 +1,13 @@
 """OpenTelemetry setup for distributed tracing and metrics."""
 
 import logging
+import math
 import os
+import re
+import threading
+import time
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from opentelemetry import _logs, metrics, trace
@@ -57,11 +63,117 @@ _DURATION_BUCKETS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12,
 
 # Module-level reference for the tracer provider (used by instrument_fastapi_app)
 _tracer_provider: TracerProvider | None = None
+_USE_CASE_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
+
+
+class ReplicaInvocationState:
+    """Track whether this process has handled its first real invocation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._invoked = False
+
+    def begin(self) -> bool:
+        with self._lock:
+            cold_start = not self._invoked
+            self._invoked = True
+            return cold_start
+
+
+replica_invocation_state = ReplicaInvocationState()
+
+
+def disable_genai_content_recording() -> None:
+    os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "false"
+    os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "false"
+
+
+def safe_use_case_id(value: str | None) -> str | None:
+    """Return a synthetic slug ID suitable for span attributes."""
+    return value if value and _USE_CASE_ID_RE.fullmatch(value) else None
+
+
+def pre_handler_delay_ms(headers: Mapping[str, str], now: float | None = None) -> int | None:
+    """Return elapsed time from a recognized platform request-entry header."""
+    request_entry: float | None = None
+    for name in ("x-request-start", "x-envoy-request-start-time"):
+        value = headers.get(name)
+        if not value:
+            continue
+        try:
+            if name == "x-request-start":
+                timestamp = value.strip()
+                if timestamp.startswith("t="):
+                    timestamp = timestamp[2:]
+                request_entry = float(timestamp)
+                if request_entry >= 100_000_000_000:
+                    request_entry /= 1000
+            else:
+                try:
+                    parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    from email.utils import parsedate_to_datetime
+
+                    parsed = parsedate_to_datetime(value.strip())
+                request_entry = parsed.replace(tzinfo=parsed.tzinfo or UTC).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            request_entry = None
+        if request_entry is not None and not math.isfinite(request_entry):
+            request_entry = None
+        if request_entry is not None:
+            break
+
+    if request_entry is None:
+        return None
+    elapsed = (time.time() if now is None else now) - request_entry
+    if not math.isfinite(elapsed):
+        return None
+    elapsed_ms = int(elapsed * 1000)
+    return elapsed_ms if 0 <= elapsed_ms <= 86_400_000 else None
+
+
+def set_invocation_span_attributes(
+    span: trace.Span,
+    *,
+    use_case: str | None = None,
+    cold_start: bool = False,
+    pre_handler_ms: int | None = None,
+) -> None:
+    """Attach only synthetic correlation and platform timing metadata to a span."""
+    span_context = span.get_span_context()
+    if (
+        isinstance(span_context.trace_id, int)
+        and span_context.trace_id > 0
+        and isinstance(span_context.span_id, int)
+        and span_context.span_id > 0
+    ):
+        trace_id = trace.format_trace_id(span_context.trace_id)
+        span.set_attribute("kratos.trace_id", trace_id)
+        span.set_attribute("kratos.span_id", trace.format_span_id(span_context.span_id))
+        span.set_attribute("kratos.operation_id", trace_id)
+
+    span.set_attribute(
+        "kratos.revision_name",
+        os.environ.get("CONTAINER_APP_REVISION") or os.environ.get("KRATOS_SOURCE_REVISION") or "unknown",
+    )
+    span.set_attribute("kratos.replica_name", os.environ.get("CONTAINER_APP_REPLICA_NAME") or "unknown")
+    span.set_attribute("kratos.cold_start", cold_start)
+    span.set_attribute("kratos.pre_handler_delay_available", pre_handler_ms is not None)
+    span.set_attribute(
+        "kratos.pre_handler_delay_source", "request_header" if pre_handler_ms is not None else "platform_logs"
+    )
+    if pre_handler_ms is not None:
+        span.set_attribute("kratos.pre_handler_delay_ms", pre_handler_ms)
+    safe_id = safe_use_case_id(use_case)
+    if safe_id:
+        span.set_attribute("kratos.use_case", safe_id)
 
 
 def setup_telemetry(settings: Settings) -> None:
     """Configure OpenTelemetry with Azure Monitor exporters (traces, metrics, logs/events)."""
     global _tracer_provider
+
+    disable_genai_content_recording()
 
     resource = Resource.create(
         {
@@ -146,10 +258,6 @@ def setup_telemetry(settings: Settings) -> None:
         logger.info("OpenAI SDK tracing instrumented")
     except Exception:
         logger.warning("Failed to instrument OpenAI SDK — model call traces will not be captured")
-
-    # Enable GenAI content recording if the env var is set
-    if os.environ.get("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", "").lower() == "true":
-        logger.info("GenAI content recording enabled — prompts and completions will be captured in traces")
 
     logger.info("OpenTelemetry initialized — service=%s", settings.otel_service_name)
 
