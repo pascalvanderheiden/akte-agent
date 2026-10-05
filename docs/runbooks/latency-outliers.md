@@ -116,7 +116,9 @@ Use only these fields to join telemetry and communicate an investigation:
   span ID) establish trace and span relationships.
 - `kratos.invocation_id` identifies the run across invocation spans.
 - Revision name, replica name, and the cold-start boolean distinguish runtime
-  instances and first-use latency.
+  instances and first-use latency. If any is absent from the span, correlate
+  with Container Apps/platform logs and record the field as unavailable rather
+  than treating its absence as a negative value.
 - `kratos.use_case` is allowed only when it is a synthetic persona/use-case ID.
 - `kratos.request_stage.pre_handler_remainder_ms` and the phase span durations
   provide timing, not content.
