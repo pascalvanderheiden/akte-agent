@@ -1149,6 +1149,14 @@ class CopilotAgent:
             self._response_parts[conversation_id] = []  # reset for this turn
             localized_message = localize_turn(message, locale)
 
+            def finish_model_span(error: str | None = None) -> None:
+                model_span = self._active_model_spans.pop(conversation_id, None)
+                if model_span is not None:
+                    if error:
+                        model_span.set_attribute("error.type", error)
+                        model_span.set_status(trace.StatusCode.ERROR, error)
+                    model_span.end()
+
             try:
                 with tracer.start_as_current_span(
                     "session_skill.prepare",
@@ -1173,14 +1181,6 @@ class CopilotAgent:
                 if not hasattr(self, "_span_contexts"):
                     self._span_contexts: dict[str, otel_context.Context] = {}
                 self._span_contexts[conversation_id] = trace.set_span_in_context(span)
-
-                def finish_model_span(error: str | None = None) -> None:
-                    model_span = self._active_model_spans.pop(conversation_id, None)
-                    if model_span is not None:
-                        if error:
-                            model_span.set_attribute("error.type", error)
-                            model_span.set_status(trace.StatusCode.ERROR, error)
-                        model_span.end()
 
                 # Register the event handler ONCE per session, not per run() call.
                 # The handler routes events to whatever queue is active for that conversation.

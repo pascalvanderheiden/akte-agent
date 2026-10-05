@@ -14,7 +14,7 @@ from typing import Any
 
 import aiohttp
 from azure.identity.aio import DefaultAzureCredential
-from opentelemetry import propagate
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from app.config import Settings
 from app.locale import Locale
@@ -333,7 +333,7 @@ class FoundryAgentProxy:
             headers["x-kratos-eval-run-id"] = str(eval_run_id)
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        propagate.inject(headers)
+        TraceContextTextMapPropagator().inject(headers)
         payload: dict[str, Any] = {
             "input": input_text,
             "conversationId": conversation_id,

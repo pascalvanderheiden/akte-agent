@@ -117,9 +117,12 @@ async def chat(body: AgentRequest, request: Request) -> EventSourceResponse:
     - done: Completion signal with metrics
     - error: Error details
     """
-    with cosmos_persistence_budget(), _tracer.start_as_current_span(
-        "request.admission",
-        attributes={"kratos.phase": "request_admission"},
+    with (
+        cosmos_persistence_budget(),
+        _tracer.start_as_current_span(
+            "request.admission",
+            attributes={"kratos.phase": "request_admission"},
+        ),
     ):
         return await _chat(body, request)
 
