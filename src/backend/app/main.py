@@ -124,12 +124,8 @@ def _start_warm_pool_tasks(
         proxy.set_warmup_state("ready")
         return None, None
 
-    warmup_task = asyncio.create_task(
-        _run_initial_warmup(proxy, settings.effective_warm_pool_warmup_timeout_s)
-    )
-    keep_warm_task = asyncio.create_task(
-        _keep_warm_loop(proxy, settings.keep_warm_interval_s, warmup_task)
-    )
+    warmup_task = asyncio.create_task(_run_initial_warmup(proxy, settings.effective_warm_pool_warmup_timeout_s))
+    keep_warm_task = asyncio.create_task(_keep_warm_loop(proxy, settings.keep_warm_interval_s, warmup_task))
     return warmup_task, keep_warm_task
 
 
