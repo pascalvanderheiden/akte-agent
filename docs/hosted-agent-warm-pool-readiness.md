@@ -30,9 +30,14 @@ which remains healthy while the warm pool is warming, so warm-up does not
 restart a functioning container.
 
 The bootstrap image does not implement these health endpoints, so the initial
-bootstrap revision is created without HTTP probes. The postdeploy hook applies
-the configured probes after `azd deploy` replaces it with the application
-image; later provisions keep the probes on the deployed image.
+bootstrap revision is created without HTTP probes. The predeploy hook applies
+the configured probes before `azd deploy` replaces it with the application
+image. The image update therefore creates the first application revision with
+readiness already configured; in single-revision mode, ingress continues to
+serve the previous revision until the new revision reports `ready` or
+`degraded`. Probe settings are root Bicep parameters and can be overridden
+through their `AGENT_SERVICE_*` azd environment variables. Later provisions
+keep the probes on the deployed image.
 
 Post-deploy smoke tests call the Container App through ingress. They do not
 require readiness to be true immediately after deployment; ingress exposes a

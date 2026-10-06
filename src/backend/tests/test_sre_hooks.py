@@ -642,6 +642,7 @@ def lifecycle_workspace(tmp_path: Path) -> Path:
     for name in ("sre-lib.sh", "sre-preflight.sh", "sre-setup.sh", "sre-telemetry.sh", "sre-github.py"):
         shutil.copy2(HOOKS / name, hooks / name)
     for name in (
+        "configure-agent-service-probes",
         "select-use-cases",
         "detect-container-apps",
         "grant-obo-consent",
@@ -717,6 +718,14 @@ def test_postdeploy_preserves_roles_and_noninteractive_upload(
     assert proc.returncode == 0
     assert proc.stdout.index("assign-agent-roles") < proc.stdout.index("postdeploy --from-deploy")
     assert cli_calls(log) == []
+
+
+def test_predeploy_configures_probes_before_image_deploy(fake_bin: Path, log: Path, lifecycle_workspace: Path) -> None:
+    hook = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text())["hooks"]["predeploy"]
+    proc = run_hook(SETUP, fake_bin, log, command=hook["run"], cwd=lifecycle_workspace)
+    assert proc.returncode == 0
+    assert proc.stdout.index("configure-agent-service-probes") < proc.stdout.index("KRATOS_BUILD_TS=")
+    assert cli_calls(log, "azd", ("env", "set"))
 
 
 def test_workflow_deploys_main_and_deploy_only_does_not_configure_or_provision_sre() -> None:

@@ -17,6 +17,24 @@
     "agentServiceExists": {
       "value": "${SERVICE_AGENT_SERVICE_RESOURCE_EXISTS=false}"
     },
+    "agentServiceReadinessProbeFailureWindowSeconds": {
+      "value": "${AGENT_SERVICE_READINESS_PROBE_FAILURE_WINDOW_SECONDS=100}"
+    },
+    "agentServiceReadinessProbeTimeoutSeconds": {
+      "value": "${AGENT_SERVICE_READINESS_PROBE_TIMEOUT_SECONDS=5}"
+    },
+    "agentServiceLivenessProbePeriodSeconds": {
+      "value": "${AGENT_SERVICE_LIVENESS_PROBE_PERIOD_SECONDS=30}"
+    },
+    "agentServiceLivenessProbeFailureThreshold": {
+      "value": "${AGENT_SERVICE_LIVENESS_PROBE_FAILURE_THRESHOLD=3}"
+    },
+    "agentServiceLivenessProbeTimeoutSeconds": {
+      "value": "${AGENT_SERVICE_LIVENESS_PROBE_TIMEOUT_SECONDS=5}"
+    },
+    "agentServiceLivenessProbeInitialDelaySeconds": {
+      "value": "${AGENT_SERVICE_LIVENESS_PROBE_INITIAL_DELAY_SECONDS=30}"
+    },
     "oboMcpServerExists": {
       "value": "${SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS=false}"
     },
