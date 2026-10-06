@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.observability import instrument_fastapi_app, setup_telemetry
 from app.personas import RETIRED_PERSONAS
 from app.routers import (
@@ -50,7 +51,11 @@ logging.getLogger("azure.identity").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
-async def _keep_warm_loop(proxy: FoundryAgentProxy, interval_s: int) -> None:
+async def _keep_warm_loop(
+    proxy: FoundryAgentProxy,
+    interval_s: int,
+    initial_warmup_task: asyncio.Task[None] | None = None,
+) -> None:
     """Maintain the hosted-agent warm pool so new conversations start fast AND
     stay isolated.
 
@@ -61,7 +66,8 @@ async def _keep_warm_loop(proxy: FoundryAgentProxy, interval_s: int) -> None:
     conversation pops its own dedicated warm sandbox — fast and fully isolated.
     Runs until cancelled on shutdown; never lets a transient error kill the loop.
     """
-    import asyncio
+    if initial_warmup_task is not None:
+        await initial_warmup_task
 
     while True:
         try:
@@ -72,6 +78,68 @@ async def _keep_warm_loop(proxy: FoundryAgentProxy, interval_s: int) -> None:
         except Exception:  # noqa: BLE001 — keep the loop alive across any transient error
             logger.warning("Warm-pool: unexpected error in loop", exc_info=True)
         await asyncio.sleep(interval_s)
+
+
+async def _run_initial_warmup(proxy: FoundryAgentProxy, timeout_s: int) -> None:
+    """Fill the initial warm pool within one bounded startup window."""
+    try:
+        size, target = await asyncio.wait_for(proxy.maintain_warm_pool(), timeout=timeout_s)
+    except TimeoutError:
+        proxy.set_warmup_state("degraded")
+        logger.warning(
+            "warm_pool_initial_warmup outcome=timed_out pool_size=%d pool_target=%d timeout_s=%d",
+            proxy.warm_pool_size,
+            proxy.warm_pool_target,
+            timeout_s,
+        )
+    except asyncio.CancelledError:
+        proxy.set_warmup_state("degraded")
+        logger.info(
+            "warm_pool_initial_warmup outcome=cancelled pool_size=%d pool_target=%d",
+            proxy.warm_pool_size,
+            proxy.warm_pool_target,
+        )
+        raise
+    except Exception:  # noqa: BLE001 — startup readiness must never crash the service
+        proxy.set_warmup_state("degraded")
+        logger.exception(
+            "warm_pool_initial_warmup outcome=failed pool_size=%d pool_target=%d",
+            proxy.warm_pool_size,
+            proxy.warm_pool_target,
+        )
+    else:
+        state = "ready" if size >= target else "degraded"
+        outcome = "succeeded" if state == "ready" else "partial"
+        proxy.set_warmup_state(state)
+        log = logger.info if state == "ready" else logger.warning
+        log("warm_pool_initial_warmup outcome=%s pool_size=%d pool_target=%d", outcome, size, target)
+
+
+def _start_warm_pool_tasks(
+    proxy: FoundryAgentProxy,
+    settings: Settings,
+) -> tuple[asyncio.Task[None] | None, asyncio.Task[None] | None]:
+    """Start initial fill and periodic maintenance when warm-pooling is enabled."""
+    if not settings.keep_warm_enabled or settings.is_local_mode or settings.warm_pool_size <= 0:
+        proxy.set_warmup_state("ready")
+        return None, None
+
+    warmup_task = asyncio.create_task(
+        _run_initial_warmup(proxy, settings.effective_warm_pool_warmup_timeout_s)
+    )
+    keep_warm_task = asyncio.create_task(
+        _keep_warm_loop(proxy, settings.keep_warm_interval_s, warmup_task)
+    )
+    return warmup_task, keep_warm_task
+
+
+async def _stop_warm_pool_tasks(*tasks: asyncio.Task[None] | None) -> None:
+    """Cancel and await warm-pool tasks during application shutdown."""
+    active_tasks = [task for task in tasks if task is not None]
+    for task in active_tasks:
+        task.cancel()
+    if active_tasks:
+        await asyncio.gather(*active_tasks, return_exceptions=True)
 
 
 @asynccontextmanager
@@ -150,16 +218,14 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # Start the keep-warm background task so the hosted-agent container never
     # scales to zero (avoids cold-start latency and gateway 408s). Skipped in
     # local mode where the hosted agent is a localhost stub.
-    keep_warm_task = None
-    if settings.keep_warm_enabled and not settings.is_local_mode:
-        import asyncio
-
-        keep_warm_task = asyncio.create_task(_keep_warm_loop(foundry_proxy, settings.keep_warm_interval_s))
+    warmup_task, keep_warm_task = _start_warm_pool_tasks(foundry_proxy, settings)
+    if keep_warm_task is not None:
         logger.info(
-            "Warm-pool task started — maintaining %d pre-warmed sandboxes, refresh every %ds",
+            "Warm-pool tasks started — maintaining %d pre-warmed sandboxes, refresh every %ds",
             settings.warm_pool_size,
             settings.keep_warm_interval_s,
         )
+    application.state.warmup_task = warmup_task
     application.state.keep_warm_task = keep_warm_task
 
     # Initialize Eval storage + service (per-use-case scenarios, runs, results)
@@ -176,13 +242,7 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Cleanup
-    if keep_warm_task is not None:
-        import asyncio
-        import contextlib
-
-        keep_warm_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await keep_warm_task
+    await _stop_warm_pool_tasks(warmup_task, keep_warm_task)
     await eval_service.shutdown()
     await traces_service.close()
     await foundry_proxy.stop()

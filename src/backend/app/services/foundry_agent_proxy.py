@@ -10,7 +10,7 @@ import contextlib
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 from azure.identity.aio import DefaultAzureCredential
@@ -23,6 +23,7 @@ from app.services.cosmos_service import update_cosmos_persistence_budget_s
 logger = logging.getLogger(__name__)
 
 _AI_SCOPE = "https://ai.azure.com/.default"
+WarmupState = Literal["warming", "ready", "degraded"]
 
 # HTTP statuses returned by the hosted-agent gateway while the (scale-to-zero)
 # container is cold-starting or briefly overloaded. These are transient — the
@@ -76,6 +77,9 @@ class FoundryAgentProxy:
         self._pool_target: int = max(0, int(getattr(settings, "warm_pool_size", 2)))
         self._pool_lock = asyncio.Lock()
         self._replenishing = False
+        self._warmup_state: WarmupState = (
+            "ready" if self._local_mode or not settings.keep_warm_enabled or self._pool_target == 0 else "warming"
+        )
         logger.info(
             "FoundryAgentProxy endpoint: %s (local_mode=%s)",
             self._endpoint,
@@ -101,6 +105,20 @@ class FoundryAgentProxy:
     def warm_pool_size(self) -> int:
         """Current number of unclaimed pre-warmed sessions available."""
         return len(self._warm_pool)
+
+    @property
+    def warm_pool_target(self) -> int:
+        """Configured number of unclaimed pre-warmed sessions to maintain."""
+        return self._pool_target
+
+    @property
+    def warmup_state(self) -> WarmupState:
+        """Current initial warm-pool readiness state."""
+        return self._warmup_state
+
+    def set_warmup_state(self, state: WarmupState) -> None:
+        """Update the initial warm-pool readiness state."""
+        self._warmup_state = state
 
     async def _warmup_ping(self, session_id: str | None) -> tuple[bool, str | None, int, float]:
         """POST a lightweight ``{"warmup": true}`` ping to the hosted agent.

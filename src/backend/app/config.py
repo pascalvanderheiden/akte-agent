@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     keep_warm_enabled: bool = True
     keep_warm_interval_s: int = 300  # ping cadence; must be shorter than the per-session 15-min idle timeout
     warm_pool_size: int = 2  # number of pre-warmed, unclaimed sandboxes kept ready for new conversations
+    warm_pool_warmup_timeout_s: int | None = Field(
+        default=None,
+        gt=0,
+        le=90,
+        description="Initial warm-pool fill timeout; defaults to about 16s per target sandbox plus 5s, capped at 90s.",
+    )
 
     # Azure Blob Storage for skills
     blob_storage_endpoint: str = ""
@@ -108,6 +114,18 @@ class Settings(BaseSettings):
         if self.local_mode is not None:
             return self.local_mode
         return not self.cosmos_db_endpoint
+
+    @property
+    def effective_warm_pool_warmup_timeout_s(self) -> int:
+        """Return the configured initial fill timeout or its pool-size-based default.
+
+        A cold sandbox takes about 16 seconds to provision. Allow that per
+        configured sandbox plus 5 seconds of overhead, with a 90-second ceiling
+        to remain below typical container rollout probe limits.
+        """
+        if self.warm_pool_warmup_timeout_s is not None:
+            return self.warm_pool_warmup_timeout_s
+        return min(90, max(1, self.warm_pool_size) * 16 + 5)
 
     model_config = {"env_file": ".env", "extra": "ignore", "populate_by_name": True}
 
