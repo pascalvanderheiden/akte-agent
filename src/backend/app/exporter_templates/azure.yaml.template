@@ -17,6 +17,10 @@ metadata:
 
 services:
     ${slug}:
+        # azure.ai.agents >= 1.0.0-beta.18 no longer picks up agent.yaml
+        # implicitly; the runtime definition must be referenced explicitly.
+        # Path resolves relative to this file.
+        $ref: ./src/hosted-agent/agent.yaml
         project: ./src/hosted-agent
         host: azure.ai.agent
         language: docker
