@@ -128,11 +128,15 @@ async def test_initial_warmup_marks_partial_fill_degraded(client, metric_reader,
 
     assert proxy.warmup_state == "degraded"
     assert proxy.warm_pool_size == 1
-    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    duration = _metric_datapoint(metric_reader, "kratos.warm_pool.initial_warmup.duration")
+    target = _metric_datapoint(metric_reader, "kratos.warm_pool.target")
     available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert duration.count == 1 and duration.sum >= 0
+    assert target.sum == 2
     assert available.sum == 1
-    assert available.attributes == {"fallback_used": True}
+    assert duration.attributes == target.attributes == available.attributes == {"fallback_used": True}
     assert "outcome=partial" in caplog.text
+    assert "pool_target=2 pool_available=1 fallback_used=True" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
 
@@ -168,11 +172,15 @@ async def test_initial_warmup_timeout_is_degraded_and_retains_partial_pool(monke
     assert cancelled.is_set()
     assert proxy.warmup_state == "degraded"
     assert proxy.warm_pool_size == 1
-    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    duration = _metric_datapoint(metric_reader, "kratos.warm_pool.initial_warmup.duration")
+    target = _metric_datapoint(metric_reader, "kratos.warm_pool.target")
     available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert duration.count == 1 and duration.sum >= 0
+    assert target.sum == 2
     assert available.sum == 1
-    assert available.attributes == {"fallback_used": True}
+    assert duration.attributes == target.attributes == available.attributes == {"fallback_used": True}
     assert "outcome=timed_out" in caplog.text
+    assert "pool_target=2 pool_available=1 fallback_used=True" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
 
@@ -190,11 +198,15 @@ async def test_initial_warmup_exception_records_failure_metrics(client, metric_r
     await _run_initial_warmup(proxy, timeout_s=45)
 
     assert proxy.warmup_state == "degraded"
-    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    duration = _metric_datapoint(metric_reader, "kratos.warm_pool.initial_warmup.duration")
+    target = _metric_datapoint(metric_reader, "kratos.warm_pool.target")
     available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert duration.count == 1 and duration.sum >= 0
+    assert target.sum == 2
     assert available.sum == 0
-    assert available.attributes == {"fallback_used": True}
+    assert duration.attributes == target.attributes == available.attributes == {"fallback_used": True}
     assert "outcome=failed" in caplog.text
+    assert "pool_target=2 pool_available=0 fallback_used=True" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
 
