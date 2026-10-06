@@ -61,6 +61,41 @@ param staticWebAppUrl string = ''
 @description('True once azd has deployed an application image to this Container App (SERVICE_AGENT_SERVICE_RESOURCE_EXISTS)')
 param exists bool = false
 
+@description('Readiness probe period in seconds; together with the failure threshold its window must exceed the warm-pool warm-up timeout (at most 90 seconds).')
+@minValue(10)
+@maxValue(240)
+param readinessProbePeriodSeconds int = 10
+
+@description('Readiness probe failures allowed before the revision is considered unhealthy.')
+@minValue(1)
+@maxValue(10)
+param readinessProbeFailureThreshold int = 10
+
+@description('Readiness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param readinessProbeTimeoutSeconds int = 5
+
+@description('Liveness probe period in seconds.')
+@minValue(1)
+@maxValue(240)
+param livenessProbePeriodSeconds int = 30
+
+@description('Liveness probe failures allowed before the container is restarted.')
+@minValue(1)
+@maxValue(10)
+param livenessProbeFailureThreshold int = 3
+
+@description('Liveness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param livenessProbeTimeoutSeconds int = 5
+
+@description('Delay before liveness checks begin, independent of warm-pool readiness.')
+@minValue(1)
+@maxValue(60)
+param livenessProbeInitialDelaySeconds int = 30
+
 // Ingress port and bootstrap listener port are the same value by construction.
 var ingressTargetPort = 8000
 
@@ -151,6 +186,31 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: [
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/health/ready'
+                port: ingressTargetPort
+                scheme: 'HTTP'
+              }
+              periodSeconds: readinessProbePeriodSeconds
+              failureThreshold: readinessProbeFailureThreshold
+              timeoutSeconds: readinessProbeTimeoutSeconds
+            }
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health'
+                port: ingressTargetPort
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: livenessProbeInitialDelaySeconds
+              periodSeconds: livenessProbePeriodSeconds
+              failureThreshold: livenessProbeFailureThreshold
+              timeoutSeconds: livenessProbeTimeoutSeconds
+            }
+          ]
           env: concat(
             [
               { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
