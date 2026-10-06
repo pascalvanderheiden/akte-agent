@@ -125,6 +125,8 @@ jobs:
       # (the Azure Edgio CDN was retired). v2.x installs from GitHub releases.
       - name: Install azd
         uses: Azure/setup-azd@v2.4.0
+        with:
+          version: 1.35.0
 
       # `azure.yaml` declares the Foundry agents extension for the hosted
       # `kratos-agent` service, and azd refuses to auto-install extensions in
@@ -132,7 +134,7 @@ jobs:
       # otherwise every one of them fails with "Auto-installation is not
       # supported in CI/CD environments".
       - name: Install azd extensions
-        run: azd extension install azure.ai.agents --source azd
+        run: azd extension install azure.ai.agents --version 1.0.0-beta.18 --source azd
 
       - name: Azure Login
         uses: azure/login@v3

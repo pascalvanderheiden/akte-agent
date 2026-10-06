@@ -97,3 +97,15 @@ def test_deploy_pins_tenant_into_the_azd_environment():
         run = step.get("run", "")
         if any(cmd in run for cmd in ("azd deploy", "azd provision", "azd env refresh")):
             assert "AZURE_TENANT_ID" in job_env, step.get("name")
+
+
+def test_deploy_pins_validated_azd_toolchain_versions():
+    project = yaml.safe_load((REPO_ROOT / "azure.yaml").read_text())
+    assert project["requiredVersions"]["extensions"]["azure.ai.agents"] == "1.0.0-beta.18"
+
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["deploy"]["steps"]
+    setup = next(step for step in steps if step.get("name") == "Install azd")
+    assert setup["with"]["version"] == "1.35.0"
+    extension = next(step for step in steps if step.get("name") == "Install azd extensions")
+    assert "--version 1.0.0-beta.18" in extension["run"]

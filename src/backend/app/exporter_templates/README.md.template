@@ -38,7 +38,7 @@ Cosmos persistence.
 - An Azure subscription with quota for AI Foundry + Cosmos DB
 - The `azd ai agents` extension:
   ```bash
-  azd extension install azure.ai.agents
+  azd extension install azure.ai.agents --version 1.0.0-beta.18
   ```
 
 ## Deploy
