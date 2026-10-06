@@ -6,7 +6,10 @@ from contextlib import suppress
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+from app import observability
 from app.config import Settings
 from app.main import _run_initial_warmup, _start_warm_pool_tasks, _stop_warm_pool_tasks
 from app.routers.health import router as health_router
@@ -32,6 +35,36 @@ def client():
     return TestClient(app), proxy
 
 
+@pytest.fixture
+def metric_reader(monkeypatch):
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    meter = provider.get_meter("warm-pool-tests")
+    monkeypatch.setattr(
+        observability,
+        "warm_pool_initial_warmup_duration_histogram",
+        meter.create_histogram("kratos.warm_pool.initial_warmup.duration", unit="s"),
+    )
+    monkeypatch.setattr(
+        observability,
+        "warm_pool_target_histogram",
+        meter.create_histogram("kratos.warm_pool.target", unit="{sandbox}"),
+    )
+    monkeypatch.setattr(
+        observability,
+        "warm_pool_available_histogram",
+        meter.create_histogram("kratos.warm_pool.available", unit="{sandbox}"),
+    )
+    yield reader
+    provider.shutdown()
+
+
+def _metric_datapoint(reader, name):
+    metrics = reader.get_metrics_data().resource_metrics[0].scope_metrics[0].metrics
+    metric = next(metric for metric in metrics if metric.name == name)
+    return metric.data.data_points[0]
+
+
 def test_readiness_transitions_and_liveness_is_unchanged(client):
     client, proxy = client
 
@@ -54,9 +87,12 @@ def test_readiness_transitions_and_liveness_is_unchanged(client):
 
 
 @pytest.mark.asyncio
-async def test_initial_warmup_marks_full_pool_ready(client):
+async def test_initial_warmup_records_full_pool_metrics_and_marks_ready(client, metric_reader, caplog, monkeypatch):
     endpoint_client, endpoint_proxy = client
     proxy = FakeProxy()
+    caplog.set_level("INFO")
+    timestamps = iter((10.0, 12.5))
+    monkeypatch.setattr("app.main.perf_counter", lambda: next(timestamps))
 
     async def maintain():
         return (2, 2)
@@ -69,9 +105,17 @@ async def test_initial_warmup_marks_full_pool_ready(client):
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json() == {"status": "ready"}
 
+    duration = _metric_datapoint(metric_reader, "kratos.warm_pool.initial_warmup.duration")
+    target = _metric_datapoint(metric_reader, "kratos.warm_pool.target")
+    available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert duration.sum == 2.5
+    assert target.sum == available.sum == 2
+    assert duration.attributes == target.attributes == available.attributes == {"fallback_used": False}
+    assert "outcome=succeeded duration_s=2.500 pool_target=2 pool_available=2 fallback_used=False" in caplog.text
+
 
 @pytest.mark.asyncio
-async def test_initial_warmup_marks_partial_fill_degraded(client):
+async def test_initial_warmup_marks_partial_fill_degraded(client, metric_reader, caplog):
     endpoint_client, endpoint_proxy = client
     proxy = FakeProxy(pool_size=1)
 
@@ -84,12 +128,17 @@ async def test_initial_warmup_marks_partial_fill_degraded(client):
 
     assert proxy.warmup_state == "degraded"
     assert proxy.warm_pool_size == 1
+    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert available.sum == 1
+    assert available.attributes == {"fallback_used": True}
+    assert "outcome=partial" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
 
 
 @pytest.mark.asyncio
-async def test_initial_warmup_timeout_is_degraded_and_retains_partial_pool(monkeypatch, client):
+async def test_initial_warmup_timeout_is_degraded_and_retains_partial_pool(monkeypatch, client, metric_reader, caplog):
     endpoint_client, endpoint_proxy = client
     proxy = FakeProxy(pool_size=1)
     started = asyncio.Event()
@@ -119,12 +168,17 @@ async def test_initial_warmup_timeout_is_degraded_and_retains_partial_pool(monke
     assert cancelled.is_set()
     assert proxy.warmup_state == "degraded"
     assert proxy.warm_pool_size == 1
+    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert available.sum == 1
+    assert available.attributes == {"fallback_used": True}
+    assert "outcome=timed_out" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
 
 
 @pytest.mark.asyncio
-async def test_initial_warmup_exception_is_degraded(client):
+async def test_initial_warmup_exception_records_failure_metrics(client, metric_reader, caplog):
     endpoint_client, endpoint_proxy = client
     proxy = FakeProxy()
 
@@ -136,8 +190,31 @@ async def test_initial_warmup_exception_is_degraded(client):
     await _run_initial_warmup(proxy, timeout_s=45)
 
     assert proxy.warmup_state == "degraded"
+    assert _metric_datapoint(metric_reader, "kratos.warm_pool.target").sum == 2
+    available = _metric_datapoint(metric_reader, "kratos.warm_pool.available")
+    assert available.sum == 0
+    assert available.attributes == {"fallback_used": True}
+    assert "outcome=failed" in caplog.text
     endpoint_proxy.set_warmup_state(proxy.warmup_state)
     assert endpoint_client.get("/health/ready").json()["status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_initial_warmup_telemetry_failure_does_not_break_readiness(monkeypatch):
+    proxy = FakeProxy()
+
+    async def maintain():
+        return (2, 2)
+
+    def fail_telemetry(*_args):
+        raise RuntimeError("metrics unavailable")
+
+    proxy.maintain_warm_pool = maintain
+    monkeypatch.setattr("app.main.record_initial_warmup_metrics", fail_telemetry)
+
+    await _run_initial_warmup(proxy, timeout_s=45)
+
+    assert proxy.warmup_state == "ready"
 
 
 @pytest.mark.parametrize(

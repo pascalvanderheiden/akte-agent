@@ -312,3 +312,34 @@ tool_duration_histogram = _meter.create_histogram(
     description="GenAI tool execution duration",
     unit="s",
 )
+
+warm_pool_initial_warmup_duration_histogram = _meter.create_histogram(
+    name="kratos.warm_pool.initial_warmup.duration",
+    description="Initial warm-pool fill duration",
+    unit="s",
+)
+
+warm_pool_target_histogram = _meter.create_histogram(
+    name="kratos.warm_pool.target",
+    description="Target number of warm-pool sandboxes",
+    unit="{sandbox}",
+)
+
+warm_pool_available_histogram = _meter.create_histogram(
+    name="kratos.warm_pool.available",
+    description="Available warm-pool sandboxes after initial fill",
+    unit="{sandbox}",
+)
+
+
+def record_initial_warmup_metrics(
+    duration_s: float,
+    target: int,
+    available: int,
+    fallback_used: bool,
+) -> None:
+    """Record the initial warm-pool fill outcome."""
+    attributes = {"fallback_used": fallback_used}
+    warm_pool_initial_warmup_duration_histogram.record(duration_s, attributes)
+    warm_pool_target_histogram.record(target, attributes)
+    warm_pool_available_histogram.record(available, attributes)

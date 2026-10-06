@@ -5,12 +5,13 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
-from app.observability import instrument_fastapi_app, setup_telemetry
+from app.observability import instrument_fastapi_app, record_initial_warmup_metrics, setup_telemetry
 from app.personas import RETIRED_PERSONAS
 from app.routers import (
     admin_analysis,
@@ -82,37 +83,52 @@ async def _keep_warm_loop(
 
 async def _run_initial_warmup(proxy: FoundryAgentProxy, timeout_s: int) -> None:
     """Fill the initial warm pool within one bounded startup window."""
+    started_at = perf_counter()
+    error: Exception | None = None
+    cancelled = False
     try:
         size, target = await asyncio.wait_for(proxy.maintain_warm_pool(), timeout=timeout_s)
-    except TimeoutError:
-        proxy.set_warmup_state("degraded")
-        logger.warning(
-            "warm_pool_initial_warmup outcome=timed_out pool_size=%d pool_target=%d timeout_s=%d",
-            proxy.warm_pool_size,
-            proxy.warm_pool_target,
-            timeout_s,
-        )
-    except asyncio.CancelledError:
-        proxy.set_warmup_state("degraded")
-        logger.info(
-            "warm_pool_initial_warmup outcome=cancelled pool_size=%d pool_target=%d",
-            proxy.warm_pool_size,
-            proxy.warm_pool_target,
-        )
-        raise
-    except Exception:  # noqa: BLE001 — startup readiness must never crash the service
-        proxy.set_warmup_state("degraded")
-        logger.exception(
-            "warm_pool_initial_warmup outcome=failed pool_size=%d pool_target=%d",
-            proxy.warm_pool_size,
-            proxy.warm_pool_target,
-        )
-    else:
         state: WarmupState = "ready" if size >= target else "degraded"
         outcome = "succeeded" if state == "ready" else "partial"
         proxy.set_warmup_state(state)
-        log = logger.info if state == "ready" else logger.warning
-        log("warm_pool_initial_warmup outcome=%s pool_size=%d pool_target=%d", outcome, size, target)
+    except TimeoutError:
+        outcome = "timed_out"
+        size = proxy.warm_pool_size
+        target = proxy.warm_pool_target
+        proxy.set_warmup_state("degraded")
+    except asyncio.CancelledError:
+        outcome = "cancelled"
+        size = proxy.warm_pool_size
+        target = proxy.warm_pool_target
+        proxy.set_warmup_state("degraded")
+        cancelled = True
+    except Exception as exc:  # noqa: BLE001 — startup readiness must never crash the service
+        outcome = "failed"
+        size = proxy.warm_pool_size
+        target = proxy.warm_pool_target
+        error = exc
+        proxy.set_warmup_state("degraded")
+
+    duration_s = perf_counter() - started_at
+    fallback_used = proxy.warmup_state == "degraded"
+    try:
+        record_initial_warmup_metrics(duration_s, target, size, fallback_used)
+    except Exception:  # noqa: BLE001 — telemetry must never break startup or readiness
+        logger.warning("Failed to record initial warm-pool telemetry", exc_info=True)
+
+    message = (
+        "warm_pool_initial_warmup outcome=%s duration_s=%.3f pool_target=%d "
+        "pool_available=%d fallback_used=%s"
+    )
+    if error is not None:
+        logger.warning(message, outcome, duration_s, target, size, fallback_used, exc_info=error)
+    elif outcome in ("timed_out", "partial"):
+        logger.warning(message, outcome, duration_s, target, size, fallback_used)
+    else:
+        logger.info(message, outcome, duration_s, target, size, fallback_used)
+
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def _start_warm_pool_tasks(
