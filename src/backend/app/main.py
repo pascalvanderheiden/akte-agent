@@ -34,7 +34,7 @@ from app.services.blob_skill_service import BlobSkillService
 from app.services.cosmos_service import CosmosService
 from app.services.eval_service import EvalService
 from app.services.eval_storage import EvalStorage
-from app.services.foundry_agent_proxy import FoundryAgentProxy
+from app.services.foundry_agent_proxy import FoundryAgentProxy, WarmupState
 from app.services.model_routing import ModelRouting
 from app.services.skill_registry import SkillRegistry
 from app.services.traces_service import TracesService
@@ -108,7 +108,7 @@ async def _run_initial_warmup(proxy: FoundryAgentProxy, timeout_s: int) -> None:
             proxy.warm_pool_target,
         )
     else:
-        state = "ready" if size >= target else "degraded"
+        state: WarmupState = "ready" if size >= target else "degraded"
         outcome = "succeeded" if state == "ready" else "partial"
         proxy.set_warmup_state(state)
         log = logger.info if state == "ready" else logger.warning
