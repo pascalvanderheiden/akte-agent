@@ -168,7 +168,7 @@ def test_assemble_renders_azure_yaml_with_slug(exporter: ProjectExporter, tmp_pa
     assert "language: docker" in azure_yaml
     assert "context: ../.." in azure_yaml
     assert "remoteBuild: true" in azure_yaml
-    assert "azure.ai.agents:" in azure_yaml  # required extension
+    assert 'azure.ai.agents: "1.0.0-beta.18"' in azure_yaml
     for role in ("ORCHESTRATOR", "DEEP_REASONING", "FAST"):
         assert f"MODEL_DEPLOYMENT_{role}:" in azure_yaml
 
