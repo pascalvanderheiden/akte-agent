@@ -61,15 +61,13 @@ param staticWebAppUrl string = ''
 @description('True once azd has deployed an application image to this Container App (SERVICE_AGENT_SERVICE_RESOURCE_EXISTS)')
 param exists bool = false
 
-@description('Readiness probe period in seconds; together with the failure threshold its window must exceed the warm-pool warm-up timeout (at most 90 seconds).')
-@minValue(10)
-@maxValue(240)
-param readinessProbePeriodSeconds int = 10
+@description('Readiness probe failure window in seconds; every accepted value exceeds the warm-pool warm-up timeout (at most 90 seconds).')
+@minValue(91)
+@maxValue(2400)
+param readinessProbeFailureWindowSeconds int = 100
 
-@description('Readiness probe failures allowed before the revision is considered unhealthy.')
-@minValue(1)
-@maxValue(10)
-param readinessProbeFailureThreshold int = 10
+var readinessProbeFailureThreshold = 10
+var readinessProbePeriodSeconds = int((readinessProbeFailureWindowSeconds + readinessProbeFailureThreshold - 1) / readinessProbeFailureThreshold)
 
 @description('Readiness probe request timeout in seconds.')
 @minValue(1)
@@ -186,7 +184,7 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
-          probes: [
+          probes: containerImage.outputs.isBootstrap ? [] : [
             {
               type: 'Readiness'
               httpGet: {
@@ -260,3 +258,11 @@ output id string = agentService.id
 output name string = agentService.name
 output url string = 'https://${agentService.properties.configuration.ingress.fqdn}'
 output principalId string = agentService.identity.principalId
+output readinessProbePeriodSeconds int = readinessProbePeriodSeconds
+output readinessProbeFailureThreshold int = readinessProbeFailureThreshold
+output readinessProbeTimeoutSeconds int = readinessProbeTimeoutSeconds
+output livenessProbePeriodSeconds int = livenessProbePeriodSeconds
+output livenessProbeFailureThreshold int = livenessProbeFailureThreshold
+output livenessProbeTimeoutSeconds int = livenessProbeTimeoutSeconds
+output livenessProbeInitialDelaySeconds int = livenessProbeInitialDelaySeconds
+output ingressTargetPort int = ingressTargetPort

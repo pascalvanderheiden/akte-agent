@@ -29,6 +29,11 @@ values are Bicep parameters. Liveness is independent: it checks `/health`,
 which remains healthy while the warm pool is warming, so warm-up does not
 restart a functioning container.
 
+The bootstrap image does not implement these health endpoints, so the initial
+bootstrap revision is created without HTTP probes. The postdeploy hook applies
+the configured probes after `azd deploy` replaces it with the application
+image; later provisions keep the probes on the deployed image.
+
 Post-deploy smoke tests call the Container App through ingress. They do not
 require readiness to be true immediately after deployment; ingress exposes a
 replica after it becomes `ready` or `degraded`. The e2e smoke checks the

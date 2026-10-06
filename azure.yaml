@@ -118,6 +118,7 @@ hooks:
         kind: sh
         shell: sh
         run: |
+            ./hooks/configure-agent-service-probes.sh
             # Grant the Foundry hosted-agent instance identity its least-privilege
             # data-plane roles. This identity is created by `azd ai agent deploy`
             # after provisioning, so Bicep cannot assign its roles — this hook does.
