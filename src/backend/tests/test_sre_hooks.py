@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 HOOKS = REPO_ROOT / "hooks"
 PREFLIGHT = HOOKS / "sre-preflight.sh"
 SETUP = HOOKS / "sre-setup.sh"
+CONFIGURE_PROBES = HOOKS / "configure-agent-service-probes.sh"
 SUB_ID = "00000000-0000-0000-0000-000000000000"
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
 PRINCIPAL_ID = "22222222-2222-2222-2222-222222222222"
@@ -262,6 +263,39 @@ def cli_calls(log: Path, cli: str = "", verb: tuple[str, ...] = ()) -> list[list
         for call in calls
         if (not cli or call["cli"] == cli) and (not verb or call["args"][: len(verb)] == list(verb))
     ]
+
+
+def install_probe_fake_az(fake_bin: Path) -> None:
+    fake = fake_bin / "az"
+    fake.write_text(
+        f"""#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+call = {{"cli": "az", "args": args}}
+if args[:2] == ["containerapp", "list"]:
+    output = os.environ.get("PROBE_APP_NAME", "agent-demo")
+elif args[:2] == ["containerapp", "show"]:
+    query = args[args.index("--query") + 1]
+    output = (
+        "/subscriptions/demo/resourceGroups/demo/providers/Microsoft.App/containerApps/agent-demo"
+        if query == "id"
+        else os.environ["PROBE_TEMPLATE"]
+    )
+elif args[:1] == ["rest"]:
+    body_arg = args[args.index("--body") + 1]
+    call["body"] = json.loads(Path(body_arg.removeprefix("@")).read_text())
+    output = ""
+else:
+    print("Unexpected az call", file=sys.stderr)
+    sys.exit(99)
+with Path(os.environ["FAKE_LOG"]).open("a") as stream:
+    stream.write(json.dumps(call) + "\\n")
+print(output)
+"""
+    )
+    fake.chmod(0o755)
 
 
 def result_line(proc: subprocess.CompletedProcess[str]) -> str:
@@ -726,6 +760,118 @@ def test_predeploy_configures_probes_before_image_deploy(fake_bin: Path, log: Pa
     assert proc.returncode == 0
     assert proc.stdout.index("configure-agent-service-probes") < proc.stdout.index("KRATOS_BUILD_TS=")
     assert cli_calls(log, "azd", ("env", "set"))
+
+
+def test_probe_hook_uses_defaults_when_legacy_outputs_are_missing(fake_bin: Path, log: Path) -> None:
+    install_probe_fake_az(fake_bin)
+    template = {"containers": [{"name": "agent", "image": "agent:v1", "probes": []}]}
+    proc = run_hook(
+        CONFIGURE_PROBES,
+        fake_bin,
+        log,
+        {"AZURE_RESOURCE_GROUP": "rg-demo", "PROBE_TEMPLATE": json.dumps(template)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    patch = next(call for call in calls if call["args"][:1] == ["rest"])
+    assert patch["body"]["properties"]["template"]["containers"][0]["probes"] == [
+        {
+            "type": "Readiness",
+            "httpGet": {"path": "/health/ready", "port": 8000, "scheme": "HTTP"},
+            "periodSeconds": 10,
+            "failureThreshold": 10,
+            "timeoutSeconds": 5,
+        },
+        {
+            "type": "Liveness",
+            "httpGet": {"path": "/health", "port": 8000, "scheme": "HTTP"},
+            "initialDelaySeconds": 30,
+            "periodSeconds": 30,
+            "failureThreshold": 3,
+            "timeoutSeconds": 5,
+        },
+    ]
+
+
+def test_probe_hook_skips_patch_when_probes_already_match(fake_bin: Path, log: Path) -> None:
+    install_probe_fake_az(fake_bin)
+    probes = [
+        {
+            "type": "Readiness",
+            "httpGet": {"path": "/health/ready", "port": 8000, "scheme": "HTTP"},
+            "periodSeconds": 10,
+            "failureThreshold": 10,
+            "timeoutSeconds": 5,
+        },
+        {
+            "type": "Liveness",
+            "httpGet": {"path": "/health", "port": 8000, "scheme": "HTTP"},
+            "initialDelaySeconds": 30,
+            "periodSeconds": 30,
+            "failureThreshold": 3,
+            "timeoutSeconds": 5,
+        },
+    ]
+    template = {"containers": [{"name": "agent", "image": "agent:v1", "probes": probes}]}
+    proc = run_hook(
+        CONFIGURE_PROBES,
+        fake_bin,
+        log,
+        {"AZURE_RESOURCE_GROUP": "rg-demo", "PROBE_TEMPLATE": json.dumps(template)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "already match" in proc.stdout
+    assert not any(call[:2] == ["az", "rest"] for call in cli_calls(log))
+
+
+def test_probe_hook_patch_uses_configured_values_and_preserves_template(fake_bin: Path, log: Path) -> None:
+    install_probe_fake_az(fake_bin)
+    template = {
+        "containers": [{"name": "agent", "image": "agent:v1", "env": [{"name": "KEEP", "value": "yes"}], "probes": []}]
+    }
+    values = {
+        "AZURE_RESOURCE_GROUP": "rg-demo",
+        "AGENT_SERVICE_INGRESS_TARGET_PORT": "8080",
+        "AGENT_SERVICE_READINESS_PROBE_PERIOD_SECONDS": "12",
+        "AGENT_SERVICE_READINESS_PROBE_FAILURE_THRESHOLD": "8",
+        "AGENT_SERVICE_READINESS_PROBE_TIMEOUT_SECONDS": "4",
+        "AGENT_SERVICE_LIVENESS_PROBE_PERIOD_SECONDS": "20",
+        "AGENT_SERVICE_LIVENESS_PROBE_FAILURE_THRESHOLD": "2",
+        "AGENT_SERVICE_LIVENESS_PROBE_TIMEOUT_SECONDS": "3",
+        "AGENT_SERVICE_LIVENESS_PROBE_INITIAL_DELAY_SECONDS": "25",
+        "PROBE_TEMPLATE": json.dumps(template),
+    }
+    proc = run_hook(CONFIGURE_PROBES, fake_bin, log, values)
+    assert proc.returncode == 0, proc.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    patch = next(call for call in calls if call["args"][:1] == ["rest"])
+    updated = patch["body"]["properties"]["template"]
+    assert updated["containers"][0]["image"] == "agent:v1"
+    assert updated["containers"][0]["env"] == [{"name": "KEEP", "value": "yes"}]
+    assert updated["containers"][0]["probes"] == [
+        {
+            "type": "Readiness",
+            "httpGet": {"path": "/health/ready", "port": 8080, "scheme": "HTTP"},
+            "periodSeconds": 12,
+            "failureThreshold": 8,
+            "timeoutSeconds": 4,
+        },
+        {
+            "type": "Liveness",
+            "httpGet": {"path": "/health", "port": 8080, "scheme": "HTTP"},
+            "initialDelaySeconds": 25,
+            "periodSeconds": 20,
+            "failureThreshold": 2,
+            "timeoutSeconds": 3,
+        },
+    ]
+
+
+def test_probe_hook_still_requires_resource_group(fake_bin: Path, log: Path) -> None:
+    proc = run_hook(CONFIGURE_PROBES, fake_bin, log)
+    assert proc.returncode != 0
+    assert "AZURE_RESOURCE_GROUP is required" in proc.stderr
+    assert cli_calls(log) == []
 
 
 def test_workflow_deploys_main_and_deploy_only_does_not_configure_or_provision_sre() -> None:
