@@ -240,7 +240,7 @@ async def test_first_post_deploy_invocation_claims_warm_session_after_lifespan_r
     settings.persona_assets_root = str(tmp_path)
     started = asyncio.Event()
     release = asyncio.Event()
-    ready = asyncio.Event()
+    warmup_finished = asyncio.Event()
     periodic_wait = asyncio.Event()
 
     async def controlled_ping(session_id):
@@ -251,8 +251,8 @@ async def test_first_post_deploy_invocation_claims_warm_session_after_lifespan_r
 
     def set_state(state):
         FoundryAgentProxy.set_warmup_state(proxy, state)
-        if state == "ready":
-            ready.set()
+        if state in {"ready", "degraded"}:
+            warmup_finished.set()
 
     async def wait_for_next_maintenance(_interval):
         await periodic_wait.wait()
@@ -285,7 +285,7 @@ async def test_first_post_deploy_invocation_claims_warm_session_after_lifespan_r
         assert response.json() == {"status": "warming"}
         claim.assert_not_awaited()
         release.set()
-        await ready.wait()
+        await warmup_finished.wait()
         response = await client.get("/health/ready")
         assert response.status_code == 200
         assert response.json() == {"status": "ready"}
