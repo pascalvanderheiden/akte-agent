@@ -385,7 +385,11 @@ class BlobSkillService:
 
     async def close(self) -> None:
         """Clean up resources."""
-        if self._container_client:
-            await self._container_client.close()
-        if self._credential:
-            await self._credential.close()
+        client, self._container_client = self._container_client, None
+        credential, self._credential = self._credential, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
+            if credential is not None:
+                await credential.close()

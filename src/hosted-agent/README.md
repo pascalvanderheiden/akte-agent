@@ -18,7 +18,10 @@ Ship skill changes by editing `use-cases/` and redeploying this image.
 The Python process entry point initializes shared services before serving with
 the SDK's `run_async()`, on the same event loop. Initialization failure is
 logged and does not prevent the host from starting; the next invocation retries
-through the same single-flight initializer. Per-use-case registries remain lazy.
+through the same single-flight initializer. Failed attempts cancel and drain
+initializers and close partial services before a retry is allowed; services are
+published only after successful initialization. Telemetry remains process-owned
+and is not recreated on service retries. Per-use-case registries remain lazy.
 
 The inspected SDK (`azure-ai-agentserver-invocations` 1.2.0,
 `azure-ai-agentserver-core` 2.2.0) exposes an async server runner, but no

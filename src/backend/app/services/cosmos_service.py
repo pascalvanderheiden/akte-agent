@@ -175,6 +175,7 @@ class CosmosService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._client: CosmosClient | None = None
+        self._credential: DefaultAzureCredential | None = None
         self._conversations_container: Any = None
         self._messages_container: Any = None
         self._settings_container: Any = None
@@ -206,8 +207,8 @@ class CosmosService:
             await self._sqlite_initialize()
             return
 
-        credential = DefaultAzureCredential()
-        self._client = CosmosClient(self.settings.cosmos_db_endpoint, credential=credential)
+        self._credential = DefaultAzureCredential()
+        self._client = CosmosClient(self.settings.cosmos_db_endpoint, credential=self._credential)
 
         database = self._client.get_database_client(self.settings.cosmos_db_database)
 
@@ -320,23 +321,29 @@ class CosmosService:
 
     async def _fallback_to_sqlite(self) -> None:
         """Tear down the unusable Cosmos client and open the SQLite backend."""
-        client, self._client = self._client, None
         self._conversations_container = None
         self._messages_container = None
         self._settings_container = None
         self._sessions_container = None
-        if client is not None:
-            with contextlib.suppress(Exception):
-                await client.close()
+        with contextlib.suppress(Exception):
+            await self.close()
         await self._sqlite_initialize()
 
     async def close(self) -> None:
-        """Release backend resources (currently: the SQLite connection)."""
-        if self._sqlite_db is not None:
+        """Release the Cosmos client, credential, and SQLite connection."""
+        client, self._client = self._client, None
+        credential, self._credential = self._credential, None
+        database, self._sqlite_db = self._sqlite_db, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
             try:
-                await self._sqlite_db.close()
+                if credential is not None:
+                    await credential.close()
             finally:
-                self._sqlite_db = None
+                if database is not None:
+                    await database.close()
 
     # ─── SQLite backend ───────────────────────────────────────────────────────
 

@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from azure.core.exceptions import HttpResponseError
@@ -193,6 +193,134 @@ async def test_failed_shared_core_startup_can_be_retried(hosted, monkeypatch):
     assert hosted._startup_state == "ready"
     assert await hosted._ensure_shared_core() == "warm"
     assert startup_calls == 2
+
+
+@pytest.mark.parametrize(
+    "failure", ["cosmos", "blob", "copilot", "constructor", "after_init", "cancelled", "telemetry"]
+)
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_partial_startup_is_cleaned_before_retry(hosted, monkeypatch, failure, cleanup_fails):
+    settings = SimpleNamespace(environment="test", foundry_model_deployment="test-model")
+    monkeypatch.setattr(hosted, "get_settings", lambda: settings)
+    telemetry = Mock(side_effect=RuntimeError("synthetic startup failure") if failure == "telemetry" else None)
+    monkeypatch.setattr(hosted, "setup_telemetry", telemetry)
+    started = {name: asyncio.Event() for name in ("cosmos", "blob", "copilot")}
+    finished = set()
+    resources = {}
+    failing = True
+
+    def service(name):
+        async def initialize():
+            started[name].set()
+            try:
+                await asyncio.gather(*(event.wait() for event in started.values()))
+                if failing:
+                    if failure == name:
+                        raise RuntimeError("synthetic startup failure")
+                    if failure == "cancelled" and name == "cosmos":
+                        raise asyncio.CancelledError()
+                    if failure in started or failure == "cancelled":
+                        await asyncio.Event().wait()
+            finally:
+                finished.add(name)
+
+        async def close():
+            if failure != "constructor":
+                assert finished == set(started)
+            if cleanup_fails and name == "copilot":
+                raise RuntimeError("synthetic cleanup failure")
+
+        def set_cosmos_service(value):
+            if failing and failure == "after_init":
+                raise RuntimeError("synthetic startup failure")
+
+        def construct(value):
+            if failing and failure == "constructor" and name == "copilot":
+                raise RuntimeError("synthetic startup failure")
+            instance = SimpleNamespace(
+                initialize=initialize,
+                start=initialize,
+                close=AsyncMock(side_effect=close),
+                stop=AsyncMock(side_effect=close),
+                set_registries=Mock(),
+                set_cosmos_service=set_cosmos_service,
+                is_available=False,
+                unavailability_reason=None,
+            )
+            resources[name] = instance
+            return instance
+
+        return construct
+
+    monkeypatch.setattr(hosted, "CosmosService", service("cosmos"))
+    monkeypatch.setattr(hosted, "BlobSkillService", service("blob"))
+    monkeypatch.setattr(hosted, "CopilotAgent", service("copilot"))
+    expected_error = asyncio.CancelledError if failure == "cancelled" else RuntimeError
+    with pytest.raises(expected_error):
+        await asyncio.wait_for(hosted._ensure_shared_core(readiness_source="early_init"), timeout=2)
+
+    assert hosted._startup_state == "failed"
+    assert hosted._copilot_agent is hosted._cosmos_service is hosted._blob_service is None
+    assert hosted._settings is None
+    if failure not in ("constructor", "telemetry"):
+        assert finished == set(started)
+    for name, instance in resources.items():
+        (instance.stop if name == "copilot" else instance.close).assert_awaited_once()
+
+    old_resources = resources.copy()
+    failing = False
+    assert await hosted._ensure_shared_core() == "cold-initialized-by-this-request"
+    telemetry.assert_called_once_with(settings)
+    assert hosted._copilot_agent is resources["copilot"]
+    assert hosted._cosmos_service is resources["cosmos"]
+    assert hosted._blob_service is resources["blob"]
+    await hosted._shutdown()
+    for name, instance in resources.items():
+        assert instance is not old_resources.get(name)
+        (instance.stop if name == "copilot" else instance.close).assert_awaited_once()
+
+
+async def test_cosmos_close_releases_partial_azure_resources(monkeypatch):
+    from app.services import cosmos_service
+
+    credential = SimpleNamespace(close=AsyncMock())
+    client = SimpleNamespace(
+        get_database_client=Mock(side_effect=RuntimeError("synthetic startup failure")),
+        close=AsyncMock(side_effect=RuntimeError("synthetic close failure")),
+    )
+    monkeypatch.setattr(cosmos_service, "DefaultAzureCredential", lambda: credential)
+    monkeypatch.setattr(cosmos_service, "CosmosClient", lambda *args, **kwargs: client)
+    service = CosmosService(SimpleNamespace(cosmos_db_endpoint="synthetic", cosmos_db_database="test"))
+    with pytest.raises(RuntimeError, match="synthetic startup failure"):
+        await service.initialize()
+    with pytest.raises(RuntimeError, match="synthetic close failure"):
+        await service.close()
+    client.close.assert_awaited_once()
+    credential.close.assert_awaited_once()
+    await service.close()
+    client.close.assert_awaited_once()
+    credential.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("kind", ["blob", "copilot"])
+async def test_client_cleanup_failure_still_closes_credential(kind):
+    from app.services.blob_skill_service import BlobSkillService
+    from app.services.copilot_agent import CopilotAgent
+
+    settings = SimpleNamespace(use_cases_root="use-cases", copilot_model="", foundry_model_deployment="test-model")
+    service = BlobSkillService(settings) if kind == "blob" else CopilotAgent(settings)
+    credential = SimpleNamespace(close=AsyncMock())
+    service._credential = credential
+    cleanup = AsyncMock(side_effect=RuntimeError("synthetic close failure"))
+    if kind == "blob":
+        service._container_client = SimpleNamespace(close=cleanup)
+        close = service.close
+    else:
+        service._client = SimpleNamespace(stop=cleanup)
+        close = service.stop
+    with pytest.raises(RuntimeError, match="synthetic close failure"):
+        await close()
+    credential.close.assert_awaited_once()
 
 
 async def test_early_init_readiness_source_is_retained(hosted, monkeypatch):
