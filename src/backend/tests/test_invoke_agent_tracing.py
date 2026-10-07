@@ -11,6 +11,8 @@ from opentelemetry import baggage, propagate, trace
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach
 from opentelemetry.propagators.composite import CompositePropagator
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -94,10 +96,30 @@ async def test_proxy_propagates_w3c_trace_context_to_upstream_without_baggage(mo
 
 
 @pytest.mark.asyncio
-async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(monkeypatch):
+@pytest.mark.parametrize(
+    ("replica_invocation_outcome", "readiness_source", "cold_start"),
+    [
+        ("cold-initialized-by-this-request", "first_invocation_fallback", True),
+        ("joined-in-flight-initialization", "first_invocation_fallback", False),
+        ("warm", "early_init", False),
+    ],
+)
+async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(
+    monkeypatch,
+    replica_invocation_outcome,
+    readiness_source,
+    cold_start,
+):
     monkeypatch.setenv("AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED", "true")
     monkeypatch.setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
     exporter = InMemorySpanExporter()
+    metric_reader = InMemoryMetricReader()
+    metric_provider = MeterProvider(metric_readers=[metric_reader])
+    operation_duration = metric_provider.get_meter("invoke-agent-tests").create_histogram(
+        "gen_ai.client.operation.duration",
+        unit="s",
+    )
+    monkeypatch.setattr("app.services.copilot_agent.operation_duration_histogram", operation_duration)
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     tracer = provider.get_tracer(__name__)
@@ -141,7 +163,9 @@ async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(monkeypatch):
             telemetry = InvocationTelemetry(
                 invocation_id="synthetic-invocation",
                 handler_started_at=time.monotonic(),
-                cold_start=True,
+                cold_start=cold_start,
+                replica_invocation_state=replica_invocation_outcome,
+                readiness_source=readiness_source,
                 pre_handler_ms=42,
             )
             try:
@@ -177,7 +201,7 @@ async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(monkeypatch):
             conversation_id=user_identifier,
             use_case="akte-agent",
             mcp_access_tokens={"synthetic-server": sensitive_marker},
-            cold_start=True,
+            cold_start=cold_start,
             pre_handler_ms=42,
         ):
             pass
@@ -209,10 +233,31 @@ async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(monkeypatch):
         assert "kratos.revision_name" in attributes
         assert "kratos.replica_name" in attributes
         assert isinstance(attributes["kratos.cold_start"], bool)
-    assert proxy_span.attributes["kratos.cold_start"] is True
+    assert proxy_span.attributes["kratos.cold_start"] is cold_start
     assert proxy_span.attributes["kratos.pre_handler_delay_ms"] == 42
-    assert invoke_span.attributes["kratos.cold_start"] is True
+    assert invoke_span.attributes["kratos.cold_start"] is cold_start
+    assert invoke_span.attributes["kratos.replica_invocation_state"] == replica_invocation_outcome
+    assert invoke_span.attributes["kratos.readiness_source"] == readiness_source
+    assert invoke_span.attributes["kratos.cold_start"] is (
+        replica_invocation_outcome == "cold-initialized-by-this-request"
+    )
     assert invoke_span.attributes["kratos.pre_handler_delay_ms"] == 42
+    assert replica_invocation_outcome in {
+        "warm",
+        "cold-initialized-by-this-request",
+        "joined-in-flight-initialization",
+    }
+    assert readiness_source in {"early_init", "first_invocation_fallback"}
+    assert isinstance(invoke_span.attributes["kratos.cold_start"], bool)
+    assert isinstance(invoke_span.attributes["kratos.pre_handler_delay_ms"], int)
+
+    metric = next(
+        metric
+        for metric in metric_reader.get_metrics_data().resource_metrics[0].scope_metrics[0].metrics
+        if metric.name == "gen_ai.client.operation.duration"
+    )
+    assert metric.data.data_points[0].attributes["kratos.replica_invocation_state"] == replica_invocation_outcome
+    assert metric.data.data_points[0].attributes["kratos.readiness_source"] == readiness_source
 
     prohibited_data = (
         prompt,
@@ -267,6 +312,7 @@ async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(monkeypatch):
     assert child_duration_ns + unattributed_remainder_ns == parent_duration_ns
 
     provider.shutdown()
+    metric_provider.shutdown()
 
 
 def test_pre_handler_delay_uses_platform_entry_time_only():

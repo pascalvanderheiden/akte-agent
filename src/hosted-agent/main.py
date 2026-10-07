@@ -69,8 +69,9 @@ from app.models import (
     UserInputRequestEvent,
 )
 from app.observability import (
+    ReplicaInvocationOutcome,
     pre_handler_delay_ms,
-    replica_invocation_state,
+    record_hosted_agent_initialization_phases,
     set_invocation_span_attributes,
     setup_telemetry,
 )
@@ -114,6 +115,7 @@ _settings: Settings | None = None
 _startup_state: Literal["not_started", "in_progress", "ready", "failed"] = "not_started"
 _startup_task: asyncio.Task[None] | None = None
 _startup_lock = asyncio.Lock()
+_startup_readiness_source: Literal["early_init", "first_invocation_fallback"] = "first_invocation_fallback"
 
 # Lazy per-use-case loading. A pre-warmed sandbox is unclaimed, so at warm time
 # we don't yet know which use-case it will serve — loading all use-cases up
@@ -284,6 +286,10 @@ async def _startup() -> None:
 
     _startup_phases = phases
     _startup_total_ms = round((_time.monotonic() - t_start) * 1000, 1)
+    try:
+        record_hosted_agent_initialization_phases(phases)
+    except Exception:
+        logger.warning("Failed to record hosted-agent initialization metrics", exc_info=True)
 
     logger.info(
         "Kratos Hosted Agent core started in %.0fms (phases=%s) — environment=%s model=%s",
@@ -314,22 +320,25 @@ async def _run_shared_core_startup() -> None:
                 _startup_task = None
 
 
-async def _ensure_shared_core() -> Literal["cold-initialized", "joined", "warm"]:
+async def _ensure_shared_core(
+    readiness_source: Literal["early_init", "first_invocation_fallback"] = "first_invocation_fallback",
+) -> ReplicaInvocationOutcome:
     """Ensure shared startup completes, returning this caller's startup outcome."""
-    global _startup_state, _startup_task
+    global _startup_state, _startup_task, _startup_readiness_source
 
-    outcome: Literal["cold-initialized", "joined", "warm"]
+    outcome: ReplicaInvocationOutcome
     async with _startup_lock:
         if _startup_state == "ready":
             return "warm"
         if _startup_state == "in_progress":
             task = _startup_task
-            outcome = "joined"
+            outcome = "joined-in-flight-initialization"
         else:
             task = asyncio.create_task(_run_shared_core_startup())
             _startup_task = task
             _startup_state = "in_progress"
-            outcome = "cold-initialized"
+            _startup_readiness_source = readiness_source
+            outcome = "cold-initialized-by-this-request"
 
     if task is None:
         raise RuntimeError("Shared-core startup is in progress without a task")
@@ -461,6 +470,8 @@ async def _stream_response_impl(
     persistence_allowed: bool = True,
     persistence_observation: dict | None = None,
     cold_start: bool = False,
+    replica_invocation_outcome: ReplicaInvocationOutcome | None = None,
+    readiness_source: Literal["early_init", "first_invocation_fallback"] | None = None,
     pre_handler_ms: int | None = None,
 ):
     """Run the Copilot SDK agent and stream our SSE event schema."""
@@ -468,6 +479,8 @@ async def _stream_response_impl(
         invocation_id=invocation_id,
         handler_started_at=time.monotonic(),
         cold_start=cold_start,
+        replica_invocation_state=replica_invocation_outcome,
+        readiness_source=readiness_source,
         pre_handler_ms=pre_handler_ms,
     )
     total_tool_calls = 0
@@ -659,6 +672,8 @@ async def _stream_response(
     persistence_budget=None,
     persistence_allowed: bool = True,
     cold_start: bool = False,
+    replica_invocation_outcome: ReplicaInvocationOutcome | None = None,
+    readiness_source: Literal["early_init", "first_invocation_fallback"] | None = None,
     pre_handler_ms: int | None = None,
 ):
     """Run the hosted-agent stream under the invocation's shared Cosmos budget."""
@@ -691,6 +706,8 @@ async def _stream_response(
         persistence_allowed,
         persistence_observation,
         cold_start,
+        replica_invocation_outcome,
+        readiness_source,
         pre_handler_ms,
     )
     diagnostic_emitted = False
@@ -732,7 +749,10 @@ async def _stream_response(
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
     request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
-    request.state.shared_core_startup = await _ensure_shared_core()
+    request.state.replica_invocation_state = await _ensure_shared_core()
+    request.state.shared_core_startup = request.state.replica_invocation_state
+    request.state.readiness_source = _startup_readiness_source
+    request.state.cold_start = request.state.replica_invocation_state == "cold-initialized-by-this-request"
 
     # Read the request body exactly once and normalise it. The hosted agent is
     # invoked through several paths that frame the body differently:
@@ -762,7 +782,6 @@ async def handle_invoke(request: Request) -> Response:
             },
         )
 
-    request.state.cold_start = replica_invocation_state.begin()
     try:
         message = data.get("message") or data.get("input")
         if not isinstance(message, str) or not message.strip():
@@ -970,6 +989,8 @@ async def handle_invoke(request: Request) -> Response:
                 trace.get_current_span(),
                 use_case=use_case,
                 cold_start=request.state.cold_start,
+                replica_invocation_state=request.state.replica_invocation_state,
+                readiness_source=request.state.readiness_source,
                 pre_handler_ms=request.state.pre_handler_ms,
             )
         except (PersonaUnavailable, PersonaMismatch) as exc:
@@ -987,6 +1008,8 @@ async def handle_invoke(request: Request) -> Response:
             persistence_budget=persistence_budget,
             persistence_allowed=persistence_allowed,
             cold_start=request.state.cold_start,
+            replica_invocation_outcome=request.state.replica_invocation_state,
+            readiness_source=request.state.readiness_source,
             pre_handler_ms=request.state.pre_handler_ms,
             token_source={
                 "mcp_token_body_keys": body_token_keys,

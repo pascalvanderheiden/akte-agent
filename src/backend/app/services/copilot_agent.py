@@ -37,6 +37,7 @@ from app.config import Settings
 from app.locale import Locale, localize_turn
 from app.models import ContentEvent, ErrorEvent, ThoughtEvent, ToolCallEvent, UsageEvent, UserInputRequestEvent
 from app.observability import (
+    ReplicaInvocationOutcome,
     input_token_source_histogram,
     operation_duration_histogram,
     safe_use_case_id,
@@ -72,6 +73,8 @@ class InvocationTelemetry:
     in_handler_duration_ms: int | None = None
     post_handler_remainder_ms: int | None = None
     cold_start: bool = False
+    replica_invocation_state: ReplicaInvocationOutcome | None = None
+    readiness_source: str | None = None
     pre_handler_ms: int | None = None
     _span: trace.Span | None = field(default=None, init=False, repr=False)
     _span_attached_at: float | None = field(default=None, init=False, repr=False)
@@ -1123,6 +1126,10 @@ class CopilotAgent:
                 span,
                 use_case=use_case,
                 cold_start=invocation_telemetry.cold_start if invocation_telemetry else False,
+                replica_invocation_state=(
+                    invocation_telemetry.replica_invocation_state if invocation_telemetry else None
+                ),
+                readiness_source=invocation_telemetry.readiness_source if invocation_telemetry else None,
                 pre_handler_ms=invocation_telemetry.pre_handler_ms if invocation_telemetry else None,
             )
             if eval_run_id:
@@ -1698,6 +1705,16 @@ class CopilotAgent:
                     else self._conversation_plan_model(conversation_id)
                 )
                 orchestrator_attrs = self._genai_metric_attrs(ModelRole.ORCHESTRATOR.value, orchestrator_model)
+                if invocation_telemetry and invocation_telemetry.replica_invocation_state:
+                    orchestrator_attrs = {
+                        **orchestrator_attrs,
+                        "kratos.replica_invocation_state": invocation_telemetry.replica_invocation_state,
+                    }
+                if invocation_telemetry and invocation_telemetry.readiness_source is not None:
+                    orchestrator_attrs = {
+                        **orchestrator_attrs,
+                        "kratos.readiness_source": invocation_telemetry.readiness_source,
+                    }
                 orchestrator_prompt_tokens = sum(counts.get("input", 0) for _, counts in orchestrator_buckets)
                 tool_call_count_histogram.record(tool_call_count, orchestrator_attrs)
                 source_estimates = {
