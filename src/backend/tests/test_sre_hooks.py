@@ -867,6 +867,32 @@ def test_probe_hook_patch_uses_configured_values_and_preserves_template(fake_bin
     ]
 
 
+def test_probe_hook_omits_unsupported_top_level_scale_properties(fake_bin: Path, log: Path) -> None:
+    install_probe_fake_az(fake_bin)
+    template = {
+        "containers": [{"name": "agent", "image": "agent:v1", "probes": []}],
+        "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 10,
+            "cooldownPeriod": 300,
+            "pollingInterval": 30,
+        },
+    }
+    proc = run_hook(
+        CONFIGURE_PROBES,
+        fake_bin,
+        log,
+        {"AZURE_RESOURCE_GROUP": "rg-demo", "PROBE_TEMPLATE": json.dumps(template)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    patch = next(call for call in calls if call["args"][:1] == ["rest"])
+    assert patch["body"]["properties"]["template"]["scale"] == {
+        "minReplicas": 1,
+        "maxReplicas": 10,
+    }
+
+
 def test_probe_hook_still_requires_resource_group(fake_bin: Path, log: Path) -> None:
     proc = run_hook(CONFIGURE_PROBES, fake_bin, log)
     assert proc.returncode != 0
