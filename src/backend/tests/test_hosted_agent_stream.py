@@ -92,7 +92,7 @@ async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch)
 
     response = await hosted_main.handle_invoke(request)
 
-    assert request.state.shared_core_startup == "cold-initialized"
+    assert request.state.shared_core_startup == "cold-initialized-by-this-request"
     payload = json.loads(response.body)
     assert payload["source_revision"] == "synthetic-revision"
     assert set(payload) == {"status", "ready", "source_revision", "startup_ms", "phases", "loaded_use_cases"}

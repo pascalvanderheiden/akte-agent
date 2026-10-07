@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import FastAPI
 from opentelemetry import _logs, metrics, trace
@@ -82,6 +83,12 @@ class ReplicaInvocationState:
 
 replica_invocation_state = ReplicaInvocationState()
 
+ReplicaInvocationOutcome = Literal[
+    "warm",
+    "cold-initialized-by-this-request",
+    "joined-in-flight-initialization",
+]
+
 
 def disable_genai_content_recording() -> None:
     os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "false"
@@ -137,9 +144,17 @@ def set_invocation_span_attributes(
     *,
     use_case: str | None = None,
     cold_start: bool = False,
+    replica_invocation_state: ReplicaInvocationOutcome | None = None,
+    readiness_source: Literal["early_init", "first_invocation_fallback"] | None = None,
     pre_handler_ms: int | None = None,
 ) -> None:
     """Attach only synthetic correlation and platform timing metadata to a span."""
+    if replica_invocation_state is not None:
+        cold_start = replica_invocation_state == "cold-initialized-by-this-request"
+        span.set_attribute("kratos.replica_invocation_state", replica_invocation_state)
+    if readiness_source is not None:
+        span.set_attribute("kratos.readiness_source", readiness_source)
+
     span_context = span.get_span_context()
     if (
         isinstance(span_context.trace_id, int)
@@ -312,6 +327,25 @@ tool_duration_histogram = _meter.create_histogram(
     description="GenAI tool execution duration",
     unit="s",
 )
+
+hosted_agent_initialization_duration_histogram = _meter.create_histogram(
+    name="kratos.hosted_agent.initialization.duration",
+    description="Hosted-agent shared-core initialization phase duration",
+    unit="s",
+)
+
+_HOSTED_AGENT_INITIALIZATION_PHASES = frozenset({"telemetry", "core_parallel", "seed"})
+
+
+def record_hosted_agent_initialization_phases(phases_ms: Mapping[str, float]) -> None:
+    """Record bounded initialization phases, converting milliseconds to seconds."""
+    for phase, duration_ms in phases_ms.items():
+        if phase in _HOSTED_AGENT_INITIALIZATION_PHASES:
+            hosted_agent_initialization_duration_histogram.record(
+                duration_ms / 1000,
+                {"phase": phase},
+            )
+
 
 warm_pool_initial_warmup_duration_histogram = _meter.create_histogram(
     name="kratos.warm_pool.initial_warmup.duration",
