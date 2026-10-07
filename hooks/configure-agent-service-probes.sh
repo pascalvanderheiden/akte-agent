@@ -85,7 +85,7 @@ fi
 BODY_FILE="$(mktemp)"
 trap 'rm -f "$BODY_FILE"' EXIT
 jq -cn --argjson template "$TEMPLATE" --argjson probes "$PROBES" \
-  '{properties: {template: ($template | .containers[0].probes = $probes)}}' \
+  '{properties: {template: ($template | del(.scale.cooldownPeriod, .scale.pollingInterval) | .containers[0].probes = $probes)}}' \
   >"$BODY_FILE"
 az rest \
   --method patch \
