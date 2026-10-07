@@ -323,6 +323,28 @@ async def test_client_cleanup_failure_still_closes_credential(kind):
     credential.close.assert_awaited_once()
 
 
+async def test_blob_disable_cancellation_still_closes_credential():
+    from app.services.blob_skill_service import BlobSkillService
+
+    closing = asyncio.Event()
+
+    async def close_client():
+        closing.set()
+        await asyncio.Event().wait()
+
+    service = BlobSkillService(SimpleNamespace())
+    credential = SimpleNamespace(close=AsyncMock())
+    service._credential = credential
+    service._container_client = SimpleNamespace(close=close_client)
+    task = asyncio.create_task(service._disable())
+    await asyncio.wait_for(closing.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    credential.close.assert_awaited_once()
+    assert service._container_client is service._credential is None
+
+
 async def test_early_init_readiness_source_is_retained(hosted, monkeypatch):
     async def startup():
         pass
