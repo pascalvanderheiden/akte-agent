@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test:styles": "node --test tests/styles.test.mjs",
-    "test:brand": "node --test tests/brand.test.mjs",
+    "test:brand": "node --test tests/brand.test.mjs tests/chat-branding.test.mjs",
     "test:metadata": "node --test tests/metadata.test.mjs",
     "typecheck": "node node_modules/typescript-native/bin/tsc --noEmit",
     "export": "npm run build"

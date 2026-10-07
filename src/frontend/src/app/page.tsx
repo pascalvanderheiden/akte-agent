@@ -14,6 +14,7 @@ import { listUseCases, listConversations, createConversation, deleteConversation
 import { loadRuntimeConfig } from "@/lib/config";
 import { readEmbedParams, takeImportManifest, settlePersonaUrl, type EmbedParams } from "@/lib/embed";
 import { useTheme, THEMES, type ThemeName, type Mode } from "@/components/ThemeProvider";
+import { LandingHeroBranding, MobileChatHeader } from "@/components/ChatBranding";
 
 type ImportStatus = "idle" | "importing" | "error" | "done";
 
@@ -318,46 +319,20 @@ export default function Home() {
           />
         ) : (
           <div className="flex-1 flex flex-col">
-            {/* Mobile top bar */}
-            <div className="lg:hidden flex items-center px-4 py-3 border-b border-border-soft bg-surface backdrop-blur-sm">
-              <button
-                onClick={() => setSidebarOpen(true)}
-                aria-label={t("openSidebar")}
-                className="p-2 -ml-1 text-muted hover:text-text rounded-lg hover:bg-hover transition-all"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-                </svg>
-              </button>
-              <span className="ml-2 text-sm font-semibold text-text">Akte Agent</span>
-            </div>
+            <MobileChatHeader
+              openSidebar={() => setSidebarOpen(true)}
+              openSidebarLabel={t("openSidebar")}
+            />
 
             {/* Landing page */}
             <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
               <div className="w-full max-w-2xl animate-fade-in">
                 {/* Hero */}
-                <div className="text-center mb-10">
-                  <div className="relative mx-auto mb-6 w-20 h-20">
-                    <div className="absolute inset-0 rounded-2xl bg-accent blur-2xl opacity-30 animate-glow-pulse" />
-                    <div className="absolute inset-[-4px] rounded-[18px] bg-accent animate-float" />
-                    <div className="relative w-20 h-20 rounded-2xl bg-accent flex items-center justify-center shadow-xl ring-1 ring-white/20 animate-float">
-                      <svg className="w-10 h-10 text-accent-fg drop-shadow-lg" viewBox="0 0 24 24" fill="currentColor">
-                        <path fillRule="evenodd" d="M14.615 1.595a.75.75 0 01.359.852L12.982 9.75h7.268a.75.75 0 01.548 1.262l-10.5 11.25a.75.75 0 01-1.272-.71l1.992-7.302H3.75a.75.75 0 01-.548-1.262l10.5-11.25a.75.75 0 01.913-.143z" clipRule="evenodd" />
-                      </svg>
-                    </div>
-                  </div>
-
-                  <h1 className="text-3xl sm:text-4xl font-bold mb-3 tracking-tight">
-                    <span className="gradient-text">
-                      {activeUseCase?.displayName || "Akte Agent"}
-                    </span>
-                  </h1>
-                  <p className="text-muted text-sm sm:text-base leading-relaxed max-w-lg mx-auto">
-                    {activeUseCase?.description || (
-                      t("app.description")
-                    )}
-                  </p>
-                </div>
+                <LandingHeroBranding
+                  displayName={activeUseCase?.displayName}
+                  description={activeUseCase?.description || t("app.description")}
+                  productName={t("app.name")}
+                />
 
                 {/* Chat input bar */}
                 <div className="relative mb-8">
