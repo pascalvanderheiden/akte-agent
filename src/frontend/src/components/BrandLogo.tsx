@@ -5,10 +5,10 @@ import { getBasePath } from "@/lib/config";
 
 export type BrandLogoVariant = "full" | "mark";
 
-// Aspect ratios mirror each asset's viewBox so the logo never distorts.
+// Aspect ratios mirror each asset's intrinsic dimensions so the logo never distorts.
 export const BRAND_LOGO_ASSETS: Record<BrandLogoVariant, { src: string; aspectRatio: number }> = {
-  full: { src: "/images/akte-agent-logo.svg", aspectRatio: 240 / 64 },
-  mark: { src: "/images/akte-agent-mark.svg", aspectRatio: 1 },
+  full: { src: "/images/akte-agent-logo.png", aspectRatio: 1254 / 1254 },
+  mark: { src: "/images/akte-agent-mark.png", aspectRatio: 790 / 615 },
 };
 
 interface BrandLogoProps {
@@ -32,7 +32,7 @@ export function BrandLogo({ variant = "full", height = 36, decorative = false, c
       className={`inline-flex max-w-full shrink-0 rounded-md forced-color-adjust-none dark:bg-white dark:p-1 forced-colors:bg-white forced-colors:p-1 ${className}`.trim()}
       aria-hidden={decorative || undefined}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element -- static export serves the SVG as-is */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- static export serves the PNG as-is */}
       <img
         src={`${getBasePath()}${asset.src}`}
         alt={decorative ? "" : t("app.name")}

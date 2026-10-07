@@ -6,11 +6,9 @@ import { before, test } from "node:test";
 register("./support/ts-loader.mjs", import.meta.url);
 
 const ASSETS = {
-  full: "public/images/akte-agent-logo.svg",
-  mark: "public/images/akte-agent-mark.svg",
+  full: "public/images/akte-agent-logo.png",
+  mark: "public/images/akte-agent-mark.png",
 };
-const NAVY = "#1b2a4e";
-const PLATE = "#ffffff";
 
 let createElement, renderToStaticMarkup, BrandLogo, BRAND_LOGO_ASSETS, LocaleProvider, nl;
 before(async () => {
@@ -25,53 +23,30 @@ function render(props) {
   return renderToStaticMarkup(createElement(LocaleProvider, null, createElement(BrandLogo, props)));
 }
 
-function luminance(hex) {
-  const [r, g, b] = [1, 3, 5].map((i) => {
-    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrast(a, b) {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
-test("logo assets are lightweight artwork-only SVGs with a viewBox", async () => {
+test("logo assets exist as lightweight PNGs with matching intrinsic aspect ratios", async () => {
   for (const [variant, path] of Object.entries(ASSETS)) {
-    const svg = await readFile(path, "utf8");
-    assert.match(svg.trim(), /^<svg\s[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/, `${variant} is not an SVG`);
-    assert.match(svg.trim(), /<\/svg>$/, `${variant} SVG is not closed`);
-    const viewBox = svg.match(/viewBox="0 0 (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)"/);
-    assert.ok(viewBox, `${variant} SVG has no viewBox`);
+    const png = await readFile(path);
+    assert.equal(png.toString("ascii", 1, 4), "PNG", `${variant} is not a PNG`);
+    const width = png.readUInt32BE(16);
+    const height = png.readUInt32BE(20);
     assert.equal(BRAND_LOGO_ASSETS[variant].src, path.replace(/^public/, ""));
-    assert.equal(BRAND_LOGO_ASSETS[variant].aspectRatio, Number(viewBox[1]) / Number(viewBox[2]));
-    assert.ok(svg.length < 8_000, `${variant} SVG is not lightweight`);
-    assert.doesNotMatch(svg, /<script|<image|<foreignObject|https?:\/\/(?!www\.w3\.org\/2000\/svg)/i);
+    assert.equal(BRAND_LOGO_ASSETS[variant].aspectRatio, width / height);
+    assert.ok(png.length < 1_000_000, `${variant} PNG is not lightweight`);
   }
 });
 
-test("navy artwork meets 3:1 on every light surface and on the dark-mode plate", async () => {
-  const css = await readFile("src/app/globals.css", "utf8");
-  const lightBlocks = [...css.matchAll(/(?:^|\n)(:root|\[data-theme="[^"]+"\])\s*\{([^}]*)\}/g)];
-  assert.ok(lightBlocks.length > 1);
-  for (const [, selector, body] of lightBlocks) {
-    for (const token of ["--surface", "--surface-2"]) {
-      const value = body.match(new RegExp(`${token}:\\s*(#[0-9a-f]{6})`, "i"))?.[1];
-      assert.ok(value, `${selector} ${token}`);
-      assert.ok(contrast(NAVY, value) >= 3, `${selector} ${token} ${value}`);
-    }
-  }
-  assert.ok(contrast(NAVY, PLATE) >= 3);
-  assert.ok(contrast(NAVY, "#0c0f16") < 3, "dark surfaces need the backing plate");
+test("transparent logo retains its dark-mode and forced-colours backing plate", () => {
+  const html = render({ variant: "full" });
+  assert.match(html, /dark:bg-white/);
+  assert.match(html, /forced-colors:bg-white/);
+  assert.match(html, /forced-color-adjust-none/);
 });
 
 test("each variant exposes the accessible name exactly once", () => {
   for (const variant of ["full", "mark"]) {
     const html = render({ variant });
-    assert.equal(html.match(/alt="Akte Agent"/g)?.length, 1, html);
-    assert.equal(html.match(/Akte Agent/g)?.length, 1, html);
+    assert.equal(html.match(new RegExp(`alt="${nl["app.name"]}"`, "g"))?.length, 1, html);
+    assert.equal(html.match(new RegExp(nl["app.name"], "g"))?.length, 1, html);
     assert.doesNotMatch(html, /aria-hidden/);
     assert.match(html, new RegExp(`src="${BRAND_LOGO_ASSETS[variant].src}"`));
   }
@@ -82,8 +57,19 @@ test("logo constrains height only and keeps its aspect ratio", () => {
   const html = render({ variant: "full", height: 48 });
   assert.match(html, /height:48px/);
   assert.match(html, /width:auto/);
-  assert.match(html, /aspect-ratio:3\.75/);
+  assert.match(html, /aspect-ratio:1/);
   assert.doesNotMatch(html, /\swidth="|\sheight="/);
+});
+
+test("logo asset URLs include the configured base path", () => {
+  const previous = process.env.NEXT_PUBLIC_BASE_PATH;
+  process.env.NEXT_PUBLIC_BASE_PATH = "/tenant/";
+  try {
+    assert.match(render({ variant: "full" }), /src="\/tenant\/images\/akte-agent-logo\.png"/);
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_BASE_PATH;
+    else process.env.NEXT_PUBLIC_BASE_PATH = previous;
+  }
 });
 
 test("decorative usage is hidden from assistive technology", () => {

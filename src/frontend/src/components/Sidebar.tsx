@@ -127,8 +127,7 @@ export function Sidebar({ conversations, activeId, onNew, onSelect, onDelete, on
         <div className="flex items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="hidden lg:block">
-              <BrandLogo variant="full" height={52} />
-              <p className="text-[11px] text-muted">{t("app.subtitle")}</p>
+              <BrandLogo variant="full" height={240} />
             </div>
             <div className="flex lg:hidden items-center gap-3 min-w-0">
               <BrandLogo variant="mark" height={36} decorative />
