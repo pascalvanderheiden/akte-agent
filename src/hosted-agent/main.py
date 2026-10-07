@@ -748,6 +748,7 @@ async def _stream_response(
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
+    core_ready_before_ping = _startup_state == "ready"
     request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
     request.state.replica_invocation_state = await _ensure_shared_core()
     request.state.shared_core_startup = request.state.replica_invocation_state
@@ -775,6 +776,7 @@ async def handle_invoke(request: Request) -> Response:
             content={
                 "status": "warm",
                 "ready": _copilot_agent is not None,
+                "core_ready_before_ping": core_ready_before_ping,
                 "source_revision": os.environ.get("KRATOS_SOURCE_REVISION", "unknown"),
                 "startup_ms": _startup_total_ms,
                 "phases": _startup_phases,
@@ -1031,16 +1033,18 @@ async def handle_invoke(request: Request) -> Response:
     )
 
 
+async def _run_host() -> None:
+    """Initialise before serving, keeping async services on the host's event loop."""
+    try:
+        await _ensure_shared_core(readiness_source="early_init")
+    except Exception:
+        logger.warning("Early shared-core initialization failed — next invocation will retry", exc_info=True)
+
+    try:
+        await app.run_async()
+    finally:
+        await _shutdown()
+
+
 if __name__ == "__main__":
-    import atexit
-    import signal
-
-    def _sync_shutdown(*_args):
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_shutdown())
-        loop.close()
-
-    atexit.register(_sync_shutdown)
-    signal.signal(signal.SIGTERM, lambda *a: (_sync_shutdown(), sys.exit(0)))
-
-    app.run()
+    asyncio.run(_run_host())

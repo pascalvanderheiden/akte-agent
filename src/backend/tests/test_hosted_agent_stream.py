@@ -60,7 +60,8 @@ async def _collect_stream(stream):
 
 
 @pytest.mark.asyncio
-async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch):
+@pytest.mark.parametrize("early_init", [False, True])
+async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch, early_init):
     hosted_main._copilot_agent = object()
     monkeypatch.setenv("KRATOS_SOURCE_REVISION", "synthetic-revision")
 
@@ -68,6 +69,10 @@ async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch)
         return None
 
     monkeypatch.setattr(hosted_main, "_startup", startup)
+    if early_init:
+        monkeypatch.setattr(hosted_main.app, "run_async", AsyncMock(), raising=False)
+        monkeypatch.setattr(hosted_main, "_shutdown", AsyncMock())
+        await hosted_main._run_host()
 
     async def receive():
         return {
@@ -92,10 +97,90 @@ async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch)
 
     response = await hosted_main.handle_invoke(request)
 
-    assert request.state.shared_core_startup == "cold-initialized-by-this-request"
+    assert request.state.shared_core_startup == ("warm" if early_init else "cold-initialized-by-this-request")
+    assert request.state.readiness_source == ("early_init" if early_init else "first_invocation_fallback")
     payload = json.loads(response.body)
     assert payload["source_revision"] == "synthetic-revision"
-    assert set(payload) == {"status", "ready", "source_revision", "startup_ms", "phases", "loaded_use_cases"}
+    assert payload["core_ready_before_ping"] is early_init
+    assert payload["status"] == "warm"
+    assert payload["ready"] is True
+    assert payload["startup_ms"] == 0
+    assert payload["phases"] == {}
+    assert payload["loaded_use_cases"] == []
+    assert set(payload) == {
+        "status",
+        "ready",
+        "source_revision",
+        "startup_ms",
+        "phases",
+        "loaded_use_cases",
+        "core_ready_before_ping",
+    }
+
+
+@pytest.mark.parametrize("early_init", [False, True])
+async def test_first_user_request_records_readiness_telemetry(hosted_main, monkeypatch, early_init):
+    startup = AsyncMock()
+    monkeypatch.setattr(hosted_main, "_startup", startup)
+    monkeypatch.setattr(hosted_main, "_copilot_agent", object())
+    registry_load = AsyncMock()
+    monkeypatch.setattr(hosted_main, "_ensure_registry", registry_load)
+    span = MagicMock()
+    monkeypatch.setattr(hosted_main.trace, "get_current_span", lambda: span)
+    if early_init:
+        monkeypatch.setattr(hosted_main.app, "run_async", AsyncMock(), raising=False)
+        monkeypatch.setattr(hosted_main, "_shutdown", AsyncMock())
+        await hosted_main._run_host()
+
+    assert hosted_main._registries == {}
+    registry_load.assert_not_awaited()
+
+    async def receive():
+        return {"type": "http.request", "body": b'{"message": "hello", "useCase": "akte-agent"}'}
+
+    request = Request({"type": "http", "method": "POST", "path": "/invocations", "headers": []}, receive)
+    request.state.invocation_id = "synthetic-invocation"
+    response = await hosted_main.handle_invoke(request)
+
+    assert response.status_code == 200
+    startup.assert_awaited_once()
+    registry_load.assert_awaited_once_with("akte-agent")
+    span.set_attribute.assert_any_call(
+        "kratos.replica_invocation_state", "warm" if early_init else "cold-initialized-by-this-request"
+    )
+    span.set_attribute.assert_any_call(
+        "kratos.readiness_source", "early_init" if early_init else "first_invocation_fallback"
+    )
+
+
+async def test_warmup_joining_early_initialization_was_not_ready_before_ping(hosted_main, monkeypatch):
+    started = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def startup():
+        started.set()
+        await finish.wait()
+        hosted_main._copilot_agent = object()
+
+    monkeypatch.setattr(hosted_main, "_startup", startup)
+    early = asyncio.create_task(hosted_main._ensure_shared_core(readiness_source="early_init"))
+    await started.wait()
+
+    async def receive():
+        return {"type": "http.request", "body": b'{"warmup": true}'}
+
+    request = Request({"type": "http", "method": "POST", "path": "/invocations", "headers": []}, receive)
+    ping = asyncio.create_task(hosted_main.handle_invoke(request))
+    await asyncio.sleep(0)
+    assert not ping.done()
+    finish.set()
+    await early
+    response = await ping
+
+    assert request.state.replica_invocation_state == "joined-in-flight-initialization"
+    assert request.state.readiness_source == "early_init"
+    assert json.loads(response.body)["core_ready_before_ping"] is False
+    assert json.loads(response.body)["ready"] is True
 
 
 def _json_data_events(chunks):

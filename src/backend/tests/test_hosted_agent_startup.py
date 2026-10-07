@@ -1,14 +1,21 @@
 import asyncio
 import importlib.util
+import json
 import logging
 import sys
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
+from azure.core.exceptions import HttpResponseError
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from starlette.requests import Request
+
+from app.services.cosmos_service import CosmosService
 
 
 @pytest.fixture
@@ -36,10 +43,17 @@ def hosted(monkeypatch):
         (False, None, None, "not_configured"),
         (True, None, None, None),
         (True, None, TimeoutError(), "TimeoutError"),
+        (
+            True,
+            None,
+            HttpResponseError(response=SimpleNamespace(status_code=403, headers={}, reason="Forbidden")),
+            "HttpResponseError",
+        ),
     ],
 )
+@pytest.mark.parametrize("early_init", [False, True])
 async def test_startup_blob_local_only_telemetry(
-    hosted, monkeypatch, caplog, available, reason, list_error, expected_reason
+    hosted, monkeypatch, caplog, available, reason, list_error, expected_reason, early_init
 ):
     class FakeBlobSkillService:
         def __init__(self, settings):
@@ -68,12 +82,15 @@ async def test_startup_blob_local_only_telemetry(
         async def seed_from_local(self):
             return []
 
-    class FakeCosmosService:
+    class FakeCosmosService(CosmosService):
         def __init__(self, settings):
             pass
 
         async def initialize(self):
-            pass
+            database = SimpleNamespace(
+                read=AsyncMock(side_effect=CosmosHttpResponseError(status_code=403, message="synthetic denial"))
+            )
+            assert await self._probe_reachable(database)
 
     class FakeCopilotAgent:
         def __init__(self, settings):
@@ -96,7 +113,17 @@ async def test_startup_blob_local_only_telemetry(
     monkeypatch.setattr(hosted, "CopilotAgent", FakeCopilotAgent)
 
     with caplog.at_level(logging.WARNING, logger=hosted.__name__):
-        await hosted._startup()
+        if early_init:
+            monkeypatch.setattr(hosted.app, "run_async", AsyncMock(), raising=False)
+            monkeypatch.setattr(hosted, "_shutdown", AsyncMock())
+            await hosted._run_host()
+        assert await hosted._ensure_shared_core() == ("warm" if early_init else "cold-initialized-by-this-request")
+
+    assert hosted._startup_state == "ready"
+    assert hosted._registries == {}
+    assert hosted._blob_service.is_available is (expected_reason is None)
+    assert "Cosmos reachable but database read refused (status=403)" in caplog.text
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
     records = [
         record for record in caplog.records if getattr(record, "event_name", None) == "HOSTED_AGENT_BLOB_LOCAL_ONLY"
@@ -176,6 +203,57 @@ async def test_early_init_readiness_source_is_retained(hosted, monkeypatch):
 
     assert await hosted._ensure_shared_core(readiness_source="early_init") == "cold-initialized-by-this-request"
     assert hosted._startup_readiness_source == "early_init"
+
+
+async def test_process_startup_failure_is_nonfatal_and_request_retries(hosted, monkeypatch, caplog):
+    startup = AsyncMock(side_effect=[RuntimeError("synthetic startup failure"), None])
+    monkeypatch.setattr(hosted, "_startup", startup)
+    shutdown = AsyncMock()
+    monkeypatch.setattr(hosted, "_shutdown", shutdown)
+
+    async def serve():
+        assert hosted._startup_state == "failed"
+
+        async def receive():
+            return {"type": "http.request", "body": b'{"warmup": true}'}
+
+        request = Request({"type": "http", "method": "POST", "path": "/invocations", "headers": []}, receive)
+        response = await hosted.handle_invoke(request)
+        assert response.status_code == 200
+        assert json.loads(response.body)["core_ready_before_ping"] is False
+        assert request.state.replica_invocation_state == "cold-initialized-by-this-request"
+        assert request.state.readiness_source == "first_invocation_fallback"
+        assert await hosted._ensure_shared_core() == "warm"
+
+    monkeypatch.setattr(hosted.app, "run_async", serve, raising=False)
+    await hosted._run_host()
+
+    assert startup.await_count == 2
+    assert "Early shared-core initialization failed" in caplog.text
+    shutdown.assert_awaited_once()
+
+
+async def test_process_startup_and_serving_share_event_loop(hosted, monkeypatch):
+    loop = asyncio.get_running_loop()
+
+    async def startup():
+        assert asyncio.get_running_loop() is loop
+
+    async def serve():
+        assert asyncio.get_running_loop() is loop
+        assert hosted._startup_state == "ready"
+        assert hosted._startup_readiness_source == "early_init"
+        assert hosted._registries == {}
+        raise RuntimeError("synthetic server failure")
+
+    monkeypatch.setattr(hosted, "_startup", startup)
+    monkeypatch.setattr(hosted.app, "run_async", serve, raising=False)
+    shutdown = AsyncMock()
+    monkeypatch.setattr(hosted, "_shutdown", shutdown)
+
+    with pytest.raises(RuntimeError, match="synthetic server failure"):
+        await hosted._run_host()
+    shutdown.assert_awaited_once()
 
 
 async def test_startup_records_phase_duration_metrics(hosted, monkeypatch):
