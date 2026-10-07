@@ -102,6 +102,7 @@ def transport(monkeypatch, tmp_path):
     hosted._copilot_agent = runtime
     hosted._cosmos_service = cosmos
     hosted._settings = settings
+    hosted._startup_state = "ready"
     runtime.set_registries(hosted._registries)
     hosted._collect_generated_files = lambda response: []
     captured = []

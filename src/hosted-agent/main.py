@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import uuid
+from typing import Literal
 
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from azure.core.exceptions import (
@@ -110,6 +111,9 @@ _cosmos_service: CosmosService | None = None
 _blob_service: BlobSkillService | None = None
 _registries: dict[str, SkillRegistry] = {}
 _settings: Settings | None = None
+_startup_state: Literal["not_started", "in_progress", "ready", "failed"] = "not_started"
+_startup_task: asyncio.Task[None] | None = None
+_startup_lock = asyncio.Lock()
 
 # Lazy per-use-case loading. A pre-warmed sandbox is unclaimed, so at warm time
 # we don't yet know which use-case it will serve — loading all use-cases up
@@ -288,6 +292,49 @@ async def _startup() -> None:
         _settings.environment,
         _settings.foundry_model_deployment or "(empty)",
     )
+
+
+async def _run_shared_core_startup() -> None:
+    """Run startup once and publish its outcome for all waiting callers."""
+    global _startup_state, _startup_task
+
+    task = asyncio.current_task()
+    try:
+        await _startup()
+    except BaseException:
+        async with _startup_lock:
+            if _startup_task is task:
+                _startup_state = "failed"
+                _startup_task = None
+        raise
+    else:
+        async with _startup_lock:
+            if _startup_task is task:
+                _startup_state = "ready"
+                _startup_task = None
+
+
+async def _ensure_shared_core() -> Literal["cold-initialized", "joined", "warm"]:
+    """Ensure shared startup completes, returning this caller's startup outcome."""
+    global _startup_state, _startup_task
+
+    outcome: Literal["cold-initialized", "joined", "warm"]
+    async with _startup_lock:
+        if _startup_state == "ready":
+            return "warm"
+        if _startup_state == "in_progress":
+            task = _startup_task
+            outcome = "joined"
+        else:
+            task = asyncio.create_task(_run_shared_core_startup())
+            _startup_task = task
+            _startup_state = "in_progress"
+            outcome = "cold-initialized"
+
+    if task is None:
+        raise RuntimeError("Shared-core startup is in progress without a task")
+    await asyncio.shield(task)
+    return outcome
 
 
 async def _ensure_registry(use_case: str) -> None:
@@ -685,9 +732,7 @@ async def _stream_response(
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
     request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
-    # Ensure services are initialised (first request triggers startup)
-    if _copilot_agent is None:
-        await _startup()
+    request.state.shared_core_startup = await _ensure_shared_core()
 
     # Read the request body exactly once and normalise it. The hosted agent is
     # invoked through several paths that frame the body differently:
