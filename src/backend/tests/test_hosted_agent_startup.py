@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import logging
 import sys
@@ -105,3 +106,60 @@ async def test_startup_blob_local_only_telemetry(
         assert record.environment == "test"
         assert record.model_deployment == "test-model"
         assert datetime.fromisoformat(record.event_timestamp).tzinfo is not None
+
+
+async def test_shared_core_startup_is_single_flight(hosted, monkeypatch):
+    startup_started = asyncio.Event()
+    finish_startup = asyncio.Event()
+    startup_calls = 0
+
+    async def startup():
+        nonlocal startup_calls
+        startup_calls += 1
+        startup_started.set()
+        await finish_startup.wait()
+
+    monkeypatch.setattr(hosted, "_startup", startup)
+
+    first = asyncio.create_task(hosted._ensure_shared_core())
+    await startup_started.wait()
+    joined = [asyncio.Event() for _ in range(5)]
+
+    async def join_startup(entered):
+        entered.set()
+        return await hosted._ensure_shared_core()
+
+    waiters = [asyncio.create_task(join_startup(entered)) for entered in joined]
+    await asyncio.gather(*(entered.wait() for entered in joined))
+
+    assert startup_calls == 1
+    assert not first.done()
+    finish_startup.set()
+
+    outcomes = await asyncio.gather(first, *waiters)
+
+    assert outcomes == ["cold-initialized", *["joined"] * len(waiters)]
+    assert startup_calls == 1
+    assert await hosted._ensure_shared_core() == "warm"
+    assert startup_calls == 1
+
+
+async def test_failed_shared_core_startup_can_be_retried(hosted, monkeypatch):
+    startup_calls = 0
+
+    async def startup():
+        nonlocal startup_calls
+        startup_calls += 1
+        if startup_calls == 1:
+            raise RuntimeError("synthetic startup failure")
+
+    monkeypatch.setattr(hosted, "_startup", startup)
+
+    with pytest.raises(RuntimeError, match="synthetic startup failure"):
+        await hosted._ensure_shared_core()
+
+    assert hosted._startup_state == "failed"
+    assert await hosted._ensure_shared_core() == "cold-initialized"
+    assert hosted._startup_state == "ready"
+    assert await hosted._ensure_shared_core() == "warm"
+    assert startup_calls == 2

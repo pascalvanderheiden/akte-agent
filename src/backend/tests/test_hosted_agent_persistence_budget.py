@@ -83,6 +83,7 @@ def hosted(monkeypatch):
     spec.loader.exec_module(module)
 
     module._copilot_agent = _FakeAgent()
+    module._startup_state = "ready"
     module._registries["akte-agent"] = SkillRegistry(use_case="akte-agent", system_prompt="")
     module._collect_generated_files = lambda _response: []
     return module

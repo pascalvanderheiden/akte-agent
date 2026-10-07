@@ -64,6 +64,11 @@ async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch)
     hosted_main._copilot_agent = object()
     monkeypatch.setenv("KRATOS_SOURCE_REVISION", "synthetic-revision")
 
+    async def startup():
+        return None
+
+    monkeypatch.setattr(hosted_main, "_startup", startup)
+
     async def receive():
         return {
             "type": "http.request",
@@ -87,7 +92,10 @@ async def test_warmup_response_reports_source_revision(hosted_main, monkeypatch)
 
     response = await hosted_main.handle_invoke(request)
 
-    assert json.loads(response.body)["source_revision"] == "synthetic-revision"
+    assert request.state.shared_core_startup == "cold-initialized"
+    payload = json.loads(response.body)
+    assert payload["source_revision"] == "synthetic-revision"
+    assert set(payload) == {"status", "ready", "source_revision", "startup_ms", "phases", "loaded_use_cases"}
 
 
 def _json_data_events(chunks):
