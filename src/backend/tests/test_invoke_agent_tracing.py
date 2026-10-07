@@ -257,6 +257,7 @@ async def test_proxy_to_hosted_agent_phase_hierarchy_and_duration(
         if metric.name == "gen_ai.client.operation.duration"
     )
     assert metric.data.data_points[0].attributes["kratos.replica_invocation_state"] == replica_invocation_outcome
+    assert metric.data.data_points[0].attributes["kratos.readiness_source"] == readiness_source
 
     prohibited_data = (
         prompt,

@@ -1710,6 +1710,11 @@ class CopilotAgent:
                         **orchestrator_attrs,
                         "kratos.replica_invocation_state": invocation_telemetry.replica_invocation_state,
                     }
+                if invocation_telemetry and invocation_telemetry.readiness_source is not None:
+                    orchestrator_attrs = {
+                        **orchestrator_attrs,
+                        "kratos.readiness_source": invocation_telemetry.readiness_source,
+                    }
                 orchestrator_prompt_tokens = sum(counts.get("input", 0) for _, counts in orchestrator_buckets)
                 tool_call_count_histogram.record(tool_call_count, orchestrator_attrs)
                 source_estimates = {
