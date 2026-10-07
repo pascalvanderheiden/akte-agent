@@ -282,9 +282,8 @@ jobs:
           AZURE_ENV_NAME: ${{ inputs.environment || 'turbo-akte-agent' }}
         run: |
           mapfile -t resources < <(az resource list \
-            --resource-type Microsoft.Insights/components \
             --tag "azd-env-name=$AZURE_ENV_NAME" \
-            --query "[].id" -o tsv)
+            --query "[?type=='microsoft.insights/components'].id" -o tsv)
           if [ "${#resources[@]}" -ne 1 ]; then
             echo "::error::Expected exactly one App Insights resource for the smoke environment; found ${#resources[@]}."
             exit 1

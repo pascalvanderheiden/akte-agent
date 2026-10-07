@@ -116,10 +116,7 @@ async def _run_initial_warmup(proxy: FoundryAgentProxy, timeout_s: int) -> None:
     except Exception:  # noqa: BLE001 — telemetry must never break startup or readiness
         logger.warning("Failed to record initial warm-pool telemetry", exc_info=True)
 
-    message = (
-        "warm_pool_initial_warmup outcome=%s duration_s=%.3f pool_target=%d "
-        "pool_available=%d fallback_used=%s"
-    )
+    message = "warm_pool_initial_warmup outcome=%s duration_s=%.3f pool_target=%d pool_available=%d fallback_used=%s"
     if error is not None:
         logger.warning(message, outcome, duration_s, target, size, fallback_used, exc_info=error)
     elif outcome in ("timed_out", "partial"):
