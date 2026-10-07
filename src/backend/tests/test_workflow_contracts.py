@@ -109,3 +109,14 @@ def test_deploy_pins_validated_azd_toolchain_versions():
     assert setup["with"]["version"] == "1.35.0"
     extension = next(step for step in steps if step.get("name") == "Install azd extensions")
     assert "--version 1.0.0-beta.18" in extension["run"]
+
+
+def test_smoke_telemetry_query_uses_compatible_azure_cli_filters():
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/deploy.yml").read_text())
+    steps = workflow["jobs"]["integration-test"]["steps"]
+    resolve = next(step for step in steps if step.get("name") == "Resolve smoke telemetry resource")
+    command = resolve["run"]
+
+    assert '--tag "azd-env-name=$AZURE_ENV_NAME"' in command
+    assert "--resource-type" not in command
+    assert "microsoft.insights/components" in command
