@@ -161,6 +161,9 @@ hooks:
         kind: sh
         shell: sh
         run: |
+            # Apply readiness before azd swaps in the application image, so
+            # the first application revision is gated by the warm-pool check.
+            ./hooks/configure-agent-service-probes.sh
             BUILD_TS="$(date +%s)"
             azd env set KRATOS_BUILD_TS "$BUILD_TS"
             echo "KRATOS_BUILD_TS=$BUILD_TS (forces new hosted-agent version)"

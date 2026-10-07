@@ -4,6 +4,12 @@ A repo-local Playwright skill that exercises a deployed kratos-agent
 environment end-to-end: frontend renders, backend /health, scenarios
 load per use-case, chat round-trips, evals API, and traces API.
 
+The smoke suite calls the backend through Container Apps ingress; it does not
+assume `/health/ready` is immediately successful after deployment. Ingress
+routes to the replica once its warm-pool state is `ready` or `degraded`.
+See [hosted-agent warm-pool readiness](../../../docs/hosted-agent-warm-pool-readiness.md)
+for the readiness states and timeout contract.
+
 ## When to use
 
 - After every `azd deploy backend` / `azd deploy hosted-agent` / `azd deploy web`

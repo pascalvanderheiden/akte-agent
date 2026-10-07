@@ -133,9 +133,11 @@ def _last_index_of(haystack, needle):
 
 
 _FUNCTIONS = {
+    "add": lambda left, right: left + right,
     "concat": lambda *values: _concat(*values),
     "createArray": lambda *values: list(values),
     "createObject": lambda *pairs: dict(zip(pairs[::2], pairs[1::2])),
+    "div": lambda left, right: left // right,
     "empty": lambda value: _empty(value),
     "endsWith": lambda value, suffix: value.lower().endswith(suffix.lower()),
     "equals": lambda left, right: left == right,
@@ -154,6 +156,7 @@ _FUNCTIONS = {
     "split": lambda value, separator: value.split(separator),
     "startsWith": lambda value, prefix: value.lower().startswith(prefix.lower()),
     "string": _to_string,
+    "sub": lambda left, right: left - right,
     "substring": lambda value, start, length=None: (
         value[start:] if length is None else value[start : start + length]
     ),

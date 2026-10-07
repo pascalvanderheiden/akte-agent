@@ -35,6 +35,36 @@ param agentApiPath string = 'kratos-agent'
 @description('True once azd has deployed the agent-service application image (azd sets SERVICE_AGENT_SERVICE_RESOURCE_EXISTS). Lets provisioning preserve the running image instead of resetting it to the bootstrap image.')
 param agentServiceExists bool = false
 
+@description('Readiness probe failure window in seconds; every accepted value exceeds the warm-pool warm-up timeout (at most 90 seconds).')
+@minValue(91)
+@maxValue(2400)
+param agentServiceReadinessProbeFailureWindowSeconds int = 100
+
+@description('Readiness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param agentServiceReadinessProbeTimeoutSeconds int = 5
+
+@description('Liveness probe period in seconds.')
+@minValue(1)
+@maxValue(240)
+param agentServiceLivenessProbePeriodSeconds int = 30
+
+@description('Liveness probe failures allowed before the container is restarted.')
+@minValue(1)
+@maxValue(10)
+param agentServiceLivenessProbeFailureThreshold int = 3
+
+@description('Liveness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param agentServiceLivenessProbeTimeoutSeconds int = 5
+
+@description('Delay before liveness checks begin, independent of warm-pool readiness.')
+@minValue(1)
+@maxValue(60)
+param agentServiceLivenessProbeInitialDelaySeconds int = 30
+
 @description('True once azd has deployed the obo-mcp-server application image (azd sets SERVICE_OBO_MCP_SERVER_RESOURCE_EXISTS). Lets provisioning preserve the running image instead of resetting it to the bootstrap image.')
 param oboMcpServerExists bool = false
 
@@ -231,6 +261,12 @@ module agentService './modules/agent-service.bicep' = {
     blobStorageEndpoint: blobStorage.outputs.endpoint
     staticWebAppUrl: staticWebApp.outputs.url
     exists: agentServiceExists
+    readinessProbeFailureWindowSeconds: agentServiceReadinessProbeFailureWindowSeconds
+    readinessProbeTimeoutSeconds: agentServiceReadinessProbeTimeoutSeconds
+    livenessProbePeriodSeconds: agentServiceLivenessProbePeriodSeconds
+    livenessProbeFailureThreshold: agentServiceLivenessProbeFailureThreshold
+    livenessProbeTimeoutSeconds: agentServiceLivenessProbeTimeoutSeconds
+    livenessProbeInitialDelaySeconds: agentServiceLivenessProbeInitialDelaySeconds
   }
 }
 
@@ -356,6 +392,14 @@ output AZURE_APP_INSIGHTS_CONNECTION_STRING string = appInsights.outputs.connect
 output AZURE_STATIC_WEB_APP_URL string = staticWebApp.outputs.url
 output AGENT_SERVICE_DIRECT_URL string = agentService.outputs.url
 output AGENT_SERVICE_URL string = agentService.outputs.url
+output AGENT_SERVICE_READINESS_PROBE_PERIOD_SECONDS int = agentService.outputs.readinessProbePeriodSeconds
+output AGENT_SERVICE_READINESS_PROBE_FAILURE_THRESHOLD int = agentService.outputs.readinessProbeFailureThreshold
+output AGENT_SERVICE_READINESS_PROBE_TIMEOUT_SECONDS int = agentService.outputs.readinessProbeTimeoutSeconds
+output AGENT_SERVICE_LIVENESS_PROBE_PERIOD_SECONDS int = agentService.outputs.livenessProbePeriodSeconds
+output AGENT_SERVICE_LIVENESS_PROBE_FAILURE_THRESHOLD int = agentService.outputs.livenessProbeFailureThreshold
+output AGENT_SERVICE_LIVENESS_PROBE_TIMEOUT_SECONDS int = agentService.outputs.livenessProbeTimeoutSeconds
+output AGENT_SERVICE_LIVENESS_PROBE_INITIAL_DELAY_SECONDS int = agentService.outputs.livenessProbeInitialDelaySeconds
+output AGENT_SERVICE_INGRESS_TARGET_PORT int = agentService.outputs.ingressTargetPort
 output FOUNDRY_ENDPOINT string = aiFoundry.outputs.endpoint
 output MODEL_DEPLOYMENT_ORCHESTRATOR string = aiFoundry.outputs.orchestratorModelDeployment
 output MODEL_DEPLOYMENT_DEEP_REASONING string = aiFoundry.outputs.deepReasoningModelDeployment

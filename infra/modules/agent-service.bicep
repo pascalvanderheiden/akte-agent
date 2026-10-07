@@ -61,6 +61,39 @@ param staticWebAppUrl string = ''
 @description('True once azd has deployed an application image to this Container App (SERVICE_AGENT_SERVICE_RESOURCE_EXISTS)')
 param exists bool = false
 
+@description('Readiness probe failure window in seconds; every accepted value exceeds the warm-pool warm-up timeout (at most 90 seconds).')
+@minValue(91)
+@maxValue(2400)
+param readinessProbeFailureWindowSeconds int = 100
+
+var readinessProbeFailureThreshold = 10
+var readinessProbePeriodSeconds = int((readinessProbeFailureWindowSeconds + readinessProbeFailureThreshold - 1) / readinessProbeFailureThreshold)
+
+@description('Readiness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param readinessProbeTimeoutSeconds int = 5
+
+@description('Liveness probe period in seconds.')
+@minValue(1)
+@maxValue(240)
+param livenessProbePeriodSeconds int = 30
+
+@description('Liveness probe failures allowed before the container is restarted.')
+@minValue(1)
+@maxValue(10)
+param livenessProbeFailureThreshold int = 3
+
+@description('Liveness probe request timeout in seconds.')
+@minValue(1)
+@maxValue(240)
+param livenessProbeTimeoutSeconds int = 5
+
+@description('Delay before liveness checks begin, independent of warm-pool readiness.')
+@minValue(1)
+@maxValue(60)
+param livenessProbeInitialDelaySeconds int = 30
+
 // Ingress port and bootstrap listener port are the same value by construction.
 var ingressTargetPort = 8000
 
@@ -151,6 +184,31 @@ resource agentService 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: containerImage.outputs.isBootstrap ? [] : [
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/health/ready'
+                port: ingressTargetPort
+                scheme: 'HTTP'
+              }
+              periodSeconds: readinessProbePeriodSeconds
+              failureThreshold: readinessProbeFailureThreshold
+              timeoutSeconds: readinessProbeTimeoutSeconds
+            }
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health'
+                port: ingressTargetPort
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: livenessProbeInitialDelaySeconds
+              periodSeconds: livenessProbePeriodSeconds
+              failureThreshold: livenessProbeFailureThreshold
+              timeoutSeconds: livenessProbeTimeoutSeconds
+            }
+          ]
           env: concat(
             [
               { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
@@ -200,3 +258,11 @@ output id string = agentService.id
 output name string = agentService.name
 output url string = 'https://${agentService.properties.configuration.ingress.fqdn}'
 output principalId string = agentService.identity.principalId
+output readinessProbePeriodSeconds int = readinessProbePeriodSeconds
+output readinessProbeFailureThreshold int = readinessProbeFailureThreshold
+output readinessProbeTimeoutSeconds int = readinessProbeTimeoutSeconds
+output livenessProbePeriodSeconds int = livenessProbePeriodSeconds
+output livenessProbeFailureThreshold int = livenessProbeFailureThreshold
+output livenessProbeTimeoutSeconds int = livenessProbeTimeoutSeconds
+output livenessProbeInitialDelaySeconds int = livenessProbeInitialDelaySeconds
+output ingressTargetPort int = ingressTargetPort
