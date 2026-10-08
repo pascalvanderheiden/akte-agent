@@ -134,14 +134,8 @@ class BlobSkillService:
 
     async def _disable(self) -> None:
         """Drop the unusable client so ``is_available`` reports False."""
-        client, self._container_client = self._container_client, None
-        credential, self._credential = self._credential, None
-        if client is not None:
-            with contextlib.suppress(Exception):
-                await client.close()
-        if credential is not None:
-            with contextlib.suppress(Exception):
-                await credential.close()
+        with contextlib.suppress(Exception):
+            await self.close()
 
     @property
     def is_available(self) -> bool:
@@ -385,7 +379,11 @@ class BlobSkillService:
 
     async def close(self) -> None:
         """Clean up resources."""
-        if self._container_client:
-            await self._container_client.close()
-        if self._credential:
-            await self._credential.close()
+        client, self._container_client = self._container_client, None
+        credential, self._credential = self._credential, None
+        try:
+            if client is not None:
+                await client.close()
+        finally:
+            if credential is not None:
+                await credential.close()

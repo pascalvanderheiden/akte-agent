@@ -13,6 +13,33 @@ That is an accepted, first-class mode, not a fault to re-investigate.
 Practical consequence: **Blob-only skill edits never reach the hosted agent.**
 Ship skill changes by editing `use-cases/` and redeploying this image.
 
+## Shared-core startup and warmup readiness
+
+The Python process entry point initializes shared services before serving with
+the SDK's `run_async()`, on the same event loop. Initialization failure is
+logged and does not prevent the host from starting; the next invocation retries
+through the same single-flight initializer. Failed attempts cancel and drain
+initializers and close partial services before a retry is allowed; services are
+published only after successful initialization. Telemetry remains process-owned
+and is not recreated on service retries. Per-use-case registries remain lazy.
+
+The inspected SDK (`azure-ai-agentserver-invocations` 1.2.0,
+`azure-ai-agentserver-core` 2.2.0) exposes an async server runner, but no
+startup/warmup callback. Its `GET /readiness` handler returns static health,
+not application-core readiness. This implementation therefore uses process
+startup, not an assumed Foundry lifecycle or warmup signal. See the SDK's
+[host implementation](https://github.com/Azure/azure-sdk-for-python/blob/azure-ai-agentserver-core_2.2.0/sdk/agentserver/azure-ai-agentserver-core/azure/ai/agentserver/core/_base.py)
+(`run_async` and `_readiness_endpoint`).
+
+The `{"warmup": true}` response retains its existing fields and adds
+`core_ready_before_ping`: whether shared-core initialization had completed
+before the handler began. A ping that initializes or waits for the core reports
+`false`, even though it returns ready afterward. User-invocation telemetry
+records `kratos.readiness_source` as `early_init` or
+`first_invocation_fallback`, and an invocation after completed early startup is
+classified `warm`. Expected Blob local-only and Cosmos denial warnings keep
+their existing severity and fallback behavior.
+
 ## Check the deployed source revision
 
 Each deploy records the current Git commit in `KRATOS_SOURCE_REVISION`. The

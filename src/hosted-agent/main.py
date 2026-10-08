@@ -112,6 +112,7 @@ _cosmos_service: CosmosService | None = None
 _blob_service: BlobSkillService | None = None
 _registries: dict[str, SkillRegistry] = {}
 _settings: Settings | None = None
+_telemetry_setup_started = False
 _startup_state: Literal["not_started", "in_progress", "ready", "failed"] = "not_started"
 _startup_task: asyncio.Task[None] | None = None
 _startup_lock = asyncio.Lock()
@@ -230,7 +231,7 @@ async def _startup() -> None:
     loaded lazily by :func:`_ensure_registry` on first use, so a pre-warmed
     sandbox becomes ready without paying to load all use-cases up front.
     """
-    global _copilot_agent, _cosmos_service, _blob_service, _settings
+    global _copilot_agent, _cosmos_service, _blob_service, _settings, _telemetry_setup_started
     global _startup_total_ms, _startup_phases
 
     import time as _time
@@ -241,11 +242,15 @@ async def _startup() -> None:
     def _mark(name: str, t0: float) -> None:
         phases[name] = round((_time.monotonic() - t0) * 1000, 1)
 
-    _settings = get_settings()
+    settings = get_settings()
 
     # Setup OpenTelemetry
     t0 = _time.monotonic()
-    setup_telemetry(_settings)
+    # Telemetry is process-owned, not attempt-owned: retries must not add
+    # duplicate exporters or logging handlers.
+    if not _telemetry_setup_started:
+        _telemetry_setup_started = True
+        setup_telemetry(settings)
     _mark("telemetry", t0)
 
     # Cosmos, blob storage, and the Copilot SDK agent are mutually independent,
@@ -253,36 +258,52 @@ async def _startup() -> None:
     # pre-warm each cost ~1.7s serially; running them in parallel roughly halves
     # the shared-core warm time.
     t0 = _time.monotonic()
-    _cosmos_service = CosmosService(_settings)
-    blob_service = BlobSkillService(_settings)
-    _copilot_agent = CopilotAgent(_settings)
-    # The agent shares the (initially empty) _registries dict; lazy loads add
-    # keys to it in place so the agent sees them without a reset.
-    _copilot_agent.set_registries(_registries)
-    await asyncio.gather(
-        _cosmos_service.initialize(),
-        blob_service.initialize(),
-        _copilot_agent.start(),
-    )
+    cosmos_service = blob_service = copilot_agent = None
+    tasks: list[asyncio.Task[None]] = []
+    try:
+        cosmos_service = CosmosService(settings)
+        blob_service = BlobSkillService(settings)
+        copilot_agent = CopilotAgent(settings)
+        # The agent shares the (initially empty) _registries dict; lazy loads add
+        # keys to it in place so the agent sees them without a reset.
+        copilot_agent.set_registries(_registries)
+        tasks = [
+            asyncio.create_task(cosmos_service.initialize()),
+            asyncio.create_task(blob_service.initialize()),
+            asyncio.create_task(copilot_agent.start()),
+        ]
+        await asyncio.gather(*tasks)
+        copilot_agent.set_cosmos_service(cosmos_service)
+        _mark("core_parallel", t0)
+
+        emitted_blob_local_only = False
+        if not blob_service.is_available:
+            _emit_blob_local_only_telemetry(blob_service, settings)
+            emitted_blob_local_only = True
+
+        # Seed local use-cases into blob if the container is empty. This only
+        # uploads use-cases that are missing (a fast list + skip when already
+        # seeded by a prior deploy / the backend), and is required so that the
+        # lazy per-use-case loads below can pull skills from blob.
+        if blob_service.is_available:
+            t0 = _time.monotonic()
+            await _seed_or_disable_blob(blob_service)
+            _mark("seed", t0)
+            if not blob_service.is_available and not emitted_blob_local_only:
+                _emit_blob_local_only_telemetry(blob_service, settings)
+    except BaseException:
+        # gather() does not cancel siblings on failure. Drain them before
+        # closing resources, and before the single-flight task allows a retry.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await _close_shared_core(copilot_agent, cosmos_service, blob_service)
+        raise
+
+    _copilot_agent = copilot_agent
+    _cosmos_service = cosmos_service
     _blob_service = blob_service
-    _copilot_agent.set_cosmos_service(_cosmos_service)
-    _mark("core_parallel", t0)
-
-    emitted_blob_local_only = False
-    if not blob_service.is_available:
-        _emit_blob_local_only_telemetry(blob_service, _settings)
-        emitted_blob_local_only = True
-
-    # Seed local use-cases into blob if the container is empty. This only
-    # uploads use-cases that are missing (a fast list + skip when already
-    # seeded by a prior deploy / the backend), and is required so that the
-    # lazy per-use-case loads below can pull skills from blob.
-    if blob_service.is_available:
-        t0 = _time.monotonic()
-        await _seed_or_disable_blob(blob_service)
-        _mark("seed", t0)
-        if not blob_service.is_available and not emitted_blob_local_only:
-            _emit_blob_local_only_telemetry(blob_service, _settings)
+    _settings = settings
 
     _startup_phases = phases
     _startup_total_ms = round((_time.monotonic() - t_start) * 1000, 1)
@@ -416,12 +437,22 @@ async def _ensure_registry(use_case: str) -> None:
         )
 
 
+async def _close_shared_core(
+    copilot_agent: CopilotAgent | None,
+    cosmos_service: CosmosService | None,
+    blob_service: BlobSkillService | None,
+) -> None:
+    for service, method in ((copilot_agent, "stop"), (cosmos_service, "close"), (blob_service, "close")):
+        if service is not None:
+            try:
+                await getattr(service, method)()
+            except Exception:
+                logger.warning("Failed to close %s", type(service).__name__, exc_info=True)
+
+
 async def _shutdown() -> None:
     """Cleanup on shutdown."""
-    if _copilot_agent:
-        await _copilot_agent.stop()
-    if _cosmos_service:
-        await _cosmos_service.close()
+    await _close_shared_core(_copilot_agent, _cosmos_service, _blob_service)
     logger.info("Kratos Hosted Agent stopped")
 
 
@@ -748,6 +779,7 @@ async def _stream_response(
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
     """Handle invocation requests — accepts the same payload as the FastAPI /api/agent/chat endpoint."""
+    core_ready_before_ping = _startup_state == "ready"
     request.state.pre_handler_ms = pre_handler_delay_ms(request.headers)
     request.state.replica_invocation_state = await _ensure_shared_core()
     request.state.shared_core_startup = request.state.replica_invocation_state
@@ -775,6 +807,7 @@ async def handle_invoke(request: Request) -> Response:
             content={
                 "status": "warm",
                 "ready": _copilot_agent is not None,
+                "core_ready_before_ping": core_ready_before_ping,
                 "source_revision": os.environ.get("KRATOS_SOURCE_REVISION", "unknown"),
                 "startup_ms": _startup_total_ms,
                 "phases": _startup_phases,
@@ -1031,16 +1064,18 @@ async def handle_invoke(request: Request) -> Response:
     )
 
 
+async def _run_host() -> None:
+    """Initialise before serving, keeping async services on the host's event loop."""
+    try:
+        await _ensure_shared_core(readiness_source="early_init")
+    except Exception:
+        logger.warning("Early shared-core initialization failed — next invocation will retry", exc_info=True)
+
+    try:
+        await app.run_async()
+    finally:
+        await _shutdown()
+
+
 if __name__ == "__main__":
-    import atexit
-    import signal
-
-    def _sync_shutdown(*_args):
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_shutdown())
-        loop.close()
-
-    atexit.register(_sync_shutdown)
-    signal.signal(signal.SIGTERM, lambda *a: (_sync_shutdown(), sys.exit(0)))
-
-    app.run()
+    asyncio.run(_run_host())

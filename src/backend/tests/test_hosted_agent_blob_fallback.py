@@ -12,12 +12,14 @@ stubbed out.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError, ServiceRequestError
@@ -213,8 +215,9 @@ async def test_startup_upload_failure_leaves_blob_enabled(hosted_main: ModuleTyp
 
 
 @pytest.mark.usefixtures("isolated_registries")
+@pytest.mark.parametrize("early_init", [False, True])
 async def test_startup_disable_then_lazy_load_makes_no_further_blob_calls(
-    hosted_main: ModuleType, monkeypatch: pytest.MonkeyPatch
+    hosted_main: ModuleType, monkeypatch: pytest.MonkeyPatch, early_init: bool
 ) -> None:
     """Full regression sequence: startup seed fails → disabled → no later blob call."""
     blob = FakeBlobSkillService(
@@ -223,8 +226,20 @@ async def test_startup_disable_then_lazy_load_makes_no_further_blob_calls(
     )
     monkeypatch.setattr(hosted_main, "_blob_service", blob)
 
-    await hosted_main._seed_or_disable_blob(blob)
+    async def startup():
+        await hosted_main._seed_or_disable_blob(blob)
+
+    monkeypatch.setattr(hosted_main, "_startup", startup)
+    monkeypatch.setattr(hosted_main, "_startup_state", "not_started")
+    monkeypatch.setattr(hosted_main, "_startup_task", None)
+    monkeypatch.setattr(hosted_main, "_startup_lock", asyncio.Lock())
+    if early_init:
+        monkeypatch.setattr(hosted_main.app, "run_async", AsyncMock(), raising=False)
+        monkeypatch.setattr(hosted_main, "_shutdown", AsyncMock())
+        await hosted_main._run_host()
+    await hosted_main._ensure_shared_core()
     assert not blob.is_available
+    assert hosted_main._registries == {}
     calls_after_seed = list(blob.calls)
 
     await hosted_main._ensure_registry("akte-agent")

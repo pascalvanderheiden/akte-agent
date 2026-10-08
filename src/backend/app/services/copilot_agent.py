@@ -769,10 +769,14 @@ class CopilotAgent:
         self._queues.clear()
         self._tool_counters.clear()
         self._user_input_futures.clear()
-        if self._client:
-            await self._client.stop()
-        if self._credential:
-            await self._credential.close()
+        client, self._client = self._client, None
+        credential, self._credential = self._credential, None
+        try:
+            if client is not None:
+                await client.stop()
+        finally:
+            if credential is not None:
+                await credential.close()
         logger.info("CopilotClient stopped")
 
     async def update_config(
