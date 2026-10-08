@@ -117,6 +117,6 @@ def test_smoke_telemetry_query_uses_compatible_azure_cli_filters():
     resolve = next(step for step in steps if step.get("name") == "Resolve smoke telemetry resource")
     command = resolve["run"]
 
-    assert '--tag "azd-env-name=$AZURE_ENV_NAME"' in command
+    assert '--resource-group "rg-$AZURE_ENV_NAME"' in command
     assert "--resource-type" not in command
     assert "microsoft.insights/components" in command
